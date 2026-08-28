@@ -45,8 +45,8 @@
 
       <div style="flex:none;display:flex;align-items:center;justify-content:flex-end">
         <div style="display:flex;border:1px solid #dcd8cf;border-radius:8px;overflow:hidden">
-          <button onClick="{{ showSide }}" style="padding:6px 15px;font:600 11px 'IBM Plex Sans',sans-serif;border:none;cursor:pointer;background:{{ sideBg }};color:{{ sideFg }}">Cutaway A–A · side</button>
-          <button onClick="{{ showPlan }}" style="padding:6px 15px;font:600 11px 'IBM Plex Sans',sans-serif;border:none;cursor:pointer;background:{{ planBg }};color:{{ planFg }}">Cutaway B–B · plan</button>
+          <button type="button" onClick="{{ showSide }}" style="padding:6px 15px;font:600 11px 'IBM Plex Sans',sans-serif;border:none;cursor:pointer;background:{{ sideBg }};color:{{ sideFg }}">Cutaway A–A · side</button>
+          <button type="button" onClick="{{ showPlan }}" style="padding:6px 15px;font:600 11px 'IBM Plex Sans',sans-serif;border:none;cursor:pointer;background:{{ planBg }};color:{{ planFg }}">Cutaway B–B · plan</button>
         </div>
       </div>
 
@@ -167,10 +167,10 @@
             <text x="108" y="-116" text-anchor="end">CAMERA TUNNEL</text>
             <text x="192" y="-120">KIT ESCAPEMENT</text>
             <text x="238" y="-104">LANE GATE</text>
-            <text x="262" y="-70">TAIL SPOUT</text>
+            <text x="270" y="-70">SPOUT</text>
             <text x="92" y="38">Ø60 WHEEL, BEYOND THE CUT</text>
             <text x="-72" y="-114">SWEEPER — BEYOND THE CUT</text>
-            <text x="-72" y="-66">MG996R + SPUR PAIR</text>
+            <text x="-72" y="-66">MG996R</text>
           </g>
           <g fill="none" stroke="#16181a" stroke-width="0.4">
             <line x1="-34" y1="-112" x2="-34" y2="-28"></line>
@@ -178,7 +178,7 @@
             <line x1="100" y1="-114" x2="100" y2="-94"></line>
             <line x1="190" y1="-118" x2="182" y2="-112"></line>
             <line x1="240" y1="-102" x2="221" y2="-66"></line>
-            <line x1="264" y1="-68" x2="254" y2="-56"></line>
+            <line x1="272" y1="-68" x2="254" y2="-56"></line>
             <line x1="132" y1="32" x2="132" y2="2"></line>
             <line x1="-14" y1="14" x2="-22" y2="3"></line>
           </g>
@@ -188,10 +188,10 @@
       <div ref="{{ planWrapRef }}" style="flex:1;min-height:0;display:flex;flex-direction:column">
         <div style="flex:none;display:flex;flex-direction:column;margin-bottom:2px">
           <div style="font-size:10.5px;letter-spacing:.16em;color:#7c7870">CUTAWAY B–B · TOP DECK REMOVED, LOOKING DOWN ONTO THE BELT</div>
-          <div style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#a09a90">the sweeper, the wedge, the diverter and all four lanes lie in this plane · ⟨V⟩ vane 66 at Yb 152 and lanes from Yb 108 supersede §6.2–§6.3 — reconcile Sheets 5 and 6</div>
+          <div style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#a09a90">the sweeper, the wedge, the diverter and all four lanes lie in this plane</div>
         </div>
-        <svg viewBox="-92 -50 400 278" preserveAspectRatio="xMidYMid meet" style="flex:1;min-height:0;width:100%;display:block">
-          <rect ref="{{ focusPlanRef }}" x="-35" y="-50" width="60" height="278" fill="#1d6f66" fill-opacity="0.07" stroke="#1d6f66" stroke-opacity="0.3" stroke-width="0.8"></rect>
+        <svg viewBox="-84 -10 400 218" preserveAspectRatio="xMidYMid meet" style="flex:1;min-height:0;width:100%;display:block">
+          <rect ref="{{ focusPlanRef }}" x="-35" y="-10" width="60" height="218" fill="#1d6f66" fill-opacity="0.07" stroke="#1d6f66" stroke-opacity="0.3" stroke-width="0.8"></rect>
 
           <path d="M0,40 L0,20 L20,0 L245,0 L265,20 L265,160 L245,180 L20,180 L0,160 Z" fill="#fbfaf8" stroke="#16181a" stroke-width="1.4" stroke-linejoin="round"></path>
 
@@ -248,13 +248,16 @@
             <path d="M188,90 L206,49 M188,90 L206,79.5 M188,90 L206,108 M188,90 L206,136.5" stroke-opacity="0.45"></path>
           </g>
           <g fill="#16181a" font-family="'IBM Plex Mono',monospace" font-size="7.4">
-            <text x="266" y="51">L1 KITS</text>
-            <text x="266" y="81.5">L2 RED</text>
-            <text x="266" y="110">L3 YELLOW</text>
-            <text x="266" y="138.5">L4 GREEN</text>
+            <text x="298" y="51.5">L1</text>
+            <text x="298" y="82">L2</text>
+            <text x="298" y="110.5">L3</text>
+            <text x="298" y="139">L4</text>
           </g>
-          <g fill="none" stroke="#16181a" stroke-width="0.4" stroke-opacity="0.55">
-            <path d="M258,48 L232,48 M258,78.5 L232,78.5 M258,107 L232,107 M258,135.5 L232,135.5"></path>
+          <g stroke="#16181a" stroke-width="0.6">
+            <rect x="286" y="45" width="8" height="8" fill="#c9922e"></rect>
+            <rect x="286" y="75.5" width="8" height="8" fill="#cf4c8c"></rect>
+            <rect x="286" y="104" width="8" height="8" fill="#e0b13f"></rect>
+            <rect x="286" y="132.5" width="8" height="8" fill="#4b9e4b"></rect>
           </g>
 
           <rect x="163" y="34" width="27" height="30" fill="#fbfaf8" stroke="#16181a" stroke-width="1.1"></rect>
@@ -311,38 +314,30 @@
             <line x1="93" y1="214" x2="108" y2="214" marker-start="url(#mas)" marker-end="url(#mae)"></line>
             <line x1="-30" y1="32" x2="59" y2="32"></line>
             <line x1="-30" y1="148" x2="59" y2="148"></line>
-            <line x1="93" y1="118" x2="93" y2="192"></line>
-            <line x1="108" y1="118" x2="108" y2="218"></line>
+            <line x1="93" y1="118" x2="93" y2="160"></line>
+            <line x1="108" y1="118" x2="108" y2="160"></line>
             <line x1="-74" y1="7" x2="-74" y2="173" marker-start="url(#mas)" marker-end="url(#mae)"></line>
             <line x1="-77" y1="7" x2="-46" y2="7"></line>
             <line x1="-77" y1="173" x2="-46" y2="173"></line>
-            <line x1="15" y1="184" x2="63" y2="184" marker-start="url(#mas)" marker-end="url(#mae)"></line>
-            <line x1="15" y1="168" x2="15" y2="188"></line>
-            <line x1="63" y1="152" x2="63" y2="188"></line>
+            <line x1="15" y1="186" x2="63" y2="186" marker-start="url(#mas)" marker-end="url(#mae)"></line>
+            <line x1="15" y1="168" x2="15" y2="189"></line>
+            <line x1="63" y1="152" x2="63" y2="189"></line>
           </g>
           <g ref="{{ dimsPlanTxtRef }}" fill="#16181a" font-family="'IBM Plex Mono',monospace" font-size="7" text-anchor="middle">
             <text x="-29" y="90" transform="rotate(-90 -29 90)">116 BELT</text>
-            <text x="-77" y="90" transform="rotate(-90 -77 90)">165 OPEN</text>
-            <text x="39" y="181">48</text>
-            <text x="66" y="191" text-anchor="end">30 THROAT</text>
-            <text x="100" y="225">15</text>
+            <text x="-75" y="90" transform="rotate(-90 -75 90)">165 OPEN</text>
+            <text x="39" y="182">48</text>
           </g>
 
           <g fill="#16181a" font-family="'IBM Plex Sans',sans-serif" font-size="7.4" letter-spacing="0.2">
-            <text x="-90" y="-40">SWEEPER — DASHED = OPEN</text>
-            <text x="70" y="-40">CONVERGENCE WEDGE — ONE WALL STRAIGHT, ONE AT 22°</text>
-            <text x="180" y="-28">VANE 66 · FAN ZONE 91–157</text>
-            <text x="226" y="172">FUNNEL 116 → 40</text>
-            <text x="-30" y="212">SCOOP — STATIC SHIM. THE ROBOT'S MOTION SLIDES IT UNDER THE PIECE</text>
-            <text x="196" y="224">6 RETENTION LIP</text>
+            <text x="-82" y="195">SWEEPER — DASHED = OPEN</text>
+            <text x="70" y="195">WEDGE 116→30</text>
+            <text x="150" y="195">VANE 66 · FAN ZONE</text>
+            <text x="250" y="195">FUNNEL 116→40</text>
+            <text x="-82" y="205">SCOOP — STATIC SHIM, SLIDES UNDER THE PIECE</text>
           </g>
           <g fill="none" stroke="#16181a" stroke-width="0.4">
-            <line x1="-16" y1="-37" x2="-8" y2="2"></line>
-            <line x1="94" y1="-38" x2="78" y2="18"></line>
-            <line x1="196" y1="-26" x2="170" y2="84"></line>
-            <line x1="246" y1="166" x2="240" y2="114"></line>
-            <line x1="38" y1="194" x2="39" y2="157"></line>
-            <line x1="96" y1="206" x2="71" y2="150"></line>
+            <line x1="-16" y1="185" x2="-8" y2="6"></line>
           </g>
         </svg>
       </div>
@@ -363,7 +358,7 @@
           <div style="font-size:9.5px;letter-spacing:.16em;color:#7c7870;margin-bottom:8px">THE EIGHT STATIONS</div>
           <div style="display:flex;flex-direction:column;gap:5px">
             <sc-for list="{{ stations }}" as="st" hint-placeholder-count="8">
-              <button onClick="{{ st.go }}" style="text-align:left;display:flex;gap:9px;align-items:flex-start;padding:7px 9px;border-radius:8px;cursor:pointer;background:{{ st.bg }};border:1px solid {{ st.bd }}">
+              <button type="button" onClick="{{ st.go }}" style="text-align:left;display:flex;gap:9px;align-items:flex-start;padding:7px 9px;border-radius:8px;cursor:pointer;background:{{ st.bg }};border:1px solid {{ st.bd }}">
                 <span style="display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;flex:none;border-radius:5px;background:{{ st.dotBg }};color:{{ st.dotFg }};font-size:9.5px;font-weight:700;font-family:'IBM Plex Mono',monospace;margin-top:1px">{{ st.n }}</span>
                 <span style="min-width:0;flex:1">
                   <span style="display:block;font-size:12.5px;font-weight:600;line-height:1.25">{{ st.title }}</span>
@@ -378,7 +373,7 @@
         <div style="padding:10px 16px 18px">
           <div style="font-size:9.5px;letter-spacing:.16em;color:#7c7870;margin-bottom:7px">NUMBERS AT THIS STATION</div>
           <div ref="{{ specRef }}" style="display:flex;flex-direction:column;gap:0;font-family:'IBM Plex Mono',monospace;font-size:11px;border-top:1px solid #e6e1d8"></div>
-          <div style="margin-top:12px;font-size:10.5px;color:#7c7870;line-height:1.5">Every actuator on this chassis is zero-force. The belt supplies all motive energy; the servos only supply <em>direction</em> (the blade) and <em>permission</em> (the gates).</div>
+          <div style="margin-top:12px;font-size:10.5px;color:#7c7870;line-height:1.5">Every actuator on this chassis is zero-force. The belt supplies all motive energy; the servos only supply <em>direction</em> (the blade) and <em>permission</em> (the gates). <span style="color:#a8502b">⟨V⟩ The 66 vane and the lane walls from Yb 108 supersede §6.2–§6.3 — Sheets 5 and 6 still show the spec pivot and need reconciling.</span></div>
         </div>
       </div>
     </aside>
@@ -387,12 +382,12 @@
   <footer style="flex:none;border-top:1px solid #dcd8cf;background:#fbfaf8;padding:10px 22px 12px">
     <div style="display:flex;align-items:center;gap:16px">
       <div style="display:flex;align-items:center;gap:7px;flex:none">
-        <button onClick="{{ prev }}" style="width:34px;height:34px;border-radius:8px;border:1px solid #dcd8cf;background:#fff;font:600 13px 'IBM Plex Sans',sans-serif;cursor:pointer">‹</button>
-        <button onClick="{{ togglePlay }}" style="width:46px;height:34px;border-radius:8px;border:1px solid #16181a;background:#16181a;color:#fbfaf8;font:600 12px 'IBM Plex Sans',sans-serif;cursor:pointer">{{ playLabel }}</button>
-        <button onClick="{{ next }}" style="width:34px;height:34px;border-radius:8px;border:1px solid #dcd8cf;background:#fff;font:600 13px 'IBM Plex Sans',sans-serif;cursor:pointer">›</button>
-        <button onClick="{{ restart }}" style="height:34px;padding:0 11px;border-radius:8px;border:1px solid #dcd8cf;background:#fff;font:500 11px 'IBM Plex Sans',sans-serif;cursor:pointer">Restart</button>
-        <button onClick="{{ cycleSpeed }}" style="height:34px;padding:0 10px;border-radius:8px;border:1px solid #dcd8cf;background:#fff;font-family:'IBM Plex Mono',monospace;font-size:11px;cursor:pointer">{{ speedLabel }}</button>
-        <button onClick="{{ toggleDims }}" style="height:34px;padding:0 10px;border-radius:8px;border:1px solid #dcd8cf;background:{{ dimsBg }};color:{{ dimsFg }};font:500 11px 'IBM Plex Sans',sans-serif;cursor:pointer">Dimensions</button>
+        <button type="button" onClick="{{ prev }}" style="width:34px;height:34px;border-radius:8px;border:1px solid #dcd8cf;background:#fff;font:600 13px 'IBM Plex Sans',sans-serif;cursor:pointer">‹</button>
+        <button type="button" onClick="{{ togglePlay }}" style="width:46px;height:34px;border-radius:8px;border:1px solid #16181a;background:#16181a;color:#fbfaf8;font:600 12px 'IBM Plex Sans',sans-serif;cursor:pointer">{{ playLabel }}</button>
+        <button type="button" onClick="{{ next }}" style="width:34px;height:34px;border-radius:8px;border:1px solid #dcd8cf;background:#fff;font:600 13px 'IBM Plex Sans',sans-serif;cursor:pointer">›</button>
+        <button type="button" onClick="{{ restart }}" style="height:34px;padding:0 11px;border-radius:8px;border:1px solid #dcd8cf;background:#fff;font:500 11px 'IBM Plex Sans',sans-serif;cursor:pointer">Restart</button>
+        <button type="button" onClick="{{ cycleSpeed }}" style="height:34px;padding:0 10px;border-radius:8px;border:1px solid #dcd8cf;background:#fff;font-family:'IBM Plex Mono',monospace;font-size:11px;cursor:pointer">{{ speedLabel }}</button>
+        <button type="button" onClick="{{ toggleDims }}" style="height:34px;padding:0 10px;border-radius:8px;border:1px solid #dcd8cf;background:{{ dimsBg }};color:{{ dimsFg }};font:500 11px 'IBM Plex Sans',sans-serif;cursor:pointer">Dimensions</button>
       </div>
 
       <div style="flex:1;min-width:0">
@@ -421,7 +416,7 @@
 const STATIONS = [
   { n: 1, t0: 0,  t1: 4,  title: 'Capture',        sub: 'sweeper fingers, 165 → 116',
     body: 'The two sweeper fingers counter-rotate on a single MG996R through a 1:1 spur pair, narrowing a 165 mm capture band down to the 116 mm belt width.',
-    key: 'Nothing lifts here — the fingers only sweep sideways. They are the intake funnel and the effector, one part doing both jobs.',
+    key: 'Nothing lifts here — the fingers only sweep sideways. They are the intake funnel and the effector, one part doing both jobs. Open, they reach 44 mm past the front face, so they are held closed inside the 265 envelope until after the start — see Sheet 1.',
     spec: [['Capture band', '165'], ['Closed to', '116'], ['Finger', '90 × 25'], ['Cycle', '~0.4 s'], ['In transit', 'held open']] },
   { n: 2, t0: 4,  t1: 8,  title: 'Scoop',          sub: 'sprung shim, floats on the floor',
     body: 'A Ø16 nose roller puts the belt top at Z 17.5, so the belt cannot start at floor level. The shim bridges that gap — but it cannot hover: an edge held 0.3 above the surface would strike a 5 mm disc square on and plough it along the floor.',
@@ -631,7 +626,15 @@ class Component extends DCLogic {
     }
   }
 
-  seek(t) { this.t = Math.max(0, Math.min(TEND, t)); this.shownIdx = -1; this.setState({ playing: true }); }
+  // Every control that moves the clock goes through here. It is an arrow property,
+  // not a prototype method, so the reference captured by a handler closure can
+  // never be lost to rebinding when renderVals rebuilds the station array.
+  seek = (t) => {
+    this.t = Math.max(0, Math.min(TEND, t));
+    this.shownIdx = -1;
+    this.last = performance.now();
+    this.setState({ playing: true });
+  };
 
   renderVals() {
     const idx = this.state.idx, dims = this.state.dims, view = this.state.view;
@@ -664,7 +667,7 @@ class Component extends DCLogic {
       dimsBg: dims ? '#16181a' : '#fff',
       dimsFg: dims ? '#fbfaf8' : '#16181a',
       togglePlay: () => { if (!this.state.playing && this.t >= TEND - 0.01) this.t = 0; this.setState({ playing: !this.state.playing }); },
-      restart: () => { this.t = 0; this.shownIdx = -1; this.setState({ playing: true }); },
+      restart: () => this.seek(0),
       prev: () => this.seek(STATIONS[Math.max(0, idx - 1)].t0 + 0.05),
       next: () => this.seek(STATIONS[Math.min(STATIONS.length - 1, idx + 1)].t0 + 0.05),
       cycleSpeed: () => this.setState({ speed: this.state.speed === 1 ? 2 : this.state.speed === 2 ? 0.5 : 1 }),
@@ -672,7 +675,7 @@ class Component extends DCLogic {
       onScrub: e => { const r = e.currentTarget.getBoundingClientRect(); this.seek((e.clientX - r.left) / r.width * TEND); },
       stations: STATIONS.map((s, i) => ({
         n: String(s.n), title: s.title, sub: s.sub, at: s.t0 + 's',
-        go: () => this.seek(s.t0 + 0.05),
+        go: (e) => { if (e && e.preventDefault) e.preventDefault(); this.seek(s.t0 + 0.05); },
         bg: i === idx ? '#eaf4f2' : '#fff',
         bd: i === idx ? '#1d6f66' : '#e6e1d8',
         dotBg: i === idx ? '#1d6f66' : '#d8d3c9',

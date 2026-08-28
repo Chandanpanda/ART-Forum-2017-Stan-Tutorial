@@ -2,3 +2,9 @@
 .Rhistory
 .RData
 .Ruserdata
+
+# simulation
+sim/out/
+sim/models/*.xml
+__pycache__/
+*.pyc

@@ -5,7 +5,7 @@ full-steps per second, and step loss can be injected, because the spec calls a
 skipped step 'silent' and that is the design's main odometry risk.
 """
 import numpy as np, mujoco
-from .params import Chassis, AgentA, mm
+from .params import Chassis, AgentA, Piece, mm
 
 WHEEL_R = Chassis.WHEEL_D / 2000.0          # m
 HALF_TRACK = Chassis.TRACK / 2000.0         # m
@@ -24,8 +24,11 @@ class AgentARobot:
         self.a_fl  = gid(mujoco.mjtObj.mjOBJ_ACTUATOR, "a_finger_l")
         self.a_fr  = gid(mujoco.mjtObj.mjOBJ_ACTUATOR, "a_finger_r")
         self.a_gate= gid(mujoco.mjtObj.mjOBJ_ACTUATOR, "a_gate")
+        self.a_feed= gid(mujoco.mjtObj.mjOBJ_ACTUATOR, "a_feed")
+        self.a_blade = gid(mujoco.mjtObj.mjOBJ_ACTUATOR, "a_blade")
         self.s_tof = gid(mujoco.mjtObj.mjOBJ_SENSOR, "a_tof")
         self.s_gyro= gid(mujoco.mjtObj.mjOBJ_SENSOR, "a_gyro")
+        self.s_mag = gid(mujoco.mjtObj.mjOBJ_SENSOR, "a_mag")
         self.odo_steps = np.zeros(2)          # commanded steps, the robot's belief
 
     # ---------------------------------------------------------------- state
@@ -73,12 +76,34 @@ class AgentARobot:
 
     def fingers(self, opened=True):
         # RADIANS -- actuator ctrlrange is not converted by compiler angle="degree"
-        a = np.radians(-5.4 if opened else 10.2)
+        a = np.radians(AgentA.FINGER_OPEN if opened else AgentA.FINGER_RAKE)
         self.d.ctrl[self.a_fl] = a
         self.d.ctrl[self.a_fr] = -a
 
+    def feed(self, down):
+        """Positive-feed plunger.  Parked its face is 33 mm above the highest a
+        piece ever reaches, so the drop path stays clear; one stroke presses the
+        column down onto the stack and re-seats anything shaken loose."""
+        self.d.ctrl[self.a_feed] = -mm(AgentA.FEED_STROKE) if down else 0.0
+
     def gate(self, opened):
-        self.d.ctrl[self.a_gate] = 0.100 if opened else 0.0
+        """Escapement shelf: carries the column, slides clear to release one."""
+        self.d.ctrl[self.a_gate] = mm(AgentA.ESC_Y) if opened else 0.0
+
+    def blade(self, inserted):
+        """Escapement retainer: a 1 mm knife that takes the column at the joint
+        above the bottom disc, so the shelf can slide out from under just that
+        one.  Parked it is clear of the bore."""
+        self.d.ctrl[self.a_blade] = -mm(AgentA.ESC_Y) if inserted else 0.0
+
+    def mag_count(self):
+        """Pieces in the magazine, from the bore rangefinder.  Empty reads the
+        shelf at Za 11; each piece brings the surface up 5 mm."""
+        r = self.d.sensordata[self.m.sensor_adr[self.s_mag]]
+        if r < 0:                        # no return at all
+            return 0
+        top = 70.0 - r*1000.0            # site is at Za 70 looking down
+        return int(max(0.0, round((top - AgentA.CHUTE_Z0) / Piece.DISC_T)))
 
     # ------------------------------------------------------------ stallguard
     def stalled(self, thresh=0.42):

@@ -6,7 +6,7 @@ import numpy as np, mujoco
 from rfgyc26 import mjcf
 from rfgyc26.robot import AgentARobot
 from rfgyc26.params import AgentA
-from rfgyc26.route import guard, drive_straight, pursue, sweep_line
+from rfgyc26.route import guard, drive_straight, pursue, sweep_line, settle_stack
 
 CH = -(AgentA.AXLE_X - AgentA.CHUTE_X)
 DISCS = [(330, 130), (240, 133), (170, 128)]
@@ -20,10 +20,13 @@ def seq():
     yield from guard(drive_straight(rb, 300.0, speed=220.0), 10.0)
     yield from guard(pursue(rb, 430.0, 130.0, speed=220.0, tol=40.0), 20.0)
     yield from guard(sweep_line(rb, 130.0, 158.0), 60.0)
+    # The positive feed is part of collecting, not of posting: the last piece in
+    # has nothing above it and lands ON the stack rather than settling into it.
+    yield from guard(settle_stack(rb), 30.0)
 
 print("three discs on the floor at " + ", ".join("(%d,%d)" % p for p in DISCS))
 g, k = seq(), 0
-while d.time < 60:
+while d.time < 80:
     if k % 20 == 0:
         try: next(g)
         except StopIteration: break
@@ -32,9 +35,16 @@ while d.time < 60:
 n = 0
 for i, b in enumerate(dbs):
     lx, ly, lz = rb.to_local(d.xpos[b])
-    inmag = abs(lx - CH) < 34 and abs(ly) < 34 and 8 < lz < 48
-    n += inmag
-    print("  disc%d  robot-frame (%7.1f, %6.1f, %6.1f)  %s"
-          % (i, lx, ly, lz, "STACKED IN MAGAZINE" if inmag else "not captured"))
-print("\n%d of 3 collected in %.1f s of match time  (chute axis is x=%.1f)" % (n, d.time, CH))
-print("stack heights show them queued on the gate: the magazine is a simple column")
+    q = d.xquat[b]
+    R = np.zeros(9); mujoco.mju_quat2Mat(R, q); R = R.reshape(3, 3)
+    tilt = np.degrees(np.arccos(min(1.0, abs(R[2, 2]))))
+    # SEATED, not merely "in the bore": a piece perched on the stack at 20 deg
+    # is not retained and will not meter (F14).
+    seated = abs(lx - CH) < 12 and abs(ly) < 12 and lz < 30 and tilt < 15
+    n += seated
+    print("  disc%d  robot-frame (%7.1f, %6.1f, %6.1f)  tilt %4.1f deg  %s"
+          % (i, lx, ly, lz, tilt, "SEATED IN MAGAZINE" if seated else "NOT SEATED"))
+print("\n%d of 3 seated in %.1f s of match time  (chute axis is x=%.1f)" % (n, d.time, CH))
+print("the bore rangefinder reads %d -- that is what the escapement acts on\n"
+      "(it over-reads while a piece is perched, which is the case the feed fixes)"
+      % rb.mag_count())

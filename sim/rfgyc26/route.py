@@ -99,7 +99,13 @@ def back_to(rb, x, y, speed=130.0, tol=25.0):
 
 
 def sweep_line(rb, y, x_to, speed=140.0):
-    """Collecting run along a constant-Y line, fingers open, heading held at 180."""
+    """Collecting run along a constant-Y line, fingers open, heading held at 180.
+
+    Fingers OPEN is right once the guides start at the mouth width (F22): the
+    channel is then continuous from the pivots inward and the fingers only have
+    to stay out of its way.  Raking them to the belt width instead re-creates the
+    step one bay further forward, and capture drops from 24/24 to 21/24.
+    """
     rb.fingers(True)
     yield from guard(turn_to(rb, 180.0), 8.0)
     while rb.pose[0] > x_to:
@@ -172,18 +178,25 @@ def nearest_pivot(hole_x, hole_y):
     # oblique).  Only the far hole is clearly better served from the east.
     return PIVOT_E if hole_x > 650.0 else PIVOT_W
 
-def settle_stack(rb, cycles=4):
-    """Jog the chassis fore-and-aft to seat the magazine.
+def settle_stack(rb, cycles=2):
+    """Seat the magazine with the positive-feed paddle.
 
-    The last disc into the chute has nothing above it to push it down, so it
-    perches on the bore rim ~20 mm proud of the stack and shakes loose during the
-    first docking manoeuvre.  A few short jogs settle it -- the same thing you do
-    to a real gravity magazine.  Costs about 3 s.
+    The last piece in has nothing above it to push it down.  It arrives centred
+    (the collar sees to that) but lands ON the stack rather than settling into
+    it -- measured: disc 3 perched at Za 34.6 with 22 deg of tilt where a seated
+    disc sits at 24.2 and 0.4.  One paddle sweep through the mouth pushes it flat;
+    two makes it certain.  The fore-aft jog between sweeps frees anything lightly
+    wedged against the bore wall.
     """
     for _ in range(cycles):
-        yield from guard(drive_straight(rb,  28.0, speed=170.0), 3.0)
-        yield from guard(drive_straight(rb, -28.0, speed=170.0), 3.0)
-    yield from wait(rb, 1.0)
+        rb.feed(True)
+        yield from wait(rb, 0.8)
+        rb.feed(False)
+        yield from wait(rb, 0.5)
+        yield from guard(drive_straight(rb,  22.0, speed=160.0), 3.0)
+        yield from guard(drive_straight(rb, -22.0, speed=160.0), 3.0)
+    rb.feed(False)
+    yield from wait(rb, 0.6)
 
 
 def dock_and_post(rb, hole_x, hole_y, chute_offset, stroke=0.28, log=print):
@@ -222,10 +235,23 @@ def dock_and_post(rb, hole_x, hole_y, chute_offset, stroke=0.28, log=print):
     cx, cy = rb.chute_xy(chute_offset)
     log("      docked: chute(%.1f,%.1f) vs hole(%.1f,%.1f) err %.1f mm"
         % (cx, cy, hole_x, hole_y, np.hypot(cx-hole_x, cy-hole_y)))
+    rb.feed(True)                     # seat the stack before metering
+    yield from wait(rb, 0.7)
+    rb.feed(False)
+    yield from wait(rb, 0.5)
+    # Escapement, sequenced (F19).  The retainer takes the column at the joint
+    # above the bottom piece so the shelf releases exactly one; with only one
+    # piece left there is no joint to enter and the retainer stays parked -- the
+    # bore rangefinder is what tells the robot which case it is in.
+    n = rb.mag_count()
+    log("      magazine holds %d" % n)
+    rb.blade(n >= 2)
     yield from wait(rb, 0.5)
     rb.gate(True)
     yield from wait(rb, stroke)
     rb.gate(False)
+    yield from wait(rb, 0.5)
+    rb.blade(False)
     yield from wait(rb, 0.9)
     # depart nose-out: the robot already faces away from the hole, so driving
     # forward retraces the approach line straight back to the pivot station

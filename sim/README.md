@@ -45,22 +45,22 @@ Optional, for video: `pip install "imageio[ffmpeg]"` then add `--video`.
 | Drive: straight line / turn in place | **works** — 0.9 % slip; 70 % turn efficiency |
 | Conveyor carry on the incline | **works** — 59.2 mm/s against a 60 mm/s belt |
 | Passive accumulation at a closed gate | **works** — 0.134 N vs 0.118 N predicted |
-| **Pick: 3 discs off the floor into the magazine** | **works — 3 of 3**, `demo_capture.py` |
+| **Pick: 3 samples off the floor into the magazine** | **works — 24 of 24** over 8 randomised matches, all three *seated* every time |
+| **Magazine escapement: one piece per stroke** | **works — 3 of 3**; the bore rangefinder reads 3 → 2 → 1 |
 | **Place: all three lab holes** | **works — 3 of 3, +45**, dock error **0.0 mm** |
-| **45° hole chamfer** | **works** — funnels a disc dropped up to 7 mm off-centre |
-| Closed-loop chute docking, in-mission | **works** — **1.8–2.0 mm at all three holes** |
+| Closed-loop chute docking, in-mission | **works** — **1.5–2.1 mm at all three holes** |
 | Referee scoring (Senior sample rules) | **works** |
-| **Full mission end to end** | **+27 — 2 of 3 samples placed, stable across seeds** |
+| **Full mission end to end** | **+50 — all three samples placed — in 7 of 8 randomised matches** |
 
-**Hole 3 is fixed.** It docked at 15 mm and failed; it now docks at 1.8 mm and
-posts, the same as holes 1 and 2. The cause turned out not to be the chamfer at
-all — see F13.
+```
+seed      1    2    3    4    5    6    7    8
+score   +50  +50  +50  +50  +50  +27  +50  +50      (+50 = all three placed)
+time    114  110  109  128  114  168  110  109  s     (match budget is generous)
+```
 
-The remaining cap on the full mission is **magazine retention**, not docking. The
-last disc into the chute has nothing above it to push it down, so it perches on
-the bore rim ~20 mm proud of the stack (z 44 against a stack top of 24) and shakes
-loose during the first docking manoeuvre. Both halves of pick-and-place are
-complete in isolation; this is the one integration gap left. See F14.
+Seed 6 posts two of three: the piece released at hole 1 misses the slot and is
+then swept off the plate as the robot departs. Docking was 1.5 mm there, so this
+is release scatter, not aim — and F21 explains why 2 mm is the entire budget.
 
 ## 3. Findings — things the simulator discovered about the design
 
@@ -141,12 +141,10 @@ composed eulers, which is what put the old ones 30 mm out of place. Measured
 envelope: 5.4 mm tall, 34.8 mm radius. It funnels a disc dropped up to **7 mm**
 off-centre straight into the slot; at 9 mm the disc rests on the cone.
 
-That 7 mm is a hard geometric ceiling, and it is a finding in its own right:
-capturing the ±10 mm spec §6.4 claims needs a cone reaching r ≈ 43, which at 45°
-is 13 mm tall — but the docked robot's chute-base gate sits at Za 8 and its rear
-wall at Za 6 directly above that ring. **The ±10 mm chamfer cannot coexist with
-6 mm of ground clearance over the plate.** Either the plate gets a recessed
-counterbore, or the robot needs more clearance at the tail.
+**That paragraph was wrong and is corrected by F21 below** — I had said the fix
+was "either a recessed counterbore in the plate, or more clearance at the robot's
+tail". The laboratory is a *supplied field element*, so the first is not
+available; and re-measured properly, the chamfer is not doing the work anyway.
 
 **F13. What was actually breaking hole 3: the boundary tape.** Not the chamfer.
 The 20 mm deployment-box tape was modelled as a collision geom, and its 0.4 mm
@@ -159,14 +157,136 @@ not reverse up even a 1 mm step, so the plate now sits on its own collision bit
 holes dock to 1.8–2.0 mm.
 
 **F14. A gravity magazine does not seat its last piece.** Discs 1 and 2 stack
-properly (z 14.3, 19.4) because each is pushed down by the next. The third lands
-~11 mm off-axis — the overshoot as it tips off the belt tail — which is more than
-the 5 mm the bore will take, so it perches on the rim at z 44 and is only loosely
-retained. Widening the bore (Ø76), moving the chute, shortening the belt and a
-settle-jog were all tried; none seats it. The likely real answer is a positive
-feed — a sprung follower or a short powered nudge at the bore mouth — rather than
-relying on gravity for the last piece. This is what caps the full mission at 2 of
-3 samples.
+properly because each is pushed down by the next. The third has nothing above it
+and lands on the stack rather than settling into it — measured at Za 34.6 with 22°
+of tilt where a seated disc sits at 24.2 and 0.4°. It is then only loosely
+retained and shakes free in transit. The fix is a **positive feed**: a plunger on
+the bore axis, parked with its face at Za 84 and stroked down to Za 26. Two
+strokes seat the column every time.
+
+The first attempt at this was *worse than nothing* and the reason is worth
+keeping: it parked a Ø30 foot 12 mm above the collar, and a piece tipping off the
+belt tail reared up into it and wedged. **0 of 3 with the ram, 3 of 3 without it,
+same model.** Anything parked close over the mouth does that. Parking at Za 84 is
+33 mm clear of the highest a piece ever reaches (Za 51, its top at the discharge
+plane), so the drop path is empty. 58 mm of stroke is more than a servo horn
+gives directly — use a 29 mm crank or a rack — and keep the force low: at 14 N an
+earlier build pushed a disc *through* the bore wall.
+
+**F15. The bore needs a raised rear collar, and that collar is what centres the
+piece.** Not the chamfer, not the bore. A Ø56 disc sliding aft at the Za 51.5
+discharge plane is halted the instant its rim touches the collar's inner face at
+r 33, which leaves its centre at dx = −(33 − 28) = **−5 mm** — inside the bore,
+every time, with no sensing and no tuning. Without it the disc sails over the
+Za 30 rim, jams against the chassis rear wall 36 mm aft of the axis, and simply
+stays there, flat, held by belt friction. The collar has to be taller above the
+discharge plane than the hold-down gap (F16), or a piece climbs over it instead
+of being stopped.
+
+**F16. Bore geometry alone cannot stop a coin jam. The piece has to arrive
+flat.** A disc tilts freely inside *any* bore wider than itself — there is no
+bore, chamfer or funnel that prevents it. Left to itself the piece enters
+edge-first and stands up inside the tube at 63°, and everything behind it piles
+up. The fix is upstream and costs almost nothing: a **hold-down strip 8 mm above
+the belt** over the last ~120 mm of its run. A 5 mm disc can then rise only 3 mm,
+which caps the droop at about 6°, so it stays flat until its trailing edge clears
+the tail and then falls flat. It also makes shingling impossible on the guided
+run — two discs need 10 mm of channel and there are 8. One folded strip of the
+same 1 mm sheet as the chassis: the cheapest part on the robot and the one that
+makes the magazine work.
+
+It must end **at** the tail. Carried past it, the same strip blocks the rotation
+the piece needs in order to drop, and nothing seats at all.
+
+**F17. The tail roller belongs one disc radius forward of the chute axis — not
+over it.** This supersedes F7. A piece is supported until its *trailing* edge
+clears the tail, so it is released when its centre is one radius aft of the tail.
+Put the tail at `CHUTE_X + 28` and the release point is the bore axis. Measured,
+one disc, otherwise identical model:
+
+| belt tail Xa | 36 | 50 | 56 | 60 | 64 |
+|---|---|---|---|---|---|
+| seats? | never | never | yes | yes | **yes, every time** |
+
+With the two aligned (the old F7) the piece is already half over the bore when it
+starts to overhang: it tips in edge-first and jams, 0 of 3. Moving the tail
+forward also frees the bore axis, which is what lets the feed plunger (F14) sit
+where it should.
+
+**F18. The guides have to climb with the belt.** They were built at a fixed
+height, and the belt rises 46 mm over its run — so near the intake the walls
+floated above the pieces entirely and a disc passed underneath them, out to the
+belt edge, where it jammed. One sample per match was lost this way. The walls are
+now generated between two 3-D points and stand perpendicular to the belt face.
+
+**F19. A single sliding gate cannot meter.** It has to clear a Ø56 disc to
+release one, and by then it has released the column. This was masked for a long
+time because the stack used to hang up on itself; once F14–F17 made it seat
+properly, one stroke dropped all three and two of them landed in the same lab
+hole. The magazine needs a real **escapement**: a shelf that carries the column,
+and a thin retainer that slides in at the joint above the bottom piece.
+
+Three things had to be right, and each was found by breaking it:
+
+* **Two actuators, not one.** Built as a single stepped slide — the classic coin
+  escapement — the shelf arrives from one side exactly as the retainer leaves
+  from the other, so the column is handed over in mid-drop and tips out of the
+  bore. Sequenced retainer-in → shelf-out → shelf-in → retainer-out, every
+  transfer lands on something already in place.
+* **The retainer is a 1 mm knife with a rolled leading edge.** At 3 mm it
+  straddled the joint. Square-ended, it met the second disc's rim head-on and
+  drove it sideways out of the bore. A round edge that starts *below* the joint
+  cams the column up instead — and it is self-correcting, because the bottom disc
+  cannot go down while the shelf is under it.
+* **The robot has to know how many are left.** With one piece there is no joint
+  to enter and the retainer must stay parked. A rangefinder looking down the bore
+  from Za 70 gives 5 mm of range per piece. It has to be **on the axis**: at
+  r 25 it missed a disc sitting 3.4 mm off centre and reported an empty magazine,
+  which cost that piece.
+
+
+**F20. The sweeper fingers pivot at the nose and reach aft, so "open" makes the
+intake channel diverge.** Tips out at ±82.5 with pivots at ±74, the channel
+*widens* from 148 mm at the mouth to 165 at the belt — it funnels nothing. That
+looked like the reason a sample more than ~45 mm off the sweep line got bulldozed
+into the west wall instead of collected, but raking the fingers in only moved the
+step one bay forward (F22 is the real cause). Captures over 8 randomised matches,
+24 samples in all, with the guides starting at the mouth width: **tips ±82.5
+(open) 24/24, tips ±58 (raked) 21/24, tips ±40 22/24.** Open wins.
+
+**F21. The laboratory is a supplied field element, and the 45° lead-in the robot
+spec relies on is an assumption about someone else's part.** The rulebook (§3.2)
+describes it as wood with "3 marked slots of 60 mm" and says nothing about a
+chamfer. So a counterbore is *not an option the team has* — and measuring it
+properly, it would not help much anyway. Dropping a disc from gate height at
+increasing offsets from the slot centre:
+
+| offset from slot centre (mm) | 0 | 1 | 2 | 3 | 4+ |
+|---|---|---|---|---|---|
+| 4 mm assumed chamfer | in | in | — | — | — |
+| 2 mm chamfer | in | in | — | — | — |
+| **no chamfer (as supplied)** | in | in | **in** | — | — |
+
+The capture radius is **2–3 mm either way** — that is just the (60 − 56)/2 = 2 mm
+radial clearance. A 4 mm-wide, 4 mm-tall lead-in is far too small to matter, and
+it slightly *hurts* because a disc can rest on the cone instead of tipping in.
+The earlier "±7 mm" figure was measured on a 3 mm plate before F11 thinned it.
+
+So the posting budget is **2 mm, full stop**, and it has to be met by the robot:
+by docking accuracy and by a repeatable release, not by geometry at the hole.
+`Field.LAB_CHAMFER = 0.0` runs the sim with a plain bored slot — worth using as
+the default assumption until someone measures a real laboratory.
+
+**F22. The guides have to start as wide as the sweeper mouth.** They began at the
+*belt* width (116) while the mouth is 148 wide at the finger pivots, so a piece
+more than 30 mm off the sweep line met the guide's **leading edge** square-on
+instead of its inner face, and was pushed along the field instead of funnelled
+in. Starting them at 148 and tapering to 62 makes the hand-off continuous:
+capture went from 22/24 to **24/24**, with all three seated in every seed.
+
+One trap with this: the belt face is at Za 0.4 that far forward, so a wall foot
+1 mm below it lands *under the floor plane*. These are robot-class geoms, so they
+plough — every mission ran to the 240 s timeout until the foot was clamped.
 
 ---
 
@@ -179,7 +299,9 @@ Each of these is a deliberate, documented departure from the drawings.
 | **One continuous conveyor** from the scoop tip to the tail roller, instead of a 0.5 mm shim feeding a belt whose nose is at Z 17.5 | F1: a passive shim provably cannot bridge the gap. This stands in for the finger stroke. |
 | **Wheel collision proxy 6 mm wide**, full 22 mm visual | F4: a rigid cylinder line-contact over-predicts scrub; a real tyre's patch does not behave that way. `Chassis.WHEEL_COLLISION_W` is the tuning knob. |
 | **Scoop excluded from the floor plane** (collision bit 2, not 1) | Two rigid bodies both bottoming at z = 0 can never slide under each other. The real 0.5 mm knife edge sits below the disc's under-face; this reproduces that. |
-| **Chute base gate slides** rather than flapping | A flap at Za 11 with 8 mm to the plate cannot swing. Spec §6.4's "one disc per stroke" reads like an escapement anyway. |
+| **Chute base is a two-blade escapement**, not a shutter | A flap at Za 11 with 8 mm to the plate cannot swing, and a plain shutter releases the whole column (F19). Spec §6.4's "one disc per stroke" *is* an escapement. |
+| **Positive-feed plunger on the bore axis** | F14: gravity does not seat the last piece. Parked at Za 84 so it is never in the drop path. |
+| **Hold-down strip over the belt tail** | F16: bore geometry cannot stop a coin jam; the piece has to arrive flat. |
 | **Ball transfers on compliant contact** | The spec's "rear pair on 1.5 compliant mounts". Rigid balls left the chassis on a two-wheel line contact and it rocked, repeatedly lifting the drive wheels. |
 | Thin parts given thicker collision proxies (belt 4 mm, shim 1.5 mm) | Standard practice; visual geometry keeps the real dimensions. |
 
@@ -223,11 +345,14 @@ drawings.
 
 ## 7. Next steps, in the order I would do them
 
-1. **Model the sweeper finger stroke in contact** and re-test F1 — this is the
-   one finding that could change the physical design.
-2. Close the docking loop on a physical feature (the spec's own rule): use the
-   front ToF against the lab plate edge instead of dead-reckoned pose. That
-   should fix two of the three postings (F6).
-3. Multi-disc magazine behaviour — check that a second disc arriving does not
-   push the first back out of the open-fronted bore.
+1. **Close the docking loop on a physical feature.** This is now the single
+   biggest lever: the posting budget is 2 mm (F21) and dead-reckoned docking
+   lands at 1.5–2.1. The spec's own answer — reverse until the chassis stalls
+   against the laboratory structure, then step a known offset — turns the Y error
+   into the repeatability of a mechanical stop. Use the TCRT line array on the
+   plate markings for X.
+2. **Model the sweeper finger stroke in contact** and re-test F1 — still the one
+   finding that could change the physical design.
+3. Run the whole mission with `Field.LAB_CHAMFER = 0.0` as the default, since
+   that is what the rulebook actually promises.
 4. Then Agent B: same chassis, plus the lane cassette, camera triage and gates.

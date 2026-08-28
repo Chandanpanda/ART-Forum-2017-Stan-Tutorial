@@ -44,5 +44,5 @@ for hi, hx in enumerate(Field.LAB_HOLE_X):
     total += pts
     print("hole %d  chute(%.1f,%.1f) vs hole(%.1f,%.1f) err %.1f mm  stroke %.0f  disc->(%.0f,%.0f,%.1f)  %-14s %+d"
           % (hi+1, cx, cy, hx, HY, np.hypot(cx-hx, cy-HY), stroke, w[0], w[1], w[2], det[0][1], pts))
-print("\ntotal %+d   (posting is position-sensitive: disc-in-hole radial clearance is"
-      " only 2 mm, so the 45 deg chamfer does the work -- see README)" % total)
+print("\ntotal %+d   (disc-in-hole radial clearance is 2 mm and the measured capture"
+      " radius is 2-3 mm -- the lead-in buys nothing, see F21)" % total)

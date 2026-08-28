@@ -30,6 +30,28 @@ def box(name, cx, cy, cz, sx, sy, sz, rgba, cls="static", euler=None, mass=None)
             f'pos="{cx:.6f} {cy:.6f} {cz:.6f}" size="{sx:.6f} {sy:.6f} {sz:.6f}"'
             f'{e}{m} rgba="{rgba}"/>')
 
+def wall(name, p0, p1, thick, h, rgba, cls="robot", extra=""):
+    """A guide wall between two 3-D points, standing perpendicular to the belt.
+
+    The walls have to CLIMB with the belt.  Built at a fixed height they float
+    above the pieces near the intake -- the belt top is at Za 0 there and rises
+    28 mm -- and a disc simply passes underneath, out to the belt edge, where it
+    jams (measured: one sample per match left stranded at Xa 223, y -49).
+    x-axis runs along the wall, y-axis is the horizontal normal; MuJoCo derives
+    the third, so there is no euler composition to get wrong.
+    """
+    dx, dy, dz = (p1[i]-p0[i] for i in range(3))
+    L = (dx*dx + dy*dy + dz*dz) ** 0.5
+    nx, ny = -dy, dx
+    nl = (nx*nx + ny*ny) ** 0.5 or 1.0
+    return (f'<geom name="{name}" class="{cls}" type="box" '
+            f'pos="{(p0[0]+p1[0])/2:.6f} {(p0[1]+p1[1])/2:.6f} '
+            f'{(p0[2]+p1[2])/2 + h/2:.6f}" '
+            f'size="{L/2:.6f} {thick/2:.6f} {h/2:.6f}" '
+            f'xyaxes="{dx/L:.6f} {dy/L:.6f} {dz/L:.6f} {nx/nl:.6f} {ny/nl:.6f} 0" '
+            f'rgba="{rgba}"{extra}/>')
+
+
 def ring(prefix, cx, cy, z0, z1, r_in, wall, rgba, n=16, cls="static"):
     """Vertical annulus from n boxes -- a round bore out of primitives."""
     out, rm, hz = [], r_in + wall / 2.0, (z1 - z0) / 2.0
@@ -175,10 +197,14 @@ def field_body(with_zones=True):
                  euler=(-14.0, 0, 0))))
     for i, hx in enumerate(Field.LAB_HOLE_X):
         o += [_lab(g) for g in ring(f"labring{i}", mm(hx), mm(LAB_HOLE_Y), 0.0, mm(pt), mm(r), mm(6), C_PLATE)]
-        # 45 deg lead-in chamfer (spec 6.4: "absorbs +/-10 of robot position
-        # error").  Capped at r+4 -> 4 mm tall, because the docked robot's gate
-        # sits at Za 8 and its rear wall at Za 6 right above this ring.
-        o += [_lab(g) for g in cone(f"labcone{i}", mm(hx), mm(LAB_HOLE_Y), mm(pt), mm(r), mm(r+4), C_PLATE)]
+        # 45 deg lead-in chamfer.  ASSUMED, not specified: the rulebook supplies
+        # the laboratory as a wooden part with plain 60 mm slots (F21).  Capped
+        # at r+4 -> 4 mm tall, because the docked robot's gate sits at Za 8 and
+        # its rear wall at Za 6 right above this ring.
+        if Field.LAB_CHAMFER > 0:
+            o += [_lab(g) for g in cone(f"labcone{i}", mm(hx), mm(LAB_HOLE_Y),
+                                        mm(pt), mm(r), mm(r + Field.LAB_CHAMFER),
+                                        C_PLATE)]
 
     if with_zones:
         for nm, (a, b, c, d) in {"z_quar": Field.QUARANTINE, "z_dep": Field.DEPLOY_BOX}.items():
@@ -221,8 +247,8 @@ def _ring_gap(prefix, cx, cy, z0, z1, r_in, wall, rgba, n=16, skip_deg=0, cls="r
 
 FINGER_PIVOT_Y = 74.0
 FINGER_LEN     = 90.0
-FINGER_OPEN    = -5.4      # left finger hinge angle, deg  (tip at y +82.5)
-FINGER_CLOSED  = 10.2      # (tip at y +58)
+FINGER_OPEN    = AgentA.FINGER_OPEN     # left finger hinge angle, deg
+FINGER_CLOSED  = AgentA.FINGER_RAKE
 GATE_OPEN_MM   = 62.0
 
 
@@ -259,6 +285,10 @@ def agent_a_body(name="agentA", pose=None, with_beams=False):
     bl  = ((nose_x - tail_x)**2 + mm(TAIL_Z - NOSE_Z)**2) ** 0.5
     bcx = (nose_x + tail_x) / 2.0
     bcz = mm((NOSE_Z + TAIL_Z) / 2.0 - Chassis.BELT_T / 2.0)
+    def belt_top(xa):
+        f = (AgentA.SCOOP_FROM - min(xa, AgentA.SCOOP_FROM)) / \
+            (AgentA.SCOOP_FROM - AgentA.BELT_TAIL_X)
+        return NOSE_Z + min(f, 1.0) * (TAIL_Z - NOSE_Z)   # flat aft of the tail
     o.append(f'<geom name="A_belt" type="box" contype="2" conaffinity="2" condim="6" '
              f'friction="{Chassis.MU_PIECE} 0.004 0.0002" solref="0.003 1" '
              f'solimp="0.97 0.99 0.001" '
@@ -269,18 +299,38 @@ def agent_a_body(name="agentA", pose=None, with_beams=False):
     # then bridge: two fit abreast on a 116 belt, and a gradual taper gives them
     # 75 mm of un-guided belt to bunch in.  Converge HARD right at the intake so
     # the channel is single-file (62 wide, 3 mm clearance each side) from the tip.
-    CONV_END_X = 60.0                      # local x where the taper finishes
+    # Guides climb with the belt (see wall()).  Converge HARD at the intake so
+    # the channel is single-file from the tip: spec 7's gradual 116 -> 62 over
+    # Xa 200->50 gives three O56 discs 75 mm of un-guided belt to bunch in, and
+    # two of them fit abreast on a 116 belt (F8).
+    GUIDE_END_X = 195.0                    # Xa where the taper finishes
+    GUIDE_TOP_X = 272.0                    # Xa where it starts
+    GH = 16.0                              # wall height above the belt face
+    # The belt face is at Za 0.4 up here, so a wall foot 1 mm under it would sit
+    # BELOW the floor plane -- and these are robot-class geoms, so they plough.
+    # Every mission timed out until this clamp went in.
+    def foot(xa): return mm(max(belt_top(xa) - 1.0, 2.0))
     for s_, tag in ((1, "l"), (-1, "r")):
-        gx0, gx1 = lx(AgentA.SCOOP_FROM), mm(CONV_END_X)
-        gy0, gy1 = mm(Chassis.BELT_W/2), mm(AgentA.GUIDE_TO_W/2)
-        ang = -180/pi * ((gy1-gy0)/(gx1-gx0))
-        o.append(box(f"A_guide_{tag}", (gx0+gx1)/2, s_*(gy0+gy1)/2, mm(34),
-                     abs(gx1-gx0)/2, mm(1.5), mm(14), C_BODY, "robot",
-                     euler=(0, 0, s_*ang)))
-        # parallel single-file channel from the taper to the chute mouth
-        px0, px1 = mm(CONV_END_X), lx(50.0)
-        o.append(box(f"A_lane_{tag}", (px0+px1)/2, s_*gy1, mm(34),
-                     abs(px1-px0)/2, mm(1.5), mm(14), C_BODY, "robot"))
+        p0 = (lx(GUIDE_TOP_X), s_*mm(AgentA.GUIDE_FROM_W/2), foot(GUIDE_TOP_X))
+        p1 = (lx(GUIDE_END_X), s_*mm(AgentA.GUIDE_TO_W/2), foot(GUIDE_END_X))
+        p2 = (lx(AgentA.BELT_TAIL_X), s_*mm(AgentA.GUIDE_TO_W/2),
+              foot(AgentA.BELT_TAIL_X))
+        o.append(wall(f"A_guide_{tag}", p0, p1, mm(1.5), mm(GH), C_BODY))
+        o.append(wall(f"A_lane_{tag}",  p1, p2, mm(1.5), mm(GH), C_BODY))
+
+    # ---- hold-down strip over the belt tail (F16) -------------------------
+    if AgentA.HOLD_GAP0 > 0:
+        ha = (AgentA.HOLD_FROM, belt_top(AgentA.HOLD_FROM) + AgentA.HOLD_GAP0
+              + AgentA.HOLD_T/2)
+        hb = (AgentA.HOLD_TO,   belt_top(AgentA.HOLD_TO)   + AgentA.HOLD_GAP1
+              + AgentA.HOLD_T/2)
+        hinc = degrees_atan(ha[1]-hb[1], hb[0]-ha[0])
+        hl   = ((hb[0]-ha[0])**2 + (ha[1]-hb[1])**2) ** 0.5
+        o.append(box("A_hold", lx((ha[0]+hb[0])/2), 0, mm((ha[1]+hb[1])/2),
+                     mm(hl/2), mm(AgentA.HOLD_W/2), mm(AgentA.HOLD_T/2),
+                     "0.80 0.80 0.84 0.5", "robot",
+                     euler=(0, hinc, 0)).replace(
+                     '/>', ' friction="0.10 0.002 0.0001"/>'))
 
     # ---- chute-magazine + slide gate -------------------------------------
     cx = lx(AgentA.CHUTE_X)
@@ -298,11 +348,16 @@ def agent_a_body(name="agentA", pose=None, with_beams=False):
     # only Za 43.8 -- a full ring here punches through the belt and stops every
     # piece riding it.  Discs overshoot the axis rearward (~11 mm), so the rear
     # half is the half that has to catch them anyway.
-    o += [] and cone("A_chutelead", cx, 0, mm(AgentA.CHUTE_Z1),
-              mm(AgentA.CHUTE_D/2), mm(AgentA.CHUTE_D/2 + 5),
-              "0.17 0.58 0.79 1", cls="robot", skip_deg=100.0)
-    # (no lead-in funnel: with the belt tail on the chute axis (F7) the disc tips
-    # off already centred, and a cone here protrudes into the belt path.)
+    # raised rear collar: the piece's aft stop, and what centres it (see params)
+    if AgentA.CHUTE_Z2 > AgentA.CHUTE_Z1:
+        o += _ring_gap("A_collar", cx, 0, mm(AgentA.CHUTE_Z1), mm(AgentA.CHUTE_Z2),
+                       mm(AgentA.CHUTE_D/2), mm(AgentA.CHUTE_COLLAR_T),
+                       "0.17 0.58 0.79 1", skip_deg=AgentA.LEAD_SKIP)
+    if AgentA.LEAD_H > 0:
+        o += cone("A_chutelead", cx, 0, mm(max(AgentA.CHUTE_Z1, AgentA.CHUTE_Z2)),
+                  mm(AgentA.CHUTE_D/2), mm(AgentA.LEAD_R),
+                  "0.17 0.58 0.79 1", cls="robot", skip_deg=AgentA.LEAD_SKIP,
+                  height=mm(AgentA.LEAD_H), thick=0.0005)
 
     # ---- ball transfers ---------------------------------------------------
     for i, (sx, sy) in enumerate(((1, 1), (1, -1), (-1, 1), (-1, -1))):
@@ -378,26 +433,61 @@ def agent_a_body(name="agentA", pose=None, with_beams=False):
             f'rgba="0.85 0.55 0.2 1"/>',
             '  </body>']
 
-    # ---- chute base gate: slides to the left flank to release one disc ----
+    # ---- positive feed: plunger on the bore axis (see params, F18) --------
     body += [
-        f'  <body name="A_gate" pos="{cx:.5f} 0 {mm(AgentA.CHUTE_Z0-1.5):.5f}">',
-        '    <joint name="A_gate_j" type="slide" axis="0 1 0" range="0 0.105" damping="0.05"/>',
-        f'    <geom name="A_gate_g" class="robot" type="box" '
-        f'size="{mm(AgentA.CHUTE_D/2+4):.5f} {mm(AgentA.CHUTE_D/2+4):.5f} {mm(1.5):.5f}" '
-        f'mass="0.008" rgba="0.9 0.35 0.2 1"/>',
+        f'  <body name="A_feed" pos="{lx(AgentA.FEED_X):.5f} 0 '
+        f'{mm(AgentA.FEED_Z_UP):.5f}">',
+        f'    <joint name="A_feed_j" type="slide" axis="0 0 1" '
+        f'range="{-mm(AgentA.FEED_STROKE):.5f} 0" damping="0.06"/>',
+        f'    <geom name="A_feed_g" class="robot" type="cylinder" '
+        f'size="{mm(AgentA.FEED_D/2):.5f} {mm(1.5):.5f}" mass="0.012" '
+        f'friction="0.10 0.002 0.0001" rgba="0.90 0.55 0.20 1"/>',
         '  </body>']
 
-    body += [f'  <site name="A_imu" pos="0 0 {mm(60):.4f}"/>',
+    # ---- chute base gate: slides to the left flank to release one disc ----
+
+    esc = mm(AgentA.ESC_Y)
+    half = mm(AgentA.CHUTE_D/2 + 4)
+    body += [
+        f'  <body name="A_gate" pos="{cx:.5f} 0 {mm(AgentA.CHUTE_Z0-1.5):.5f}">',
+        f'    <joint name="A_gate_j" type="slide" axis="0 1 0" '
+        f'range="0 {esc:.5f}" damping="0.05"/>',
+        f'    <geom name="A_gate_g" class="robot" type="box" '
+        f'size="{half:.5f} {half:.5f} {mm(AgentA.ESC_T):.5f}" '
+        f'mass="0.008" rgba="0.9 0.35 0.2 1"/>',
+        '  </body>',
+        # retainer: parked clear of the bore at +ESC_Y, driven to 0 to hold the
+        # column while the shelf is out from under it
+        f'  <body name="A_blade" pos="{cx:.5f} {esc:.5f} '
+        f'{mm(AgentA.ESC_BLADE_Z):.5f}">',
+        f'    <joint name="A_blade_j" type="slide" axis="0 1 0" '
+        f'range="{-esc:.5f} 0" damping="0.05"/>',
+        f'    <geom name="A_blade_g" class="robot" type="box" '
+        f'size="{half:.5f} {mm(AgentA.ESC_BLADE_Y):.5f} '
+        f'{mm(AgentA.ESC_BLADE_T):.5f}" mass="0.005" rgba="0.9 0.55 0.2 1"/>',
+        f'    <geom name="A_blade_lip" class="robot" type="cylinder" '
+        f'zaxis="1 0 0" pos="0 {mm(AgentA.ESC_BLADE_Y):.5f} '
+        f'{mm(AgentA.ESC_LIP_Z - AgentA.ESC_BLADE_Z):.5f}" '
+        f'size="{mm(AgentA.ESC_LIP_R):.5f} {half:.5f}" mass="0.001" '
+        f'rgba="0.9 0.55 0.2 1"/>',
+        '  </body>']
+
+    body += [f'  <site name="A_mag" pos="{cx:.5f} 0 {mm(70):.4f}" zaxis="0 0 -1"/>',
+             f'  <site name="A_imu" pos="0 0 {mm(60):.4f}"/>',
              f'  <site name="A_tof" pos="{lx(AgentA.L):.5f} 0 {mm(45):.4f}" zaxis="1 0 0"/>',
              f'  <camera name="A_chase" pos="{-mm(560):.4f} 0 {mm(420):.4f}" xyaxes="0 -1 0 0.6 0 0.8"/>',
              '</body>']
 
+    fs = -mm(AgentA.FEED_STROKE)
+    nesc = -esc
     act = f"""
     <velocity name="a_drive_l" joint="A_w_l" kv="5.0" ctrlrange="-30 30" forcerange="-0.5 0.5"/>
     <velocity name="a_drive_r" joint="A_w_r" kv="5.0" ctrlrange="-30 30" forcerange="-0.5 0.5"/>
     <position name="a_finger_l" joint="A_f_l" kp="4" ctrlrange="-0.55 0.55"/>   <!-- RADIANS -->
     <position name="a_finger_r" joint="A_f_r" kp="4" ctrlrange="-0.55 0.55"/>   <!-- RADIANS -->
-    <position name="a_gate" joint="A_gate_j" kp="900" kv="12" ctrlrange="0 0.105" forcerange="-25 25"/>"""
+    <position name="a_gate" joint="A_gate_j" kp="900" kv="12" ctrlrange="0 {esc:.5f}" forcerange="-25 25"/>
+    <position name="a_blade" joint="A_blade_j" kp="600" kv="10" ctrlrange="{nesc:.5f} 0" forcerange="-12 12"/>
+    <position name="a_feed" joint="A_feed_j" kp="120" kv="5" ctrlrange="{fs:.5f} 0" forcerange="-4.0 4.0"/>"""
 
     sen = """
     <framepos    name="a_pos"  objtype="body" objname="agentA"/>
@@ -405,6 +495,13 @@ def agent_a_body(name="agentA", pose=None, with_beams=False):
     <gyro        name="a_gyro" site="A_imu" noise="0.002"/>
     <accelerometer name="a_acc" site="A_imu" noise="0.01"/>
     <rangefinder name="a_tof"  site="A_tof" noise="0.001"/>
+    <!-- looks down the bore from Za 70, ON the axis: the feed plunger parks
+         ABOVE the site so it is never in the ray, and a centred ray still hits
+         a piece that has drifted a few mm (off-axis at r 25 it missed a disc
+         sitting 3.4 mm off centre and read an empty magazine).  5 mm of range
+         per piece is how the robot knows how many are left, and so whether the
+         escapement needs its retainer at all. -->
+    <rangefinder name="a_mag"  site="A_mag" noise="0.0005"/>
     <jointvel    name="a_wvel_l" joint="A_w_l"/>
     <jointvel    name="a_wvel_r" joint="A_w_r"/>
     <actuatorfrc name="a_frc_l" actuator="a_drive_l"/>
@@ -452,8 +549,13 @@ def contact_pairs(agent="A", n_discs=3):
     # MAX of the two geoms' friction, so a smooth gate against a 0.6 piece still
     # gets 0.6 -- and the disc simply rode the gate out of the chute.
     for i in range(n_discs):
-        out.append(f'    <pair geom1="{agent}_gate_g" geom2="disc{i}_g" '
-                   f'friction="0.04 0.04 0.0005 0.0001 0.0001" solref="0.004 1" solimp="0.95 0.99 0.001"/>')
+        out.append(f'    <pair geom1="{agent}_feed_g" geom2="disc{i}_g" '
+                   f'friction="0.06 0.06 0.0005 0.0001 0.0001" '
+                   f'solref="0.004 1" solimp="0.95 0.99 0.001"/>')
+        for gg in ("gate_g", "blade_g", "blade_lip"):
+            out.append(f'    <pair geom1="{agent}_{gg}" geom2="disc{i}_g" '
+                       f'friction="0.04 0.04 0.0005 0.0001 0.0001" '
+                       f'solref="0.004 1" solimp="0.95 0.99 0.001"/>')
         # Converging guides are printed PETG: slippery.  Combined at the floor's
         # 0.6 the discs jammed across the throat instead of single-filing -- the
         # spec's own "#1 jam risk", reproduced.

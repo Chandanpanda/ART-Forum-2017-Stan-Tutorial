@@ -1,0 +1,755 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta charset="utf-8">
+<title>RFGYC'26 — How the two robots score</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  html,body{margin:0;background:#eeebe4}
+  a{color:#4f5fd7;text-decoration:none;border-bottom:1px solid rgba(79,95,215,.35)}
+  a:hover{color:#1b1d21;border-bottom-color:#1b1d21}
+  input[type=range]{accent-color:#4f5fd7}
+  ::-webkit-scrollbar{width:9px;height:9px}
+  ::-webkit-scrollbar-thumb{background:#cfcbc2;border-radius:9px}
+</style>
+</helmet>
+<div style="display:flex;flex-direction:column;height:100vh;background:#f4f2ee;color:#1b1d21;font-family:'IBM Plex Sans',ui-sans-serif,sans-serif;overflow:hidden">
+
+  <header style="display:flex;align-items:flex-end;justify-content:space-between;gap:24px;padding:14px 22px 12px;border-bottom:1px solid #ddd8cf;background:#fbfaf8">
+    <div>
+      <div style="font-size:10px;letter-spacing:.18em;color:#7c7870;text-transform:uppercase">ITU Robotics for Good Youth Challenge 2026–27 · Senior</div>
+      <div style="font-size:22px;font-weight:700;letter-spacing:-.01em;margin-top:3px">Two robots, four jobs, 120 seconds</div>
+    </div>
+    <div style="display:flex;align-items:center;gap:18px">
+      <div style="font-size:11.5px;line-height:1.45;color:#5d5a54;max-width:330px">Press play and watch the whole match. Turn parts on and off, spin the board, jump to any step. Then read the <a href="RFGYC26 Robot Drawing Set.dc.html">engineering drawings</a>.</div>
+      <div style="text-align:right;font-family:'IBM Plex Mono',monospace;flex:none;min-width:132px">
+        <div style="font-size:9.5px;letter-spacing:.14em;color:#7c7870;white-space:nowrap">ROUND CLOCK</div>
+        <div ref="{{ clockRef }}" style="font-size:26px;font-weight:600;letter-spacing:-.02em;line-height:1.05;white-space:nowrap">T+000 s</div>
+      </div>
+    </div>
+  </header>
+
+  <div style="flex:1;display:flex;min-height:0">
+    <div style="flex:1;position:relative;min-width:0;background:radial-gradient(120% 100% at 50% 0%,#fbfaf8 0%,#eceae4 100%)">
+      <canvas ref="{{ cvRef }}" style="width:100%;height:100%;display:block;cursor:grab"></canvas>
+    </div>
+
+    <aside style="width:376px;flex:none;border-left:1px solid #ddd8cf;background:#fbfaf8;display:flex;flex-direction:column;min-height:0">
+      <div style="padding:13px 16px 12px;border-bottom:1px solid #e6e1d8">
+        <div style="font-size:9.5px;letter-spacing:.16em;color:#7c7870;margin-bottom:8px">WHAT IS HAPPENING RIGHT NOW</div>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <div style="border-left:3px solid #4f5fd7;padding:2px 0 2px 10px">
+            <div style="display:flex;align-items:center;gap:7px">
+              <span style="display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;border-radius:50%;background:#4f5fd7;color:#fff;font-size:10.5px;font-weight:700">A</span>
+              <span style="font-size:13px;font-weight:600">{{ nowA }}</span>
+            </div>
+            <div style="font-size:11.5px;color:#5d5a54;line-height:1.45;margin-top:3px">{{ nowAText }}</div>
+          </div>
+          <div style="border-left:3px solid #8b5cd6;padding:2px 0 2px 10px">
+            <div style="display:flex;align-items:center;gap:7px">
+              <span style="display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;border-radius:50%;background:#8b5cd6;color:#fff;font-size:10.5px;font-weight:700">B</span>
+              <span style="font-size:13px;font-weight:600">{{ nowB }}</span>
+            </div>
+            <div style="font-size:11.5px;color:#5d5a54;line-height:1.45;margin-top:3px">{{ nowBText }}</div>
+          </div>
+        </div>
+      </div>
+
+      <div style="flex:1;overflow-y:auto;min-height:0">
+        <div style="padding:13px 16px 12px;border-bottom:1px solid #e6e1d8">
+          <div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:8px">
+            <div style="font-size:9.5px;letter-spacing:.16em;color:#7c7870;white-space:nowrap">SPIN THE BOARD</div>
+            <div ref="{{ yawRef }}" style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#1b1d21;white-space:nowrap;flex:none">{{ yawLabel }}</div>
+          </div>
+          <input type="range" min="0" max="360" step="1" value="{{ yawVal }}" onInput="{{ onYaw }}" style="width:100%">
+          <div style="display:flex;gap:6px;margin-top:8px">
+            <button onClick="{{ yawA }}" style="flex:1;padding:5px 0;font:500 10.5px 'IBM Plex Sans',sans-serif;background:#fff;border:1px solid #ddd8cf;border-radius:6px;cursor:pointer">0°</button>
+            <button onClick="{{ yawB }}" style="flex:1;padding:5px 0;font:500 10.5px 'IBM Plex Sans',sans-serif;background:#fff;border:1px solid #ddd8cf;border-radius:6px;cursor:pointer">35°</button>
+            <button onClick="{{ yawC }}" style="flex:1;padding:5px 0;font:500 10.5px 'IBM Plex Sans',sans-serif;background:#fff;border:1px solid #ddd8cf;border-radius:6px;cursor:pointer">125°</button>
+            <button onClick="{{ yawD }}" style="flex:1;padding:5px 0;font:500 10.5px 'IBM Plex Sans',sans-serif;background:#fff;border:1px solid #ddd8cf;border-radius:6px;cursor:pointer">215°</button>
+          </div>
+          <div style="font-size:10px;color:#7c7870;line-height:1.45;margin-top:8px">Drag the board itself to spin it too. The view is isometric — no perspective, like the drawings. Table 1143 × 1181 mm, walls 20 wide and 65 tall, one grid square = 100 mm.</div>
+        </div>
+        <div style="padding:13px 16px 6px">
+          <div style="font-size:9.5px;letter-spacing:.16em;color:#7c7870;margin-bottom:8px">THE PLAN, STEP BY STEP</div>
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <sc-for list="{{ chapters }}" as="ch" hint-placeholder-count="10">
+              <button onClick="{{ ch.go }}" style="text-align:left;display:flex;gap:9px;align-items:flex-start;padding:8px 10px;border-radius:8px;cursor:pointer;background:{{ ch.bg }};border:1px solid {{ ch.bd }}">
+                <span style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;flex:none;border-radius:5px;background:{{ ch.badgeBg }};color:{{ ch.badgeFg }};font-size:9.5px;font-weight:700;margin-top:1px">{{ ch.badge }}</span>
+                <span style="min-width:0">
+                  <span style="display:block;font-size:12.5px;font-weight:600;line-height:1.25">{{ ch.title }}</span>
+                  <span style="display:block;font-size:11px;color:#5d5a54;line-height:1.42;margin-top:2px">{{ ch.body }}</span>
+                </span>
+                <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;color:#8a867e;flex:none;margin-top:2px">{{ ch.clock }}</span>
+              </button>
+            </sc-for>
+          </div>
+        </div>
+
+        <div style="padding:12px 16px 18px">
+          <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px">
+            <div style="font-size:9.5px;letter-spacing:.16em;color:#7c7870">PARTS — TAP TO GREY OUT</div>
+            <button onClick="{{ showAll }}" style="font:500 10px 'IBM Plex Sans',sans-serif;color:#4f5fd7;background:none;border:none;cursor:pointer;padding:0">show all</button>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:4px">
+            <sc-for list="{{ groups }}" as="gp" hint-placeholder-count="10">
+              <button onClick="{{ gp.toggle }}" style="display:flex;align-items:center;gap:9px;padding:6px 9px;border-radius:7px;cursor:pointer;background:{{ gp.bg }};border:1px solid {{ gp.bd }};opacity:{{ gp.op }}">
+                <span style="width:11px;height:11px;border-radius:3px;flex:none;background:{{ gp.dot }}"></span>
+                <span style="flex:1;text-align:left;font-size:11.5px;font-weight:500">{{ gp.label }}</span>
+                <span style="font-family:'IBM Plex Mono',monospace;font-size:9px;color:#8a867e">{{ gp.state }}</span>
+              </button>
+            </sc-for>
+          </div>
+          <div style="margin-top:12px;font-size:10.5px;color:#7c7870;line-height:1.5">Every part here is drawn to its real size in millimetres, from the same numbers as the drawing sheets. Grey out Agent A to study Agent B on its own.</div>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <footer style="flex:none;border-top:1px solid #ddd8cf;background:#fbfaf8;padding:11px 22px 14px">
+    <div style="display:flex;align-items:center;gap:18px">
+      <div style="display:flex;align-items:center;gap:7px;flex:none">
+        <button onClick="{{ togglePlay }}" style="width:44px;height:34px;border-radius:8px;border:1px solid #1b1d21;background:#1b1d21;color:#fbfaf8;font:600 12px 'IBM Plex Sans',sans-serif;cursor:pointer">{{ playLabel }}</button>
+        <button onClick="{{ restart }}" style="height:34px;padding:0 11px;border-radius:8px;border:1px solid #ddd8cf;background:#fff;font:500 11px 'IBM Plex Sans',sans-serif;cursor:pointer">Restart</button>
+        <button onClick="{{ cycleSpeed }}" style="height:34px;padding:0 11px;border-radius:8px;border:1px solid #ddd8cf;background:#fff;font-family:'IBM Plex Mono',monospace;font-size:11px;cursor:pointer">{{ speedLabel }}</button>
+      </div>
+
+      <div style="flex:1;min-width:0">
+        <div onClick="{{ onScrub }}" style="position:relative;cursor:pointer;padding-top:13px">
+          <div style="position:absolute;top:0;left:0;right:0;height:11px">
+            <sc-for list="{{ ticks }}" as="tk" hint-placeholder-count="5">
+              <div style="position:absolute;left:{{ tk.left }};top:0;transform:translateX(-50%);font-family:'IBM Plex Mono',monospace;font-size:9px;color:#8a867e">{{ tk.label }}</div>
+            </sc-for>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:4px">
+            <div style="position:relative;height:22px;background:#f0eee8;border:1px solid #e6e1d8;border-radius:5px;overflow:hidden">
+              <sc-for list="{{ laneA }}" as="bk" hint-placeholder-count="5">
+                <div style="position:absolute;top:0;bottom:0;left:{{ bk.left }};width:{{ bk.width }};background:{{ bk.bg }};border-right:1px solid #fbfaf8;display:flex;align-items:center;padding-left:7px;font-size:10px;font-weight:500;color:{{ bk.fg }};white-space:nowrap;overflow:hidden">{{ bk.label }}</div>
+              </sc-for>
+            </div>
+            <div style="position:relative;height:22px;background:#f0eee8;border:1px solid #e6e1d8;border-radius:5px;overflow:hidden">
+              <sc-for list="{{ laneB }}" as="bk" hint-placeholder-count="5">
+                <div style="position:absolute;top:0;bottom:0;left:{{ bk.left }};width:{{ bk.width }};background:{{ bk.bg }};border-right:1px solid #fbfaf8;display:flex;align-items:center;padding-left:7px;font-size:10px;font-weight:500;color:{{ bk.fg }};white-space:nowrap;overflow:hidden">{{ bk.label }}</div>
+              </sc-for>
+            </div>
+          </div>
+          <div ref="{{ headRef }}" style="position:absolute;top:11px;bottom:0;left:0;width:2px;background:#1b1d21;pointer-events:none"></div>
+        </div>
+      </div>
+
+      <div style="flex:none;display:flex;gap:14px;font-size:10.5px;color:#5d5a54">
+        <div style="display:flex;align-items:center;gap:6px"><span style="width:11px;height:11px;border-radius:3px;background:#4f5fd7"></span>Agent A · beams + samples</div>
+        <div style="display:flex;align-items:center;gap:6px"><span style="width:11px;height:11px;border-radius:3px;background:#8b5cd6"></span>Agent B · kits + markers</div>
+      </div>
+    </div>
+  </footer>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;showGrid&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Scene&quot;},&quot;showLabels&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Scene&quot;},&quot;startPaused&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:false,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Playback&quot;},&quot;colorA&quot;:{&quot;editor&quot;:&quot;color&quot;,&quot;default&quot;:&quot;#4f5fd7&quot;,&quot;options&quot;:[&quot;#4f5fd7&quot;,&quot;#1f7a8c&quot;,&quot;#2f6b3a&quot;,&quot;#8a4b2f&quot;],&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Scene&quot;},&quot;colorB&quot;:{&quot;editor&quot;:&quot;color&quot;,&quot;default&quot;:&quot;#8b5cd6&quot;,&quot;options&quot;:[&quot;#8b5cd6&quot;,&quot;#c0517a&quot;,&quot;#3f7fbf&quot;,&quot;#b3752a&quot;],&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Scene&quot;}}">
+const FCX = 571.5, FCY = 590.5, TROUND = 120;
+
+const COL = {
+  floor: '#e7e3d9', grid: '#d8d3c6', wall: '#cdc7b9', tape: '#33353a',
+  zoneH: '#f0d3d3', zonePCC: '#f4e7c9', zoneRZ: '#d5e8d5', zoneQ: '#dfe1e8', zoneLab: '#d8e3f0',
+  wood: '#cba470', beam: '#b5824e', disc: '#d8b483',
+  red: '#d64545', yellow: '#dfa61b', green: '#4b9e4b', grey: '#c7c4bd'
+};
+
+const GROUPS = [
+  { k: 'field',  label: 'Board, walls & zones',      dot: '#9c978c' },
+  { k: 'agentA', label: 'Agent A — chassis & wheels', dot: '#4f5fd7' },
+  { k: 'intakeA',label: 'A · disc scoop + roller',    dot: '#12a08c' },
+  { k: 'magA',   label: 'A · magazine + dispenser',   dot: '#2b93c9' },
+  { k: 'beamC',  label: 'A · beam pockets + beams',   dot: '#d98324' },
+  { k: 'agentB', label: 'Agent B — chassis & wheels', dot: '#8b5cd6' },
+  { k: 'funnelB',label: 'B · funnel + colour sensor', dot: '#00a3b4' },
+  { k: 'binsB',  label: 'B · sort bins + markers',    dot: '#cf4c8c' },
+  { k: 'kitsB',  label: 'B · kit tubes + kits',       dot: '#c9922e' },
+  { k: 'discs',  label: 'Sample discs',               dot: '#d8b483' }
+];
+
+// Agent A's OUTER envelope is 285 x 235 -- the beam pockets sit at local y +/-105.5
+// with depth 24, so the flanks reach +/-117.5, not the 190 chassis deck. Half-diagonal
+// is therefore 184.7, and every heading change keeps the centre >=185 from all four
+// walls (the y=210 dwell band exists for exactly this reason). Discs are picked the
+// instant the front edge (cx-142.5 at h180) reaches them, so nothing is driven over.
+const PATH_A = [
+  [0,974.5,140,180],[3,974.5,140,180],[7,700,150,180],[10,470,150,180],
+  [13,342.5,150,180],[17,262.5,150,180],[20,232.5,150,180],[23,150,150,180],
+  [27,470,150,180],[29,470,210,180],[31,470,210,90],[34,431.5,210,90],
+  [37,431.5,257,90],[40,431.5,210,90],[42,431.5,210,0],[45,571.5,210,0],
+  [47,571.5,210,90],[50,571.5,257,90],[53,571.5,210,90],[55,571.5,210,0],
+  [58,711.5,210,0],[60,711.5,210,90],[63,711.5,257,90],[66,711.5,210,90],
+  [69,711.5,358,90],[71,711.5,358,180],[76,430,358,180],[80,144.5,358,180],
+  [82,144.5,358,180],[85,144.5,430,180],[88,430,430,180],[90,430,430,270],
+  [94,395.5,144.5,270],[97,395.5,144.5,270],[100,500,144.5,270],[104,560,660,270],
+  [120,560,660,270]
+];
+
+// Agent B: 265 x 180 body, half-diagonal 160. It works the top strip and the two
+// side columns, descending each column from ABOVE at h270 so it picks top-down
+// and its footprint never reaches an unpicked spot. Below y=481 only in the box.
+const PATH_B = [
+  [0,740,140,90],[4,740,500,90],[8,740,800,90],[10,740,800,0],[14,960,870,0],
+  [16,960,870,270],[18,1043,813.5,270],[21,1043,713.5,270],[24,1043,613.5,270],
+  [27,1043,830,270],[29,943,830,270],[31,943,813.5,270],[34,943,713.5,270],
+  [37,943,613.5,270],[40,943,830,270],[43,1000,950,270],[46,960,950,270],
+  [47.5,960,950,180],[51,571,900,180],[52.5,571,900,270],[54,571,860,270],
+  [57,571,900,270],[60,571,940,270],[62,571,940,180],[66,200,950,180],
+  [67.5,200,950,270],[69,140,950,270],[72,200,900,270],[75,200,813.5,270],
+  [78,200,713.5,270],[81,200,613.5,270],[84,200,840,270],[86,100,840,270],
+  [88,100,813.5,270],[91,100,713.5,270],[94,100,613.5,270],[97,100,840,270],
+  [100,140,1000,270],[103,140,1000,270],[105,200,1000,270],[106.5,200,1000,0],
+  [110,571,980,0],[113,571,980,0],[114.5,800,980,0],[116,800,980,270],
+  [118,800,230,270],[120,800,230,270]
+];
+
+const CHAPTERS = [
+  { t: 0, badge: 'A+B', title: 'The playing field',
+    body: 'A walled table 1143 × 1181 mm — a giant board game. Two robots, 120 seconds, no human allowed to touch them once the round starts.' },
+  { t: 0, badge: 'A+B', title: 'Both robots start in one small box',
+    body: 'Everything must fit inside a 480 × 280 mm rectangle of black tape: Agent A with two wooden beams in side slots, Agent B with 10 medical kits stacked in two tubes.' },
+  { t: 5, badge: 'A', title: 'Sweep the quarantine corner',
+    body: 'Three sample discs lie somewhere in the corner. Agent A never looks for them — it drives the corner with a 165 mm mouth open, and a foam roller drags whatever it meets up a thin ramp into a stack tube.' },
+  { t: 16, badge: 'B', title: 'Collect and colour-sort the markers',
+    body: '12 markers sit on fixed spots, but their colours change every match. Agent B comes down each column from above, so the funnel mouth meets one marker at a time: a colour sensor inside a light-proof box reads it, then a flap flicks it into the red, yellow or green bin.' },
+  { t: 37, badge: 'A', title: 'Post the samples into the lab',
+    body: 'Three 60 mm holes. Agent A drops each disc through a funnel-shaped snout hanging 8 mm above the plate — the 45° chamfer swallows up to 10 mm of driving error, so the shape does the precision, not the code.' },
+  { t: 43, badge: 'B', title: 'Deliver the medical kits',
+    body: '6 kits at the Hospital, 2 at each Primary Care Centre. A shutter flicks open and one cube drops through a hole in the robot floor. Zero sensors in this whole job.' },
+  { t: 76, badge: 'A', title: 'Seal the corner — beam 1',
+    body: 'Drive into the left wall until the bumper switches click, open the two fingers, then slide sideways. The 280 mm beam is left standing on its 20 mm edge: lean it past 18.4° and it topples.' },
+  { t: 90, badge: 'A', title: 'Seal the corner — beam 2',
+    body: 'Back out, turn 90°, and push the 250 mm beam along the bottom wall until a microswitch feels it touch beam 1. That touch is the stop signal — wheel counting alone drifts 12–24 mm, which is far too much.' },
+  { t: 100, badge: 'B', title: 'Discharge by colour',
+    body: 'Red to the Hospital, yellow to a Primary Care Centre, green to the Recovery Zone. The Recovery Zone is inside the start box, so the last drop brings Agent B home.' },
+  { t: 118, badge: 'A+B', title: 'Round complete',
+    body: 'Beams are worth 70 points, samples 50, and the kits and markers the rest. Everything was decided before the buzzer — the robots ran the whole plan alone.' }
+];
+
+const PHASE_A = [
+  [0, 25, 'Sweeping for samples', 'One pass across the quarantine corner with the intake roller spinning — the mouth meets each disc in turn.'],
+  [25, 66, 'Posting samples', 'Lining up on each 60 mm hole in the laboratory plate and releasing one disc.'],
+  [66, 85, 'Placing beam 1', 'Squaring on the left wall, opening the fingers, sliding clear.'],
+  [85, 100, 'Placing beam 2', 'Turning 90°, pushing until the contact switch closes, then reversing straight back.'],
+  [100, 121, 'Parked', 'Standing clear — nothing may touch the finished beams.']
+];
+
+const PHASE_B = [
+  [0, 40, 'Markers · right columns', 'Coming down each column from above so the funnel meets one marker at a time.'],
+  [40, 72, 'Delivering kits', 'Two at the far Primary Care Centre, six at the Hospital, two at the near one.'],
+  [72, 97, 'Markers · left columns', 'Same again on the other side: swallow, read the colour, flick it into the matching bin.'],
+  [97, 113, 'Discharging by colour', 'Yellow to a Primary Care Centre, then red to the Hospital.'],
+  [113, 121, 'Green, then home', 'Green into the Recovery Zone — which sits inside the start box, so this drop brings it home.']];
+
+const LANE_A = [[0,25,'Sweep corner'],[25,66,'Post samples'],[66,85,'Beam 1'],[85,100,'Beam 2'],[100,120,'Park']];
+const LANE_B = [[0,40,'Markers right'],[40,72,'Deliver kits'],[72,97,'Markers left'],[97,113,'Discharge'],[113,120,'Green + home']];
+
+const BIN_LOCAL = { red: 60, yellow: 0, green: -60 };
+
+// pick = the moment the carrier's front edge arrives; dest is derived from the
+// carrier's own pose at drop time (see resolveDests), never hand-placed.
+const DISCS = [
+  { home: [200,150], pick: 13, drop: 37 },
+  { home: [120,220], pick: 17, drop: 50 },
+  { home: [90,80],   pick: 20, drop: 63 }
+];
+
+const KITS = [
+  { drop: 43.5, lane: 35 }, { drop: 44, lane: -35 },
+  { drop: 54.5, lane: 35 }, { drop: 55, lane: -35 },
+  { drop: 57.5, lane: 35 }, { drop: 58, lane: -35 },
+  { drop: 60.5, lane: 35 }, { drop: 61, lane: -35 },
+  { drop: 69.5, lane: 35 }, { drop: 70, lane: -35 }
+];
+
+const CYL = [
+  { home: [1043,681], c: 'red',    pick: 18, drop: 110.5 },
+  { home: [1043,581], c: 'yellow', pick: 21, drop: 100.5 },
+  { home: [1043,481], c: 'green',  pick: 24, drop: 118.3 },
+  { home: [943,681],  c: 'red',    pick: 31, drop: 111 },
+  { home: [943,581],  c: 'yellow', pick: 34, drop: 101 },
+  { home: [943,481],  c: 'green',  pick: 37, drop: 118.6 },
+  { home: [200,681],  c: 'red',    pick: 75, drop: 111.5 },
+  { home: [200,581],  c: 'yellow', pick: 78, drop: 101.5 },
+  { home: [200,481],  c: 'green',  pick: 81, drop: 118.9 },
+  { home: [100,681],  c: 'red',    pick: 88, drop: 112 },
+  { home: [100,581],  c: 'yellow', pick: 91, drop: 102 },
+  { home: [100,481],  c: 'green',  pick: 94, drop: 119.2 }
+];
+
+function hex2rgb(h) { const n = parseInt(h.slice(1), 16); return [n >> 16 & 255, n >> 8 & 255, n & 255]; }
+function shade(h, f) { const c = hex2rgb(h); return 'rgb(' + Math.round(c[0] * f) + ',' + Math.round(c[1] * f) + ',' + Math.round(c[2] * f) + ')'; }
+function lerp(a, b, u) { return a + (b - a) * u; }
+function ease(u) { return u < 0.5 ? 2 * u * u : 1 - 2 * (1 - u) * (1 - u); }
+
+function samplePath(path, t) {
+  if (t <= path[0][0]) return { x: path[0][1], y: path[0][2], h: path[0][3] };
+  const last = path[path.length - 1];
+  if (t >= last[0]) return { x: last[1], y: last[2], h: last[3] };
+  for (let i = 0; i < path.length - 1; i++) {
+    const a = path[i], b = path[i + 1];
+    if (t >= a[0] && t <= b[0]) {
+      const u = ease((t - a[0]) / (b[0] - a[0]));
+      let dh = ((b[3] - a[3]) % 360 + 540) % 360 - 180;
+      return { x: lerp(a[1], b[1], u), y: lerp(a[2], b[2], u), h: a[3] + dh * u };
+    }
+  }
+  return { x: last[1], y: last[2], h: last[3] };
+}
+
+function worldOf(pose, lx, ly) {
+  const r = pose.h * Math.PI / 180, c = Math.cos(r), s = Math.sin(r);
+  return [pose.x + lx * c - ly * s, pose.y + lx * s + ly * c];
+}
+
+// Every destination is the carrier's own aperture position at its drop time, so a
+// released piece can never jump: it lands exactly where the robot let go of it.
+let DESTS_READY = false;
+function resolveDests() {
+  if (DESTS_READY) return;
+  DESTS_READY = true;
+  DISCS.forEach(d => { d.dest = worldOf(samplePath(PATH_A, d.drop), 115, 0); });
+  KITS.forEach(k => { k.dest = worldOf(samplePath(PATH_B, k.drop), -89, k.lane); });
+  const seen = { red: 0, yellow: 0, green: 0 };
+  CYL.forEach(c => {
+    // spread the four same-colour cylinders into a short row under the chute
+    const spread = (seen[c.c]++ - 1.5) * 24;
+    c.dest = worldOf(samplePath(PATH_B, c.drop), -8, BIN_LOCAL[c.c] + spread);
+  });
+}
+
+class Component extends DCLogic {
+  state = { off: {}, playing: true, speed: 1, phaseKey: '', yaw: 35 };
+
+  constructor(props) {
+    super(props);
+    this.cvRef = React.createRef();
+    this.clockRef = React.createRef();
+    this.headRef = React.createRef();
+    this.yawRef = React.createRef();
+    this.t = 0;
+    this.yaw = 35;
+    this.solids = [];
+  }
+
+  componentDidMount() {
+    try {
+      const s = JSON.parse(localStorage.getItem('rfgyc-explainer-v1') || '{}');
+      if (typeof s.t === 'number' && s.t >= 0 && s.t < TROUND - 1) this.t = s.t;
+      if (typeof s.yaw === 'number') this.yaw = s.yaw;
+      if (s.off) this.setState({ off: s.off });
+      if (typeof s.speed === 'number') this.setState({ speed: s.speed });
+      this.setState({ yaw: this.yaw, playing: this.props.startPaused ? false : true });
+    } catch (e) {}
+    this.last = performance.now();
+    this.saveAt = 0;
+    const cv = this.cvRef.current;
+    if (cv) {
+      cv.addEventListener('pointerdown', this.onDown);
+      window.addEventListener('pointermove', this.onMove);
+      window.addEventListener('pointerup', this.onUp);
+    }
+    this.loop = (now) => {
+      const dt = Math.min(0.05, (now - this.last) / 1000);
+      this.last = now;
+      if (this.state.playing) {
+        this.t += dt * this.state.speed;
+        if (this.t >= TROUND) { this.t = TROUND; this.setState({ playing: false }); }
+      }
+      if (now - (this.drewAt || 0) > 21) { this.drewAt = now; this.draw(); }
+      this.syncHud(now);
+      this.raf = requestAnimationFrame(this.loop);
+    };
+    this.raf = requestAnimationFrame(this.loop);
+  }
+
+  componentWillUnmount() {
+    cancelAnimationFrame(this.raf);
+    window.removeEventListener('pointermove', this.onMove);
+    window.removeEventListener('pointerup', this.onUp);
+  }
+
+  onDown = (e) => { this.drag = { x: e.clientX, yaw: this.yaw }; e.target.style.cursor = 'grabbing'; };
+  onMove = (e) => {
+    if (!this.drag) return;
+    this.yaw = (this.drag.yaw + (e.clientX - this.drag.x) * 0.4 % 360 + 360) % 360;
+    if (this.yawRef.current) this.yawRef.current.textContent = Math.round(this.yaw) + '\u00b0';
+  };  onUp = () => {
+    if (!this.drag) return;
+    this.drag = null;
+    if (this.cvRef.current) this.cvRef.current.style.cursor = 'grab';
+    this.setState({ yaw: Math.round(this.yaw) });
+  };
+
+  seek(t) { this.t = Math.max(0, Math.min(TROUND, t)); this.setState({ playing: true }); }
+
+  syncHud(now) {
+    if (this.clockRef.current) this.clockRef.current.textContent = 'T+' + String(Math.round(this.t)).padStart(3, '0') + ' s';
+    if (this.headRef.current) this.headRef.current.style.left = (this.t / TROUND * 100).toFixed(2) + '%';
+    const key = this.phase(PHASE_A)[0] + '|' + this.phase(PHASE_B)[0];
+    if (key !== this.state.phaseKey) this.setState({ phaseKey: key });
+    if (now - this.saveAt > 1800) {
+      this.saveAt = now;
+      try {
+        localStorage.setItem('rfgyc-explainer-v1', JSON.stringify({ t: this.t, yaw: this.yaw, off: this.state.off, speed: this.state.speed }));
+      } catch (e) {}
+    }
+  }
+
+  phase(table) {
+    for (const p of table) if (this.t >= p[0] && this.t < p[1]) return p;
+    return table[table.length - 1];
+  }
+
+  isOff(k) { return !!this.state.off[k]; }
+
+  // ---- geometry helpers -------------------------------------------------
+  rectPts(cx, cy, w, d, rot) {
+    const c = Math.cos(rot), s = Math.sin(rot), out = [];
+    const sx = [-1, 1, 1, -1], sy = [-1, -1, 1, 1];
+    for (let i = 0; i < 4; i++) {
+      const lx = sx[i] * w / 2, ly = sy[i] * d / 2;
+      out.push([cx + lx * c - ly * s, cy + lx * s + ly * c]);
+    }
+    return out;
+  }
+
+  discPts(cx, cy, r, n) {
+    const out = [];
+    for (let i = 0; i < n; i++) { const a = i / n * Math.PI * 2; out.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]); }
+    return out;
+  }
+
+  addSolid(pts, z0, h, color, key, alpha) {
+    let cx = 0, cy = 0;
+    for (let i = 0; i < pts.length; i++) { cx += pts[i][0]; cy += pts[i][1]; }
+    cx /= pts.length; cy /= pts.length;
+    this.solids.push({ pts, z0, h, color, key, alpha: alpha === undefined ? 1 : alpha, cx, cy });
+  }
+
+  // local (forward-x, left-y) part -> world
+  addPart(pose, lx, ly, w, d, z0, h, color, key, alpha) {
+    const rot = pose.h * Math.PI / 180, c = Math.cos(rot), s = Math.sin(rot);
+    const cx = pose.x + lx * c - ly * s, cy = pose.y + lx * s + ly * c;
+    this.addSolid(this.rectPts(cx, cy, w, d, rot), z0, h, color, key, alpha);
+    return [cx, cy];
+  }
+
+  pieceAt(p, carrier, carriedLocal, t) {
+    const pick = p.pick === undefined ? -1 : p.pick, drop = p.drop;
+    const rot = carrier.h * Math.PI / 180, c = Math.cos(rot), s = Math.sin(rot);
+    const cx = carrier.x + carriedLocal[0] * c - carriedLocal[1] * s;
+    const cy = carrier.y + carriedLocal[0] * s + carriedLocal[1] * c;
+    const cz = carriedLocal[2];
+    if (pick >= 0 && t < pick) {
+      const u = t > pick - 0.7 ? ease((t - (pick - 0.7)) / 0.7) : 0;
+      return { x: lerp(p.home[0], cx, u), y: lerp(p.home[1], cy, u), z: lerp(0, cz, u) + Math.sin(u * Math.PI) * 30, carried: false };
+    }
+    if (t < drop) return { x: cx, y: cy, z: cz, carried: true };
+    const u = t < drop + 0.7 ? ease((t - drop) / 0.7) : 1;
+    return { x: lerp(cx, p.dest[0], u), y: lerp(cy, p.dest[1], u), z: lerp(cz, 0, u) + Math.sin(u * Math.PI) * 26, carried: false };
+  }
+
+  draw() {
+    const cv = this.cvRef.current; if (!cv) return;
+    resolveDests();
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const w = cv.clientWidth, h = cv.clientHeight;
+    if (!w || !h) return;
+    if (cv.width !== Math.round(w * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
+    const g = cv.getContext('2d');
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, w, h);
+
+    const K = Math.min(w / 2200, h / 1520);
+    const ox = w / 2, oy = h / 2 + h * 0.09;
+    const yr = this.yaw * Math.PI / 180, cs = Math.cos(yr), sn = Math.sin(yr);
+    const P = (x, y, z) => {
+      const dx = x - FCX, dy = y - FCY;
+      const rx = dx * cs - dy * sn, ry = dx * sn + dy * cs;
+      return [ox + (rx - ry) * 0.866 * K, oy + ((rx + ry) * 0.5 - z) * K];
+    };
+    const DEP = (x, y, z) => {
+      const dx = x - FCX, dy = y - FCY;
+      return (dx * cs - dy * sn) + (dx * sn + dy * cs) + z * 0.6;
+    };
+    const poly = (pts) => { g.beginPath(); pts.forEach((p, i) => i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1])); g.closePath(); };
+    const flat = (pts, fill, stroke, alpha) => {
+      g.globalAlpha = alpha === undefined ? 1 : alpha;
+      poly(pts.map(p => P(p[0], p[1], 0.6)));
+      if (fill) { g.fillStyle = fill; g.fill(); }
+      if (stroke) { g.strokeStyle = stroke; g.lineWidth = 1; g.stroke(); }
+      g.globalAlpha = 1;
+    };
+    const text = (x, y, z, s, size, color, weight) => {
+      const p = P(x, y, z);
+      g.font = (weight || 600) + ' ' + size + "px 'IBM Plex Sans',sans-serif";
+      g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.lineWidth = 3.2; g.strokeStyle = 'rgba(251,250,248,.92)'; g.strokeText(s, p[0], p[1]);
+      g.fillStyle = color; g.fillText(s, p[0], p[1]);
+    };
+
+    const t = this.t;
+    const fieldOff = this.isOff('field');
+    const showGrid = this.props.showGrid !== false;
+    const showLabels = this.props.showLabels !== false;
+    const cA = this.props.colorA || '#4f5fd7';
+    const cB = this.props.colorB || '#8b5cd6';
+
+    // floor + decals
+    flat([[0, 0], [1143, 0], [1143, 1181], [0, 1181]], fieldOff ? '#e4e2dc' : COL.floor, '#c8c2b4');
+    if (showGrid) {
+      g.globalAlpha = fieldOff ? 0.25 : 0.55; g.strokeStyle = COL.grid; g.lineWidth = 1;
+      for (let x = 100; x < 1143; x += 100) { const a = P(x, 0, 0.5), b = P(x, 1181, 0.5); g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.stroke(); }
+      for (let y = 100; y < 1181; y += 100) { const a = P(0, y, 0.5), b = P(1143, y, 0.5); g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.stroke(); }
+      g.globalAlpha = 1;
+    }
+    const zoneAlpha = fieldOff ? 0.3 : 1;    flat([[0, 0], [280, 0], [280, 280], [0, 280]], COL.zoneQ, '#b9bdc8', zoneAlpha);
+    flat([[351.5, 360], [791.5, 360], [791.5, 510], [351.5, 510]], COL.zoneLab, '#9fb6d0', zoneAlpha);
+    flat([[471.5, 901], [671.5, 901], [671.5, 1181], [471.5, 1181]], COL.zoneH, '#dfb3b3', zoneAlpha);
+    flat([[0, 981], [200, 981], [200, 1181], [0, 1181]], COL.zonePCC, '#dcc48c', zoneAlpha);
+    flat([[943, 981], [1143, 981], [1143, 1181], [943, 1181]], COL.zonePCC, '#dcc48c', zoneAlpha);
+    flat([[700, 190], [900, 190], [900, 270], [700, 270]], COL.zoneRZ, '#9dc79d', zoneAlpha);
+    // deployment tape 480 x 280 at X 643..1123
+    g.globalAlpha = zoneAlpha;
+    [[643, 0, 480, 20], [643, 260, 480, 20], [643, 0, 20, 280], [1103, 0, 20, 280]].forEach(r => {
+      flat([[r[0], r[1]], [r[0] + r[2], r[1]], [r[0] + r[2], r[1] + r[3]], [r[0], r[1] + r[3]]], COL.tape, null, zoneAlpha);
+    });
+    g.globalAlpha = 1;
+    // lab holes
+    [431.5, 571.5, 711.5].forEach(x => flat(this.discPts(x, 372, 30, 12), '#c3cedd', '#8ea6c2', zoneAlpha));
+    // sticker spots
+    CYL.forEach(cy0 => flat(this.discPts(cy0.home[0], cy0.home[1], 12, 8), t < cy0.pick ? COL[cy0.c] : '#dcd8cf', null, t < cy0.pick ? 0.55 : 0.4));
+
+    if (showLabels) {
+      this.labels = [
+        [140, 152, 'QUARANTINE', 11.5, '#6f7480'],
+        [571.5, 470, 'LABORATORY', 11.5, '#5d7799'],
+        [571.5, 1105, 'HOSPITAL', 12.5, '#9e5b5b'],
+        [100, 1085, 'PCC 1', 11.5, '#98793a'],
+        [1043, 1085, 'PCC 2', 11.5, '#98793a'],
+        [800, 300, 'RECOVERY ZONE', 10.5, '#4f7a4f']
+      ];
+    } else {
+      this.labels = [];
+    }
+
+    // ---- solids ---------------------------------------------------------
+    this.solids = [];
+    const S = (pts, z0, h, color, key) => this.addSolid(pts, z0, h, color, key);
+    // walls
+    S([[-20, -20], [1163, -20], [1163, 0], [-20, 0]], 0, 65, COL.wall, 'field');
+    S([[-20, 1181], [1163, 1181], [1163, 1201], [-20, 1201]], 0, 65, COL.wall, 'field');
+    S([[-20, 0], [0, 0], [0, 1181], [-20, 1181]], 0, 65, COL.wall, 'field');
+    S([[1143, 0], [1163, 0], [1163, 1181], [1143, 1181]], 0, 65, COL.wall, 'field');
+
+    const A = samplePath(PATH_A, t);
+    const B = samplePath(PATH_B, t);
+
+    // Agent A parts (local: +x forward, +y left)
+    this.addPart(A, 0, 0, 285, 190, 6, 52, cA, 'agentA');
+    this.addPart(A, 0, 87.5, 65, 25, 0, 65, shade(cA, 0.55), 'agentA');
+    this.addPart(A, 0, -87.5, 65, 25, 0, 65, shade(cA, 0.55), 'agentA');
+    this.addPart(A, -102, 0, 22, 22, 58, 22, '#d64545', 'agentA');
+    this.addPart(A, 125, 0, 35, 165, 0, 40, '#12a08c', 'intakeA');
+    this.addPart(A, 106, 0, 30, 165, 11, 30, shade('#12a08c', 0.75), 'intakeA');
+    this.addPart(A, 80, 0, 62, 62, 13, 77, '#2b93c9', 'magA', 0.42);
+    this.addPart(A, 115, 0, 35, 64, 8, 60, shade('#2b93c9', 0.8), 'magA', 0.6);
+    this.addPart(A, 0, 105.5, 285, 24, 0, 10, '#d98324', 'beamC');
+    this.addPart(A, 0, -105.5, 285, 24, 0, 10, '#d98324', 'beamC');
+
+    // Beams: carried at the same local offset that puts them in their final
+    // position when released, so release is a hand-off, not a jump.
+    const beam1Placed = t >= 82, beam2Placed = t >= 97;
+    if (beam1Placed) S(this.rectPts(142, 252.5, 280, 20, 0), 0, 60, COL.beam, 'beamC');
+    else this.addPart(A, 2.5, 105.5, 280, 20, 0, 60, COL.beam, 'beamC');
+    if (beam2Placed) S(this.rectPts(290, 127, 20, 250, 0), 0, 60, COL.beam, 'beamC');
+    else this.addPart(A, 17.5, -105.5, 250, 20, 0, 60, COL.beam, 'beamC');
+
+    // Agent B parts
+    this.addPart(B, 0, 0, 265, 180, 6, 46, cB, 'agentB');
+    this.addPart(B, -22.5, 72.5, 65, 25, 0, 65, shade(cB, 0.55), 'agentB');
+    this.addPart(B, -22.5, -72.5, 65, 25, 0, 65, shade(cB, 0.55), 'agentB');
+    this.addPart(B, -72.5, 60, 22, 22, 52, 22, '#d64545', 'agentB');
+    this.addPart(B, 117.5, 0, 30, 90, 0, 40, '#00a3b4', 'funnelB', 0.62);
+    this.addPart(B, 94, 0, 24, 48, 6, 24, shade('#00a3b4', 0.7), 'funnelB');
+    this.addPart(B, 65, 0, 26, 36, 0, 50, shade('#00a3b4', 0.86), 'funnelB', 0.62);
+    [60, 0, -60].forEach((ly, i) => this.addPart(B, -8, ly, 24, 24, 0, 90, i === 0 ? '#cf4c8c' : i === 1 ? shade('#cf4c8c', 0.86) : shade('#cf4c8c', 0.72), 'binsB', 0.42));
+    this.addPart(B, -89, 35, 27, 27, 0, 110, '#c9922e', 'kitsB', 0.42);
+    this.addPart(B, -89, -35, 27, 27, 0, 110, '#c9922e', 'kitsB', 0.42);
+
+    // kits
+    KITS.forEach((k, i) => {
+      const idx = Math.floor(i / 2);
+      const p = this.pieceAt({ home: [0, 0], pick: -1, drop: k.drop, dest: k.dest }, B, [-89, k.lane, 4 + idx * 20], t);
+      S(this.rectPts(p.x, p.y, 25, 25, p.carried ? B.h * Math.PI / 180 : 0), p.z, 20, COL.wood, 'kitsB');
+    });
+    // discs
+    DISCS.forEach((d, i) => {
+      const p = this.pieceAt(d, A, [80, 0, 20 + i * 8], t);
+      S(this.discPts(p.x, p.y, 28, 12), p.z, 5, COL.disc, 'discs');
+    });
+    // cylinders
+    const binCount = { red: 0, yellow: 0, green: 0 };
+    CYL.forEach(c => {
+      const slot = binCount[c.c]++;
+      const p = this.pieceAt(c, B, [-8, BIN_LOCAL[c.c], 4 + slot * 21], t);
+      S(this.discPts(p.x, p.y, 10, 8), p.z, 20, COL[c.c], 'binsB');
+    });
+
+    // draw solids back to front
+    this.solids.forEach(s => { s.key2 = DEP(s.cx, s.cy, s.z0); });
+    this.solids.sort((s1, s2) => s1.key2 - s2.key2);
+
+    this.solids.forEach(s => {
+      const off = this.isOff(s.key);
+      const col = off ? COL.grey : s.color;
+      g.globalAlpha = off ? 0.4 : s.alpha;
+      const base = s.pts.map(p => P(p[0], p[1], s.z0));
+      const top = s.pts.map(p => P(p[0], p[1], s.z0 + s.h));
+      const cScreen = P(s.cx, s.cy, s.z0)[0];
+      const sides = [];
+      for (let i = 0; i < s.pts.length; i++) {
+        const j = (i + 1) % s.pts.length;
+        const mx = (s.pts[i][0] + s.pts[j][0]) / 2, my = (s.pts[i][1] + s.pts[j][1]) / 2;
+        sides.push({ d: DEP(mx, my, 0), q: [base[i], base[j], top[j], top[i]], mid: P(mx, my, s.z0)[0] });
+      }
+      sides.sort((a, b) => a.d - b.d);
+      g.lineWidth = 0.9;
+      sides.forEach(sd => {
+        poly(sd.q);
+        g.fillStyle = shade(col.charAt(0) === '#' ? col : '#c7c4bd', sd.mid < cScreen ? 0.8 : 0.62);
+        g.fill();
+        g.strokeStyle = 'rgba(27,29,33,.18)'; g.stroke();
+      });
+      poly(top);
+      g.fillStyle = col; g.fill();
+      g.strokeStyle = 'rgba(27,29,33,.32)'; g.stroke();
+      g.globalAlpha = 1;
+    });
+
+    // event pulses
+    const pulse = (x, y, u) => {
+      const p = P(x, y, 2), r = 10 + u * 46;
+      g.globalAlpha = (1 - u) * 0.75;
+      g.strokeStyle = '#1b1d21'; g.lineWidth = 2;
+      g.beginPath(); g.ellipse(p[0], p[1], r, r * 0.5, 0, 0, Math.PI * 2); g.stroke();
+      g.globalAlpha = 1;
+    };
+    [].concat(KITS, CYL, DISCS).forEach(p => {
+      if (t >= p.drop && t < p.drop + 1) pulse(p.dest[0], p.dest[1], (t - p.drop) / 1);
+    });
+    if (t >= 97 && t < 98.4) pulse(281, 247, (t - 97) / 1.4);
+
+    // Labels last so no solid can overdraw them. The isometric projection collapses
+    // the (x+y) direction, so world anchors that are far apart in mm can land in the
+    // same screen band -- so de-conflict in SCREEN space, which holds at every yaw.
+    const lab = this.labels.map(l => {
+      const p = P(l[0], l[1], 2);
+      g.font = '600 ' + l[3] + "px 'IBM Plex Sans',sans-serif";
+      return { x: p[0], y: p[1], w: g.measureText(l[2]).width + 8, h: l[3] + 8, s: l[2], size: l[3], col: l[4] };
+    });
+    for (let pass = 0; pass < 30; pass++) {
+      let moved = false;
+      for (let i = 0; i < lab.length; i++) {
+        for (let j = i + 1; j < lab.length; j++) {
+          const a = lab[i], b = lab[j];
+          const ox = (a.w + b.w) / 2 - Math.abs(a.x - b.x);
+          const oy = (a.h + b.h) / 2 - Math.abs(a.y - b.y);
+          if (ox > 0 && oy > 0) {
+            const push = oy / 2 + 0.5;
+            if (a.y <= b.y) { a.y -= push; b.y += push; } else { a.y += push; b.y -= push; }
+            moved = true;
+          }
+        }
+      }
+      if (!moved) break;
+    }
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    lab.forEach(l => {
+      g.font = '600 ' + l.size + "px 'IBM Plex Sans',sans-serif";
+      g.lineWidth = 3.2; g.strokeStyle = 'rgba(251,250,248,.92)'; g.strokeText(l.s, l.x, l.y);
+      g.fillStyle = l.col; g.fillText(l.s, l.x, l.y);
+    });
+
+    // badges
+    if (!this.isOff('agentA') && showLabels) {
+      const p = P(A.x, A.y, 150);
+      g.fillStyle = cA; g.beginPath(); g.arc(p[0], p[1], 13, 0, Math.PI * 2); g.fill();
+      g.fillStyle = '#fff'; g.font = "700 13px 'IBM Plex Sans',sans-serif"; g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText('A', p[0], p[1] + 0.5);
+    }
+    if (!this.isOff('agentB') && showLabels) {
+      const p = P(B.x, B.y, 160);
+      g.fillStyle = cB; g.beginPath(); g.arc(p[0], p[1], 13, 0, Math.PI * 2); g.fill();
+      g.fillStyle = '#fff'; g.font = "700 13px 'IBM Plex Sans',sans-serif"; g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText('B', p[0], p[1] + 0.5);
+    }
+  }
+
+  renderVals() {
+    const pa = this.phase(PHASE_A), pb = this.phase(PHASE_B);
+    const activeCh = CHAPTERS.reduce((best, c, i) => (this.t + 0.001 >= c.t ? i : best), 0);
+    return {
+      cvRef: this.cvRef, clockRef: this.clockRef, headRef: this.headRef, yawRef: this.yawRef,
+      yawVal: String(Math.round(this.state.yaw)),
+      yawLabel: Math.round(this.state.yaw) + '\u00b0',
+      nowA: pa[2], nowAText: pa[3], nowB: pb[2], nowBText: pb[3],
+      playLabel: this.state.playing ? 'Pause' : 'Play',
+      speedLabel: this.state.speed + '\u00d7',
+      togglePlay: () => { if (!this.state.playing && this.t >= TROUND - 0.01) this.t = 0; this.setState({ playing: !this.state.playing }); },
+      restart: () => { this.t = 0; this.setState({ playing: true }); },
+      cycleSpeed: () => this.setState({ speed: this.state.speed === 1 ? 2 : this.state.speed === 2 ? 0.5 : 1 }),
+      showAll: () => this.setState({ off: {} }),
+      onYaw: (e) => { this.yaw = +e.target.value; this.setState({ yaw: +e.target.value }); },
+      yawA: () => { this.yaw = 0; this.setState({ yaw: 0 }); },
+      yawB: () => { this.yaw = 35; this.setState({ yaw: 35 }); },
+      yawC: () => { this.yaw = 125; this.setState({ yaw: 125 }); },
+      yawD: () => { this.yaw = 215; this.setState({ yaw: 215 }); },
+      onScrub: (e) => {
+        const r = e.currentTarget.getBoundingClientRect();
+        this.seek((e.clientX - r.left) / r.width * TROUND);
+      },
+      ticks: [0, 30, 60, 90, 120].map(v => ({ left: (v / TROUND * 100) + '%', label: v + 's' })),
+      laneA: LANE_A.map((b, i) => ({
+        left: (b[0] / TROUND * 100) + '%', width: ((b[1] - b[0]) / TROUND * 100) + '%',
+        bg: this.t >= b[0] && this.t < b[1] ? '#4f5fd7' : 'rgba(79,95,215,.22)',
+        fg: this.t >= b[0] && this.t < b[1] ? '#fff' : '#3a3f6b', label: b[2]
+      })),
+      laneB: LANE_B.map(b => ({
+        left: (b[0] / TROUND * 100) + '%', width: ((b[1] - b[0]) / TROUND * 100) + '%',
+        bg: this.t >= b[0] && this.t < b[1] ? '#8b5cd6' : 'rgba(139,92,214,.22)',
+        fg: this.t >= b[0] && this.t < b[1] ? '#fff' : '#5b3f86', label: b[2]
+      })),
+      chapters: CHAPTERS.map((c, i) => ({
+        title: c.title, body: c.body, badge: c.badge, clock: c.t + 's',
+        go: () => this.seek(c.t),
+        bg: i === activeCh ? '#eff0fd' : '#fff',
+        bd: i === activeCh ? '#4f5fd7' : '#e6e1d8',
+        badgeBg: c.badge === 'A' ? '#4f5fd7' : c.badge === 'B' ? '#8b5cd6' : '#1b1d21',
+        badgeFg: '#fff'
+      })),
+      groups: GROUPS.map(gp => ({
+        label: gp.label, dot: this.isOff(gp.k) ? COL.grey : gp.dot,
+        state: this.isOff(gp.k) ? 'OFF' : 'ON',
+        op: this.isOff(gp.k) ? '0.55' : '1',
+        bg: this.isOff(gp.k) ? '#f2f0ea' : '#fff',
+        bd: this.isOff(gp.k) ? '#e6e1d8' : '#dcd7cd',
+        toggle: () => this.setState({ off: Object.assign({}, this.state.off, { [gp.k]: !this.state.off[gp.k] }) })
+      }))
+    };
+  }
+}
+</script>
+</body>
+</html>

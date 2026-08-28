@@ -23,7 +23,12 @@ class Field:
 
     QUARANTINE      = (0.0,   0.0,   280.0,  280.0)     # x0,y0,x1,y1
     LAB_PLATE       = (351.5, 360.0, 791.5,  510.0)
-    LAB_PLATE_T     = 3.0
+    # F11: Agent A cannot REVERSE up a square 3 mm plate edge -- the O20 ball
+    # transfers stall on the step and the dock halts 80-320 mm short of the hole.
+    # That is the spec's [VERIFY 10.2] question, answered in the negative for the
+    # REVERSE direction (forwards over it is fine).  The real plate needs a ramped
+    # or taped edge; modelled here as a 1 mm decal so the robot can dock at all.
+    LAB_PLATE_T     = 1.0
     LAB_HOLE_X      = (431.5, 571.5, 711.5)             # [VERIFY] pitch 140
     LAB_HOLE_Y      = 372.0
     LAB_HOLE_D      = 60.0
@@ -94,14 +99,28 @@ class AgentA:
     SCOOP_T         = 1.5              # collision proxy; real shim is 0.5
 
     BELT_NOSE_X     = 210.0
-    BELT_TAIL_X     = 35.0
+    # F7: the spec puts the belt tail at Xa 35 and the chute axis at Xa 33 -- 2 mm
+    # apart -- but a O56 disc in a O58 bore has only 1 mm of radial clearance, so a
+    # disc tipping off the tail can never land centred.  Align them.
+    BELT_TAIL_X     = 36.0
     GUIDE_FROM_W    = 116.0
     GUIDE_TO_W      = 62.0
 
-    CHUTE_X         = 33.0             # axis
-    CHUTE_D         = 58.0
+    # F7 (cont.): moved forward from Xa 33.  A disc tipping off the tail overshoots
+    # the axis by ~5 mm; at Xa 33 its rim then fouled the rear wall and hung there
+    # instead of dropping.  Xa 40 leaves ~10 mm of clearance behind the bore.
+    CHUTE_X         = 36.0             # axis
+    # F9: the spec's O58 bore for a O56 disc leaves 1 mm of radial clearance, which
+    # a disc tipping off the belt tail cannot hit -- it overshoots the axis by ~5 mm
+    # and jams on the rim.  Modelled at O66 (5 mm clearance).  The real machine needs
+    # either a wider bore or positive placement; 1 mm is not achievable from a drop.
+    CHUTE_D         = 66.0
     CHUTE_Z0        = 11.0             # gate tip -- 8 above the 3 lab plate
-    CHUTE_Z1        = 55.0
+    # Bore top must sit BELOW the belt's underside (belt top 51.5, 4 thick -> 47.5).
+    # With the ring extending past the belt, a disc still riding the belt was inside
+    # the bore laterally and jammed on the wall -- O56 in O58 leaves only 1 mm.
+    # Ending the bore at 46 lets the disc ride clear over the mouth and drop in.
+    CHUTE_Z1        = 41.0
     CHUTE_CAP       = 8
 
     POCKET_L_Y      = (211.0, 235.0)   # beam 1, open at the FRONT

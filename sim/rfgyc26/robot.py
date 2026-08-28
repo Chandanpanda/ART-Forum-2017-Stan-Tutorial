@@ -43,6 +43,12 @@ class AgentARobot:
         dx, dy = world_xyz[0]*1000.0 - x, world_xyz[1]*1000.0 - y
         return (dx*np.cos(-t) - dy*np.sin(-t), dx*np.sin(-t) + dy*np.cos(-t), world_xyz[2]*1000.0)
 
+    def chute_xy(self, offset_mm):
+        """World position of the O58 chute axis -- it sits `offset` behind the axle."""
+        x, y, th = self.pose
+        t = np.radians(th)
+        return x - offset_mm*np.cos(t), y - offset_mm*np.sin(t)
+
     def tof_mm(self):
         v = self.d.sensordata[self.m.sensor_adr[self.s_tof]]
         return 1e9 if v < 0 else v*1000.0
@@ -72,7 +78,7 @@ class AgentARobot:
         self.d.ctrl[self.a_fr] = -a
 
     def gate(self, opened):
-        self.d.ctrl[self.a_gate] = 0.070 if opened else 0.0
+        self.d.ctrl[self.a_gate] = 0.085 if opened else 0.0
 
     # ------------------------------------------------------------ stallguard
     def stalled(self, thresh=0.42):

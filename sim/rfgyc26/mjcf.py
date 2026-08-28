@@ -135,9 +135,21 @@ def field_body(with_zones=True):
         a, b = edges[i], edges[i+1]
         o.append(box(f"lab_m{i}", mm((a+b)/2), mm(LAB_HOLE_Y), mm(pt/2),
                      mm((b-a)/2), mm(r), mm(pt/2), C_PLATE))
+    # F11: the robot cannot REVERSE up a square 3 mm plate edge -- the O20 ball
+    # transfers stall on the step and the dock halts 80-320 mm short.  This is the
+    # spec's own [VERIFY 10.2] question, answered: the plate needs a ramped or
+    # taped edge.  Modelled as a 12 mm ramp on the approach (south) edge.
+    ramp_l = 12.0
+    o.append(box("lab_ramp", mm((x0+x1)/2), mm(y0 - ramp_l/2), mm(pt/2),
+                 mm((x1-x0)/2), mm(ramp_l/2), mm(pt/2), C_PLATE,
+                 euler=(-14.0, 0, 0)))
     for i, hx in enumerate(Field.LAB_HOLE_X):
+        # NOTE: the 45 deg chamfer cones are omitted.  The cone() helper's tilted
+        # box segments protrude well above the plate and the chassis rear wall
+        # crashed into them at 33 N, halting every dock.  The chamfer's real job --
+        # absorbing dock error -- is done here by closed-loop docking instead
+        # (route.align_reverse), which holds the chute to ~1 mm.
         o += ring(f"labring{i}", mm(hx), mm(LAB_HOLE_Y), 0.0, mm(pt), mm(r), mm(6), C_PLATE)
-        o += cone(f"labcone{i}", mm(hx), mm(LAB_HOLE_Y), mm(pt), mm(6), mm(r), mm(r+6), C_PLATE)
 
     if with_zones:
         for nm, (a, b, c, d) in {"z_quar": Field.QUARANTINE, "z_dep": Field.DEPLOY_BOX}.items():
@@ -152,7 +164,10 @@ def field_body(with_zones=True):
 
 
 # ------------------------------------------------------- Agent A robot body
-def _ring_gap(prefix, cx, cy, z0, z1, r_in, wall, rgba, n=16, skip_deg=95, cls="robot"):
+CHUTE_GEOMS = []
+
+
+def _ring_gap(prefix, cx, cy, z0, z1, r_in, wall, rgba, n=16, skip_deg=0, cls="robot"):
     """Chute bore with the forward arc left open where the belt feeds it."""
     out, rm, hz = [], r_in + wall/2.0, (z1-z0)/2.0
     arc = pi*2*rm/n
@@ -163,6 +178,7 @@ def _ring_gap(prefix, cx, cy, z0, z1, r_in, wall, rgba, n=16, skip_deg=95, cls="
             continue
         g = box(f"{prefix}_{i}", cx + rm*cos(a), cy + rm*sin(a), z0+hz,
                 arc*0.62, wall/2.0, hz, rgba, cls, euler=(0, 0, a*180/pi + 90.0))
+        CHUTE_GEOMS.append(f"{prefix}_{i}")
         out.append(g.replace('/>', ' friction="0.10 0.002 0.0001"/>'))
     return out
 
@@ -175,6 +191,7 @@ GATE_OPEN_MM   = 62.0
 
 
 def agent_a_body(name="agentA", pose=None, with_beams=False):
+    del CHUTE_GEOMS[:]
     """Returns (xml, actuator_xml, sensor_xml). pose = (field_x, field_y, heading_deg)."""
     px, py, ph = pose or AgentA.START_POSE
     b, o = [], []
@@ -212,18 +229,33 @@ def agent_a_body(name="agentA", pose=None, with_beams=False):
              f'pos="{bcx:.6f} 0 {bcz:.6f}" size="{bl/2:.6f} {mm(Chassis.BELT_W/2):.6f} '
              f'{mm(Chassis.BELT_T/2):.6f}" euler="0 {inc:.4f} 0" '
              f'surfacevel="{-mm(Chassis.BELT_SPEED):.6f} 0 0 0 0 0" rgba="{C_BELT}"/>')
-    for s, tag in ((1, "l"), (-1, "r")):     # converging guides 116 -> 62
-        gx0, gx1 = lx(200.0), lx(50.0)
-        gy0, gy1 = mm(58.0), mm(31.0)
+    # F8: spec 7 converges 116 -> 62 gradually over Xa 200->50.  Three O56 discs
+    # then bridge: two fit abreast on a 116 belt, and a gradual taper gives them
+    # 75 mm of un-guided belt to bunch in.  Converge HARD right at the intake so
+    # the channel is single-file (62 wide, 3 mm clearance each side) from the tip.
+    CONV_END_X = 60.0                      # local x where the taper finishes
+    for s_, tag in ((1, "l"), (-1, "r")):
+        gx0, gx1 = lx(AgentA.SCOOP_FROM), mm(CONV_END_X)
+        gy0, gy1 = mm(Chassis.BELT_W/2), mm(AgentA.GUIDE_TO_W/2)
         ang = -180/pi * ((gy1-gy0)/(gx1-gx0))
-        o.append(box(f"A_guide_{tag}", (gx0+gx1)/2, s*(gy0+gy1)/2, mm(38),
-                     abs(gx1-gx0)/2, mm(1.5), mm(16), C_BODY, "robot",
-                     euler=(0, 0, s*ang)))
+        o.append(box(f"A_guide_{tag}", (gx0+gx1)/2, s_*(gy0+gy1)/2, mm(34),
+                     abs(gx1-gx0)/2, mm(1.5), mm(14), C_BODY, "robot",
+                     euler=(0, 0, s_*ang)))
+        # parallel single-file channel from the taper to the chute mouth
+        px0, px1 = mm(CONV_END_X), lx(50.0)
+        o.append(box(f"A_lane_{tag}", (px0+px1)/2, s_*gy1, mm(34),
+                     abs(px1-px0)/2, mm(1.5), mm(14), C_BODY, "robot"))
 
     # ---- chute-magazine + slide gate -------------------------------------
     cx = lx(AgentA.CHUTE_X)
+    # Full bore now: its top (Za 41) sits below the belt underside (47.5), so a
+    # disc tips off the tail and falls in from ABOVE.  While the bore extended past
+    # the belt the ring blocked discs still riding it; with the front left open
+    # instead, discs landed on the gate and rolled straight back out.
     o += _ring_gap("A_chute", cx, 0, mm(AgentA.CHUTE_Z0), mm(AgentA.CHUTE_Z1),
                    mm(AgentA.CHUTE_D/2), mm(5), "0.17 0.58 0.79 1")
+    # (no lead-in funnel: with the belt tail on the chute axis (F7) the disc tips
+    # off already centred, and a cone here protrudes into the belt path.)
 
     # ---- ball transfers ---------------------------------------------------
     for i, (sx, sy) in enumerate(((1, 1), (1, -1), (-1, 1), (-1, -1))):
@@ -302,8 +334,9 @@ def agent_a_body(name="agentA", pose=None, with_beams=False):
     # ---- chute base gate: slides to the left flank to release one disc ----
     body += [
         f'  <body name="A_gate" pos="{cx:.5f} 0 {mm(AgentA.CHUTE_Z0-1.5):.5f}">',
-        '    <joint name="A_gate_j" type="slide" axis="0 1 0" range="0 0.075" damping="0.05"/>',
-        f'    <geom name="A_gate_g" class="robot" type="box" size="{mm(31):.5f} {mm(31):.5f} {mm(1.5):.5f}" '
+        '    <joint name="A_gate_j" type="slide" axis="0 1 0" range="0 0.090" damping="0.05"/>',
+        f'    <geom name="A_gate_g" class="robot" type="box" '
+        f'size="{mm(AgentA.CHUTE_D/2+4):.5f} {mm(AgentA.CHUTE_D/2+4):.5f} {mm(1.5):.5f}" '
         f'mass="0.008" rgba="0.9 0.35 0.2 1"/>',
         '  </body>']
 
@@ -317,7 +350,7 @@ def agent_a_body(name="agentA", pose=None, with_beams=False):
     <velocity name="a_drive_r" joint="A_w_r" kv="5.0" ctrlrange="-30 30" forcerange="-0.5 0.5"/>
     <position name="a_finger_l" joint="A_f_l" kp="4" ctrlrange="-0.55 0.55"/>   <!-- RADIANS -->
     <position name="a_finger_r" joint="A_f_r" kp="4" ctrlrange="-0.55 0.55"/>   <!-- RADIANS -->
-    <position name="a_gate" joint="A_gate_j" kp="900" kv="12" ctrlrange="0 0.075" forcerange="-25 25"/>"""
+    <position name="a_gate" joint="A_gate_j" kp="900" kv="12" ctrlrange="0 0.090" forcerange="-25 25"/>"""
 
     sen = """
     <framepos    name="a_pos"  objtype="body" objname="agentA"/>
@@ -360,7 +393,7 @@ def beam_body(i, x, y, length, heading_deg, mass):
 
 
 # ------------------------------------------------------------------ scenes
-def contact_pairs(agent="A"):
+def contact_pairs(agent="A", n_discs=3):
     """Explicit friction pairs -- see note in scene()."""
     out = ["  <contact>"]
     for i in range(4):
@@ -368,6 +401,22 @@ def contact_pairs(agent="A"):
                    f'friction="{Chassis.MU_BALL} {Chassis.MU_BALL} 0.0001 0.0001 0.0001" '
                    f'solref="0.02 2.0" solimp="0.6 0.9 0.01"/>')
     # scoop is excluded from the floor by collision bitmask -- no pair needed
+    # The gate must slide OUT FROM UNDER the disc.  MuJoCo takes the element-wise
+    # MAX of the two geoms' friction, so a smooth gate against a 0.6 piece still
+    # gets 0.6 -- and the disc simply rode the gate out of the chute.
+    for i in range(n_discs):
+        out.append(f'    <pair geom1="{agent}_gate_g" geom2="disc{i}_g" '
+                   f'friction="0.04 0.04 0.0005 0.0001 0.0001" solref="0.004 1" solimp="0.95 0.99 0.001"/>')
+        # Converging guides are printed PETG: slippery.  Combined at the floor's
+        # 0.6 the discs jammed across the throat instead of single-filing -- the
+        # spec's own "#1 jam risk", reproduced.
+        for g in ("guide_l", "guide_r", "lane_l", "lane_r"):
+            out.append(f'    <pair geom1="{agent}_{g}" geom2="disc{i}_g" '
+                       f'friction="0.08 0.08 0.001 0.0001 0.0001"/>')
+        for nm in CHUTE_GEOMS:
+            out.append(f'    <pair geom1="{nm}" geom2="disc{i}_g" '
+                       f'friction="0.08 0.08 0.001 0.0001 0.0001"/>')
+
     out.append("  </contact>")
     return "\n".join(out)
 
@@ -395,7 +444,8 @@ def scene_pick_place(disc_positions, robot_pose=None, with_beams=False):
     if with_beams:
         parts.append(beam_body(1, 0, 0, Piece.BEAM1_L, 0, Piece.BEAM1_M))
         parts.append(beam_body(2, 0, 0, Piece.BEAM2_L, 0, Piece.BEAM2_M))
-    return scene("rfgyc26_pick_place", parts, act, sen, contacts=contact_pairs())
+    return scene("rfgyc26_pick_place", parts, act, sen,
+                 contacts=contact_pairs(n_discs=len(disc_positions)))
 
 
 def scene_belt_rig(n_pieces=4, incline=None, speed=None):

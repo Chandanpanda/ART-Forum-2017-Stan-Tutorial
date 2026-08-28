@@ -77,35 +77,140 @@ def reverse_to(rb, x, y, speed=110.0, tol=6.0):
                  np.clip(1.6*_wrap(hold-th), -25, 25)); yield
 
 
+def back_to(rb, x, y, speed=130.0, tol=25.0):
+    """Reverse toward a point, steering the tail -- no pivot.
+
+    After a sweep the robot faces west with the lab behind it, and it is often
+    below Y 185 where a pivot would jam the corner on the south wall (F2).  This
+    lets it get back out east AND gain clearance in one move, so the next turn is
+    legal.
+    """
+    while True:
+        px, py, th = rb.pose
+        if np.hypot(x-px, y-py) < tol:
+            rb.stop(); return
+        err = _wrap(np.degrees(np.arctan2(y-py, x-px)) - (th + 180.0))
+        if abs(err) > 100:
+            rb.stop(); return
+        # differential drive: rotating the body rotates the tail's velocity vector
+        # directly, so steer WITH the error (a steered-wheel car would be inverted)
+        rb.drive(-speed*max(0.35, 1.0-abs(err)/110.0), np.clip(1.8*err, -45, 45))
+        yield
+
+
 def sweep_line(rb, y, x_to, speed=140.0):
     """Collecting run along a constant-Y line, fingers open, heading held at 180."""
     rb.fingers(True)
     yield from guard(turn_to(rb, 180.0), 8.0)
     while rb.pose[0] > x_to:
         th = rb.pose[2]
-        lat = np.clip(0.6*(y - rb.pose[1]), -12, 12)     # hold the line
+        lat = np.clip(1.6*(y - rb.pose[1]), -20, 20)     # hold the line
         rb.drive(speed, np.clip(2.0*_wrap(180.0-th) - lat, -22, 22)); yield
     rb.stop()
     # The belt runs continuously, so a piece already aboard keeps travelling aft at
     # ~60 mm/s regardless of the robot.  Measured: 240 mm of belt run = ~4 s.  Dwell
     # so the magazine is loaded before the next manoeuvre.
-    yield from wait(rb, 5.0)
+    # 240 mm of belt run at ~60 mm/s = 4 s per piece, and pieces queue, so a full
+    # sweep needs the belt to clear before the next manoeuvre disturbs the stack.
+    yield from wait(rb, 22.0)
 
+
+def align_reverse(rb, chute_offset, tx, ty, heading, tol=2.5, max_ticks=900):
+    """Back the CHUTE onto a target, steering on its measured cross-track error.
+
+    Docking cannot be dead-reckoned here: the rear ball transfers ride up the
+    3 mm lab plate (the spec's own [VERIFY 10.2] question), which pitches the
+    chassis and walks the chute several mm.  Disc-in-hole radial clearance is
+    only 2 mm, so the terminal has to close on the chute's actual position.
+    """
+    for _ in range(max_ticks):
+        px, py, th = rb.pose
+        cx, cy = rb.chute_xy(chute_offset)
+        t = np.radians(th)
+        # error of the CHUTE, in the robot frame: +fore is toward the nose
+        ex, ey = tx - cx, ty - cy
+        fore =  ex*np.cos(t) + ey*np.sin(t)
+        left = -ex*np.sin(t) + ey*np.cos(t)
+        if abs(fore) < tol and abs(left) < tol:
+            rb.stop(); return True
+        herr = _wrap(heading - th)
+        # reversing: steering right walks the TAIL left, hence the sign on `left`
+        w = np.clip(1.4*herr - 2.2*left, -18, 18)
+        # fore < 0 means the target lies behind the nose, i.e. toward the tail --
+        # the chute IS the tail, so close that error by REVERSING.  (The old sign
+        # drove forward; it only looked right in demo_post, which starts docked.)
+        # coarse approach fast, final centimetre slow -- hole 3 is a 420 mm
+        # straight reverse from the pivot and 70 mm/s ran out of guard time
+        cap = 140.0 if abs(fore) > 60.0 else 60.0
+        v = np.clip(fore*2.5, -cap, cap) if abs(fore) > tol else 0.0
+        rb.drive(v, w)
+        yield
+    rb.stop()
+    return False
+
+
+# The only stations that clear the south wall (>=185), the side walls and the lab
+# plate rectangle by more than the 185 mm swept radius.  There is no legal pivot
+# directly south of the plate: that corridor is 360 mm wide and needs 370.
+PIVOT_W = (230.0, 195.0)
+PIVOT_E = (900.0, 190.0)
+
+def nearest_pivot(hole_x, hole_y):
+    """Dock each hole from whichever legal station is closer.
+
+    Measured dock error: holes 1 and 2 from the west station converge to ~2 mm;
+    hole 3 from the east station holds ~15 mm, because its approach is diagonal
+    and the lateral component of a straight reverse cannot be nulled without
+    rotating (which swings the chute).  Forcing hole 3 onto the west station is
+    worse still -- a 420 mm blind reverse drifts ~150 mm.
+    """
+    return min((PIVOT_W, PIVOT_E),
+               key=lambda p: np.hypot(p[0]-hole_x, p[1]-hole_y))
 
 def dock_and_post(rb, hole_x, hole_y, chute_offset, stroke=0.28, log=print):
-    """Reverse over a lab hole; one gate stroke meters one disc."""
-    stage_y = hole_y - chute_offset - 210.0
-    yield from guard(pursue(rb, hole_x, stage_y, speed=200.0, tol=30.0), 22.0)
-    yield from guard(turn_to(rb, 270.0), 10.0)
-    yield from guard(pursue(rb, hole_x, stage_y + 40.0, speed=90.0, tol=18.0), 8.0)
-    yield from guard(turn_to(rb, 270.0), 6.0)
-    yield from guard(reverse_to(rb, hole_x, hole_y - chute_offset), 14.0)
-    yield from wait(rb, 0.4)
+    """Reverse the chute onto a lab hole along a straight line, then meter one disc.
+
+    F10: with a 185 mm swept radius there is NO legal pivot between the south wall
+    (needs y >= 185) and the lab plate (needs y <= 175 at 351 < x < 791) -- the
+    corridor is 360 mm wide and the swept circle needs 370.  Turning there beaches
+    the chassis on the 3 mm plate with its drive wheels off the floor.
+
+    But the dock does not require a particular heading: the chute lies on the
+    robot's own axis, so ANY heading works provided the robot is positioned to
+    suit.  So it pivots once, west of the plate, to face directly AWAY from the
+    hole -- and then simply reverses in a straight line until the chute is on it.
+    """
+    pv = nearest_pivot(hole_x, hole_y)
+    # get onto the correct pivot station first (turning only where it is legal)
+    if np.hypot(rb.pose[0]-pv[0], rb.pose[1]-pv[1]) > 60.0:
+        px, py, _ = rb.pose
+        yield from guard(turn_to(rb, np.degrees(np.arctan2(pv[1]-py, pv[0]-px))), 22.0)
+        yield from guard(pursue(rb, pv[0], pv[1], speed=220.0, tol=30.0), 35.0)
+    # Two passes.  A single straight reverse leaves a few mm of lateral error that
+    # align_reverse cannot null (correcting it means rotating, and rotating swings
+    # the chute).  Pulling forward and re-aiming from closer in fixes that -- which
+    # is the job the spec's 45 deg chamfer would otherwise do (it absorbs +/-10).
+    for attempt in range(2):
+        px, py, _ = rb.pose
+        th = np.degrees(np.arctan2(py - hole_y, px - hole_x))   # face away from hole
+        yield from guard(turn_to(rb, th, tol=1.2), 22.0)
+        yield from guard(align_reverse(rb, chute_offset, hole_x, hole_y, th,
+                                       tol=2.0, max_ticks=2600), 55.0)
+        cx, cy = rb.chute_xy(chute_offset)
+        if np.hypot(cx-hole_x, cy-hole_y) < 4.0 or attempt == 1:
+            break
+        yield from guard(drive_straight(rb, 90.0, speed=140.0), 10.0)
+    cx, cy = rb.chute_xy(chute_offset)
+    log("      docked: chute(%.1f,%.1f) vs hole(%.1f,%.1f) err %.1f mm"
+        % (cx, cy, hole_x, hole_y, np.hypot(cx-hole_x, cy-hole_y)))
+    yield from wait(rb, 0.5)
     rb.gate(True)
     yield from wait(rb, stroke)
     rb.gate(False)
-    yield from wait(rb, 0.7)
-    yield from guard(drive_straight(rb, 150.0, speed=150.0), 8.0)   # depart nose-out
+    yield from wait(rb, 0.9)
+    # depart nose-out: the robot already faces away from the hole, so driving
+    # forward retraces the approach line straight back to the pivot station
+    yield from guard(pursue(rb, pv[0], pv[1], speed=220.0, tol=35.0), 35.0)
 
 
 def mission_agent_a(rb, holes, hole_y, chute_offset, log=print):
@@ -113,15 +218,14 @@ def mission_agent_a(rb, holes, hole_y, chute_offset, log=print):
     yield from guard(drive_straight(rb, 300.0, speed=220.0), 10.0)
     log("  sweep pass 1, mouth on Y 130")
     yield from guard(pursue(rb, 430.0, 130.0, speed=220.0, tol=40.0), 20.0)
-    yield from guard(sweep_line(rb, 130.0, 158.0), 30.0)
+    yield from guard(sweep_line(rb, 130.0, 158.0), 45.0)
     log("  sweep pass 2, mouth on Y 215")
-    yield from guard(reverse_to(rb, 400.0, 130.0), 16.0)
-    yield from guard(turn_to(rb, 90.0), 10.0)
+    yield from guard(back_to(rb, 470.0, 235.0), 22.0)
+    yield from guard(turn_to(rb, 180.0), 12.0)
     yield from guard(pursue(rb, 430.0, 215.0, speed=200.0, tol=40.0), 20.0)
-    yield from guard(sweep_line(rb, 215.0, 158.0), 30.0)
+    yield from guard(sweep_line(rb, 215.0, 158.0), 45.0)
     log("  reverse-docking the laboratory")
-    yield from guard(reverse_to(rb, 430.0, 215.0), 18.0)
-    yield from guard(turn_to(rb, 60.0), 10.0)
+    yield from guard(back_to(rb, PIVOT_W[0], PIVOT_W[1]), 25.0)
     for i, hx in enumerate(holes):
         log("    hole %d (x=%.1f)" % (i+1, hx))
         yield from dock_and_post(rb, hx, hole_y, chute_offset, log=log)

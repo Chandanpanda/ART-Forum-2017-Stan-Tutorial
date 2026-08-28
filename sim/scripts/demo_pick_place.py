@@ -62,6 +62,7 @@ def main():
         viewer = _mjv.launch_passive(m, d)
 
     t0, done, k = time.time(), False, 0
+    settle = 2500      # let the last release settle before the referee judges
     while d.time < a.timeout:
         if k % CTRL_DECIM == 0 and not done:
             try: next(mission)
@@ -75,12 +76,18 @@ def main():
         if viewer is not None and k % 20 == 0:
             if not viewer.is_running(): break
             viewer.sync()
-        if done and d.time > 1e9: break
-        if done: break
+        if done:
+            settle -= 1
+            if settle <= 0: break
     if viewer is not None: viewer.close()
 
     pos = [(d.xpos[b][0]*1000, d.xpos[b][1]*1000, d.xpos[b][2]*1000) for b in dbid]
     pts, detail = referee.score_discs(pos)
+    print("\n--- final sample positions ------------------------------")
+    for i, (x, y, z) in enumerate(pos):
+        near = min((np.hypot(x-hx, y-mjcf.LAB_HOLE_Y), j) for j, hx in enumerate(Field.LAB_HOLE_X))
+        print("  disc %d  (%7.1f, %7.1f, z=%5.2f)   nearest hole %d at %6.1f mm"
+              % (i, x, y, z, near[1]+1, near[0]))
     print("\n--- referee ---------------------------------------------")
     for i, what, p in detail:
         print("  %-22s %+4d" % (("disc %d: %s" % (i, what)) if i >= 0 else what, p))

@@ -134,15 +134,18 @@ def align_reverse(rb, chute_offset, tx, ty, heading, tol=2.5, max_ticks=900):
         if abs(fore) < tol and abs(left) < tol:
             rb.stop(); return True
         herr = _wrap(heading - th)
-        # reversing: steering right walks the TAIL left, hence the sign on `left`
-        w = np.clip(1.4*herr - 2.2*left, -18, 18)
-        # fore < 0 means the target lies behind the nose, i.e. toward the tail --
-        # the chute IS the tail, so close that error by REVERSING.  (The old sign
-        # drove forward; it only looked right in demo_post, which starts docked.)
-        # coarse approach fast, final centimetre slow -- hole 3 is a 420 mm
-        # straight reverse from the pivot and 70 mm/s ran out of guard time
-        cap = 140.0 if abs(fore) > 60.0 else 60.0
-        v = np.clip(fore*2.5, -cap, cap) if abs(fore) > tol else 0.0
+        # Two regimes.  Coarse: reverse fast holding the commanded heading.
+        # Endgame: the chute is 106.5 mm behind the axle, so 1 deg of yaw swings it
+        # 1.9 mm sideways -- far more lateral authority than the heading term needs.
+        # Fighting both at once settles into an equilibrium ~15 mm off (hole 3), so
+        # once we are close, null the lateral error and let the heading float.
+        if abs(fore) > 25.0:
+            w = np.clip(1.4*herr - 1.2*left, -18, 18)
+            cap = 140.0 if abs(fore) > 60.0 else 60.0
+            v = np.clip(fore*2.5, -cap, cap)
+        else:
+            w = np.clip(-3.2*left, -10, 10)
+            v = np.clip(fore*2.0, -35, 35) if abs(fore) > tol else 0.0
         rb.drive(v, w)
         yield
     rb.stop()
@@ -164,8 +167,24 @@ def nearest_pivot(hole_x, hole_y):
     rotating (which swings the chute).  Forcing hole 3 onto the west station is
     worse still -- a 420 mm blind reverse drifts ~150 mm.
     """
-    return min((PIVOT_W, PIVOT_E),
-               key=lambda p: np.hypot(p[0]-hole_x, p[1]-hole_y))
+    # Bias toward the west station: the distances are near-tied for the middle
+    # hole and the western approach converges better (its reverse line is less
+    # oblique).  Only the far hole is clearly better served from the east.
+    return PIVOT_E if hole_x > 650.0 else PIVOT_W
+
+def settle_stack(rb, cycles=4):
+    """Jog the chassis fore-and-aft to seat the magazine.
+
+    The last disc into the chute has nothing above it to push it down, so it
+    perches on the bore rim ~20 mm proud of the stack and shakes loose during the
+    first docking manoeuvre.  A few short jogs settle it -- the same thing you do
+    to a real gravity magazine.  Costs about 3 s.
+    """
+    for _ in range(cycles):
+        yield from guard(drive_straight(rb,  28.0, speed=170.0), 3.0)
+        yield from guard(drive_straight(rb, -28.0, speed=170.0), 3.0)
+    yield from wait(rb, 1.0)
+
 
 def dock_and_post(rb, hole_x, hole_y, chute_offset, stroke=0.28, log=print):
     """Reverse the chute onto a lab hole along a straight line, then meter one disc.
@@ -224,6 +243,8 @@ def mission_agent_a(rb, holes, hole_y, chute_offset, log=print):
     yield from guard(turn_to(rb, 180.0), 12.0)
     yield from guard(pursue(rb, 430.0, 215.0, speed=200.0, tol=40.0), 20.0)
     yield from guard(sweep_line(rb, 215.0, 158.0), 45.0)
+    log("  settling the magazine")
+    yield from guard(settle_stack(rb), 30.0)
     log("  reverse-docking the laboratory")
     yield from guard(back_to(rb, PIVOT_W[0], PIVOT_W[1]), 25.0)
     for i, hx in enumerate(holes):

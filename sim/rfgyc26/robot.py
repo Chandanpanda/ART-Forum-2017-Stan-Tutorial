@@ -78,7 +78,7 @@ class AgentARobot:
         self.d.ctrl[self.a_fr] = -a
 
     def gate(self, opened):
-        self.d.ctrl[self.a_gate] = 0.085 if opened else 0.0
+        self.d.ctrl[self.a_gate] = 0.100 if opened else 0.0
 
     # ------------------------------------------------------------ stallguard
     def stalled(self, thresh=0.42):

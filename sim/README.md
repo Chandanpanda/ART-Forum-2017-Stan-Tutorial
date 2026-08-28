@@ -46,22 +46,21 @@ Optional, for video: `pip install "imageio[ffmpeg]"` then add `--video`.
 | Conveyor carry on the incline | **works** — 59.2 mm/s against a 60 mm/s belt |
 | Passive accumulation at a closed gate | **works** — 0.134 N vs 0.118 N predicted |
 | **Pick: 3 discs off the floor into the magazine** | **works — 3 of 3**, `demo_capture.py` |
-| **Place: gate stroke into all three lab holes** | **works — 3 of 3, +45**, `demo_post.py` |
-| Closed-loop chute docking | **works** — 0.1–0.3 mm from a standing start |
-| Sensors: rangefinder, insidesite | **verified** |
+| **Place: all three lab holes** | **works — 3 of 3, +45**, dock error **0.0 mm** |
+| **45° hole chamfer** | **works** — funnels a disc dropped up to 7 mm off-centre |
+| Closed-loop chute docking, in-mission | **works** — **1.8–2.0 mm at all three holes** |
 | Referee scoring (Senior sample rules) | **works** |
-| **Full mission end to end** | **+27 — 2 of 3 samples placed** |
+| **Full mission end to end** | **+27 — 2 of 3 samples placed, stable across seeds** |
 
-Both halves of pick-and-place now work completely in isolation, and the full
-mission places two of the three samples. The remaining gap is dock precision at
-**hole 3 only**: it is the one hole reached from the eastern pivot, its approach
-is diagonal, and a straight reverse leaves ~15 mm of lateral error against the
-~10 mm a Ø60/Ø56 hole will accept. Holes 1 and 2 converge to ~2 mm. Forcing hole
-3 onto the western pivot is worse (a 420 mm blind reverse drifts ~150 mm).
+**Hole 3 is fixed.** It docked at 15 mm and failed; it now docks at 1.8 mm and
+posts, the same as holes 1 and 2. The cause turned out not to be the chamfer at
+all — see F13.
 
-The honest fix is the one the spec already specifies and this model had to remove:
-a **45° chamfer** at the hole. Spec §6.4 says it "absorbs ±10 of robot position
-error", and that is exactly the margin hole 3 is missing. See F12.
+The remaining cap on the full mission is **magazine retention**, not docking. The
+last disc into the chute has nothing above it to push it down, so it perches on
+the bore rim ~20 mm proud of the stack (z 44 against a stack top of 24) and shakes
+loose during the first docking manoeuvre. Both halves of pick-and-place are
+complete in isolation; this is the one integration gap left. See F14.
 
 ## 3. Findings — things the simulator discovered about the design
 
@@ -136,11 +135,38 @@ spec's `[VERIFY §10.2]` question in the negative *for the reverse direction* �
 forwards over it is fine. The plate needs a ramped or taped edge; modelled here as
 a 1 mm decal.
 
-**F12. Removing the hole chamfer costs ~10 mm of dock tolerance, and that is
-exactly the margin hole 3 needs.** The chamfer had to come out of the model
-because the cone helper's tilted segments protruded above the plate and the
-chassis rear wall crashed into them at 33 N. Rebuilding it properly is the single
-highest-value next step — it is what closes the last third of the mission.
+**F12. The chamfer is rebuilt, and it caps out at ~7 mm — not the spec's ±10.**
+Segments are now oriented with `xyaxes` (tangential x, up-slope y) instead of three
+composed eulers, which is what put the old ones 30 mm out of place. Measured
+envelope: 5.4 mm tall, 34.8 mm radius. It funnels a disc dropped up to **7 mm**
+off-centre straight into the slot; at 9 mm the disc rests on the cone.
+
+That 7 mm is a hard geometric ceiling, and it is a finding in its own right:
+capturing the ±10 mm spec §6.4 claims needs a cone reaching r ≈ 43, which at 45°
+is 13 mm tall — but the docked robot's chute-base gate sits at Za 8 and its rear
+wall at Za 6 directly above that ring. **The ±10 mm chamfer cannot coexist with
+6 mm of ground clearance over the plate.** Either the plate gets a recessed
+counterbore, or the robot needs more clearance at the tail.
+
+**F13. What was actually breaking hole 3: the boundary tape.** Not the chamfer.
+The 20 mm deployment-box tape was modelled as a collision geom, and its 0.4 mm
+step caught the Ø20 ball transfers at **8–10 N**, stopping the robot dead on the
+box boundary — which the eastern approach to hole 3 crosses. Real adhesive tape is
+an optical marker, ~0.1 mm; it is now visual-only, and the TCRT line array reads
+it by position. The same class of bug applied to the lab plate: the robot could
+not reverse up even a 1 mm step, so the plate now sits on its own collision bit
+(4) and interacts with game pieces but not the robot. With both fixed, all three
+holes dock to 1.8–2.0 mm.
+
+**F14. A gravity magazine does not seat its last piece.** Discs 1 and 2 stack
+properly (z 14.3, 19.4) because each is pushed down by the next. The third lands
+~11 mm off-axis — the overshoot as it tips off the belt tail — which is more than
+the 5 mm the bore will take, so it perches on the rim at z 44 and is only loosely
+retained. Widening the bore (Ø76), moving the chute, shortening the belt and a
+settle-jog were all tried; none seats it. The likely real answer is a positive
+feed — a sprung follower or a short powered nudge at the bore mouth — rather than
+relying on gravity for the last piece. This is what caps the full mission at 2 of
+3 samples.
 
 ---
 

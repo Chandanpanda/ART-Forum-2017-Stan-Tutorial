@@ -41,20 +41,42 @@ def ring(prefix, cx, cy, z0, z1, r_in, wall, rgba, n=16, cls="static"):
                        euler=(0, 0, a*180/pi + 90.0)))
     return out
 
-def cone(prefix, cx, cy, z0, h, r_in, r_out, rgba, n=16, cls="static"):
-    """45-deg lead-in chamfer: n boxes tilted about their own tangent."""
+def cone(prefix, cx, cy, z0, r_in, r_out, rgba, n=24, cls="static", thick=0.0006,
+         skip_deg=0.0, height=None):
+    """45-degree lead-in chamfer, built from tangential boxes oriented with xyaxes.
+
+    The previous version composed three euler angles and got the composition
+    wrong: the segments stuck out ~30 mm past where they belonged, and the robot
+    crashed into them at 33 N.  Specifying the box's x-axis (tangential) and
+    y-axis (up the cone slope) directly removes all ambiguity -- MuJoCo derives z.
+
+    The cone rises at 45 degrees, so its height equals (r_out - r_in).  Keep that
+    small: when Agent A is docked, its chute-base gate sits at Za 8 and its rear
+    wall at Za 6 directly above this ring, so anything taller is a collision.
+    """
     out = []
-    rm = (r_in + r_out) / 2.0
-    slope = 45.0
-    seg = pi * 2 * rm / n * 0.62
-    t = (r_out - r_in) * 1.45 / 2.0
+    CONE_GEOMS[prefix] = []
     for i in range(n):
-        a = 2 * pi * i / n
+        ang = 2*pi*i/n
+        if abs(((ang*180/pi + 180) % 360) - 180) < skip_deg:
+            continue                      # leave the feed side open
+        CONE_GEOMS[prefix].append(f"{prefix}_{i}")
+        ca, sa = cos(ang), sin(ang)
+        dr = r_out - r_in
+        dz = dr if height is None else height  # default is a 45 deg chamfer
+        L  = (dr*dr + dz*dz) ** 0.5
+        rm = (r_in + r_out) / 2.0
+        zm = z0 + dz / 2.0
+        tx, ty = -sa, ca                       # tangential
+        ux, uy, uz = ca*dr/L, sa*dr/L, dz/L    # up the slope
+        half_t = pi*rm/n * 1.15                # tangential half-length, slight overlap
+        half_s = L / 2.0
         out.append(
             f'<geom name="{prefix}_{i}" class="{cls}" type="box" '
-            f'pos="{cx + rm*cos(a):.6f} {cy + rm*sin(a):.6f} {z0 + h/2.0:.6f}" '
-            f'size="{seg:.6f} 0.0015 {t:.6f}" '
-            f'euler="{slope} 0 {a*180/pi + 90:.4f}" rgba="{rgba}"/>')
+            f'pos="{cx + rm*ca:.6f} {cy + rm*sa:.6f} {zm:.6f}" '
+            f'size="{half_t:.6f} {half_s:.6f} {thick:.6f}" '
+            f'xyaxes="{tx:.6f} {ty:.6f} 0 {ux:.6f} {uy:.6f} {uz:.6f}" '
+            f'friction="0.08 0.002 0.0001" rgba="{rgba}"/>')
     return out
 
 
@@ -105,6 +127,14 @@ def preamble(timestep=0.001):
 
 
 # --------------------------------------------------------------------- field
+LAB_BITS = ' contype="4" conaffinity="4"'
+
+
+def _lab(g):
+    """Plate geometry collides with game pieces but not with the robot."""
+    return g.replace('/>', LAB_BITS + '/>')
+
+
 def field_body(with_zones=True):
     o, W, H, t, h = [], Field.W, Field.H, Field.WALL_T, Field.WALL_H
     # contype/conaffinity bit 1 is the floor alone: the scoop is excluded from it
@@ -126,45 +156,51 @@ def field_body(with_zones=True):
     x0, y0, x1, y1 = Field.LAB_PLATE
     pt, r = Field.LAB_PLATE_T, Field.LAB_HOLE_D / 2.0
     hy0, hy1 = LAB_HOLE_Y - r, LAB_HOLE_Y + r
-    o.append(box("lab_s", mm((x0+x1)/2), mm((y0+hy0)/2), mm(pt/2),
-                 mm((x1-x0)/2), mm((hy0-y0)/2), mm(pt/2), C_PLATE))
-    o.append(box("lab_n", mm((x0+x1)/2), mm((hy1+y1)/2), mm(pt/2),
-                 mm((x1-x0)/2), mm((y1-hy1)/2), mm(pt/2), C_PLATE))
+    o.append(_lab(box("lab_s", mm((x0+x1)/2), mm((y0+hy0)/2), mm(pt/2),
+                 mm((x1-x0)/2), mm((hy0-y0)/2), mm(pt/2), C_PLATE)))
+    o.append(_lab(box("lab_n", mm((x0+x1)/2), mm((hy1+y1)/2), mm(pt/2),
+                 mm((x1-x0)/2), mm((y1-hy1)/2), mm(pt/2), C_PLATE)))
     edges = [x0] + [v for hx in Field.LAB_HOLE_X for v in (hx-r, hx+r)] + [x1]
     for i in range(0, len(edges)-1, 2):
         a, b = edges[i], edges[i+1]
-        o.append(box(f"lab_m{i}", mm((a+b)/2), mm(LAB_HOLE_Y), mm(pt/2),
-                     mm((b-a)/2), mm(r), mm(pt/2), C_PLATE))
+        o.append(_lab(box(f"lab_m{i}", mm((a+b)/2), mm(LAB_HOLE_Y), mm(pt/2),
+                          mm((b-a)/2), mm(r), mm(pt/2), C_PLATE)))
     # F11: the robot cannot REVERSE up a square 3 mm plate edge -- the O20 ball
     # transfers stall on the step and the dock halts 80-320 mm short.  This is the
     # spec's own [VERIFY 10.2] question, answered: the plate needs a ramped or
     # taped edge.  Modelled as a 12 mm ramp on the approach (south) edge.
     ramp_l = 12.0
-    o.append(box("lab_ramp", mm((x0+x1)/2), mm(y0 - ramp_l/2), mm(pt/2),
+    o.append(_lab(box("lab_ramp", mm((x0+x1)/2), mm(y0 - ramp_l/2), mm(pt/2),
                  mm((x1-x0)/2), mm(ramp_l/2), mm(pt/2), C_PLATE,
-                 euler=(-14.0, 0, 0)))
+                 euler=(-14.0, 0, 0))))
     for i, hx in enumerate(Field.LAB_HOLE_X):
-        # NOTE: the 45 deg chamfer cones are omitted.  The cone() helper's tilted
-        # box segments protrude well above the plate and the chassis rear wall
-        # crashed into them at 33 N, halting every dock.  The chamfer's real job --
-        # absorbing dock error -- is done here by closed-loop docking instead
-        # (route.align_reverse), which holds the chute to ~1 mm.
-        o += ring(f"labring{i}", mm(hx), mm(LAB_HOLE_Y), 0.0, mm(pt), mm(r), mm(6), C_PLATE)
+        o += [_lab(g) for g in ring(f"labring{i}", mm(hx), mm(LAB_HOLE_Y), 0.0, mm(pt), mm(r), mm(6), C_PLATE)]
+        # 45 deg lead-in chamfer (spec 6.4: "absorbs +/-10 of robot position
+        # error").  Capped at r+4 -> 4 mm tall, because the docked robot's gate
+        # sits at Za 8 and its rear wall at Za 6 right above this ring.
+        o += [_lab(g) for g in cone(f"labcone{i}", mm(hx), mm(LAB_HOLE_Y), mm(pt), mm(r), mm(r+4), C_PLATE)]
 
     if with_zones:
         for nm, (a, b, c, d) in {"z_quar": Field.QUARANTINE, "z_dep": Field.DEPLOY_BOX}.items():
             o.append(f'<site name="{nm}" type="box" '
                      f'pos="{mm((a+c)/2):.4f} {mm((b+d)/2):.4f} 0.0005" '
                      f'size="{mm((c-a)/2):.4f} {mm((d-b)/2):.4f} 0.0005" rgba="{C_ZONE}"/>')
+        # 20 mm boundary tape is an OPTICAL marker, not an obstacle -- it is
+        # adhesive film, ~0.1 mm.  As a collision geom its 0.4 mm step caught the
+        # O20 ball transfers at 8-10 N and stalled the robot dead on the box
+        # boundary (this is what was killing the hole-3 dock).  Visual only; the
+        # TCRT line array reads it by position, not by contact.
         for e in (0, 1):
             bx = Field.DEPLOY_BOX
-            o.append(box(f"tape_h{e}", mm((bx[0]+bx[2])/2), mm(bx[1] if e == 0 else bx[3]),
-                         0.0002, mm((bx[2]-bx[0])/2), mm(Field.TAPE_W/2), 0.0002, C_TAPE))
+            g = box(f"tape_h{e}", mm((bx[0]+bx[2])/2), mm(bx[1] if e == 0 else bx[3]),
+                    0.0002, mm((bx[2]-bx[0])/2), mm(Field.TAPE_W/2), 0.0002, C_TAPE)
+            o.append(g.replace('/>', ' contype="0" conaffinity="0"/>'))
     return o
 
 
 # ------------------------------------------------------- Agent A robot body
 CHUTE_GEOMS = []
+CONE_GEOMS = {}          # prefix -> emitted geom names (cone() skips some arcs)
 
 
 def _ring_gap(prefix, cx, cy, z0, z1, r_in, wall, rgba, n=16, skip_deg=0, cls="robot"):
@@ -254,6 +290,17 @@ def agent_a_body(name="agentA", pose=None, with_beams=False):
     # instead, discs landed on the gate and rolled straight back out.
     o += _ring_gap("A_chute", cx, 0, mm(AgentA.CHUTE_Z0), mm(AgentA.CHUTE_Z1),
                    mm(AgentA.CHUTE_D/2), mm(5), "0.17 0.58 0.79 1")
+    # 45 deg lead-in at the bore MOUTH.  A disc tipping off the belt tail lands up
+    # to ~11 mm off-axis when the magazine is partly full; against a bare rim it
+    # simply sat there (the third disc never stacked, and shook loose in transit).
+    # Capped at r+5 -> 5 mm tall, clearing the belt underside at Za 47.5.
+    # REAR ARC ONLY.  The belt slopes, so at the bore's front edge its underside is
+    # only Za 43.8 -- a full ring here punches through the belt and stops every
+    # piece riding it.  Discs overshoot the axis rearward (~11 mm), so the rear
+    # half is the half that has to catch them anyway.
+    o += [] and cone("A_chutelead", cx, 0, mm(AgentA.CHUTE_Z1),
+              mm(AgentA.CHUTE_D/2), mm(AgentA.CHUTE_D/2 + 5),
+              "0.17 0.58 0.79 1", cls="robot", skip_deg=100.0)
     # (no lead-in funnel: with the belt tail on the chute axis (F7) the disc tips
     # off already centred, and a cone here protrudes into the belt path.)
 
@@ -334,7 +381,7 @@ def agent_a_body(name="agentA", pose=None, with_beams=False):
     # ---- chute base gate: slides to the left flank to release one disc ----
     body += [
         f'  <body name="A_gate" pos="{cx:.5f} 0 {mm(AgentA.CHUTE_Z0-1.5):.5f}">',
-        '    <joint name="A_gate_j" type="slide" axis="0 1 0" range="0 0.090" damping="0.05"/>',
+        '    <joint name="A_gate_j" type="slide" axis="0 1 0" range="0 0.105" damping="0.05"/>',
         f'    <geom name="A_gate_g" class="robot" type="box" '
         f'size="{mm(AgentA.CHUTE_D/2+4):.5f} {mm(AgentA.CHUTE_D/2+4):.5f} {mm(1.5):.5f}" '
         f'mass="0.008" rgba="0.9 0.35 0.2 1"/>',
@@ -350,7 +397,7 @@ def agent_a_body(name="agentA", pose=None, with_beams=False):
     <velocity name="a_drive_r" joint="A_w_r" kv="5.0" ctrlrange="-30 30" forcerange="-0.5 0.5"/>
     <position name="a_finger_l" joint="A_f_l" kp="4" ctrlrange="-0.55 0.55"/>   <!-- RADIANS -->
     <position name="a_finger_r" joint="A_f_r" kp="4" ctrlrange="-0.55 0.55"/>   <!-- RADIANS -->
-    <position name="a_gate" joint="A_gate_j" kp="900" kv="12" ctrlrange="0 0.090" forcerange="-25 25"/>"""
+    <position name="a_gate" joint="A_gate_j" kp="900" kv="12" ctrlrange="0 0.105" forcerange="-25 25"/>"""
 
     sen = """
     <framepos    name="a_pos"  objtype="body" objname="agentA"/>
@@ -370,7 +417,7 @@ def disc_body(i, x, y, z=None):
     z = z if z is not None else Piece.DISC_T/2 + 0.5
     return (f'<body name="disc{i}" pos="{mm(x):.5f} {mm(y):.5f} {mm(z):.5f}">'
             f'<freejoint name="disc{i}_f"/>'
-            f'<geom name="disc{i}_g" class="piece" type="cylinder" '
+            f'<geom name="disc{i}_g" class="piece" contype="7" conaffinity="7" type="cylinder" '
             f'size="{mm(Piece.DISC_D/2):.5f} {mm(Piece.DISC_T/2):.5f}" '
             f'mass="{Piece.DISC_M/1000.0:.4f}" rgba="{C_DISC}"/></body>')
 
@@ -413,7 +460,7 @@ def contact_pairs(agent="A", n_discs=3):
         for g in ("guide_l", "guide_r", "lane_l", "lane_r"):
             out.append(f'    <pair geom1="{agent}_{g}" geom2="disc{i}_g" '
                        f'friction="0.08 0.08 0.001 0.0001 0.0001"/>')
-        for nm in CHUTE_GEOMS:
+        for nm in CHUTE_GEOMS + CONE_GEOMS.get("A_chutelead", []):
             out.append(f'    <pair geom1="{nm}" geom2="disc{i}_g" '
                        f'friction="0.08 0.08 0.001 0.0001 0.0001"/>')
 

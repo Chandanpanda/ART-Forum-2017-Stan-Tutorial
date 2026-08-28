@@ -74,7 +74,7 @@ is generated from a parameter file either way, and MJCF is the better generation
 | `Robotics for good youth challenge.pdf` | `a9288be` | Rulebook — external authority |
 | `RFGYC26_robot_specification_revC_1.md` | `8956e65` | Authoritative internal spec |
 | `RFGYC26 Robot Drawing Set revC.dc.html` (9 sheets) | `8956e65` | Authoritative geometry |
-| `RFGYC26 Mechanism Explainer.dc.html` | `8956e65` | **Newest** — supersedes the spec on the diverter and lane run |
+| `RFGYC26 Mechanism Explainer.dc.html` | `8956e65`, upd. `7fb8ca9` | **Newest** — explicitly supersedes spec §6.2–§6.3 on the diverter and lane walls |
 | `RFGYC26 Explainer.dc.html` | `8956e65` | Newest — only numeric source for field zone polygons |
 | Rev A/B spec, Rev A/B drawing set, `*.png` | `37faa2c`, `a9288be`, `1601df1` | Superseded — ignore |
 | `support.js`, `doc-page.js` | `37faa2c` | Rendering runtime, no robot logic |
@@ -138,6 +138,12 @@ quotes; a 2/3 pivot produces it to three significant figures.
 **Adopt:** vane 66 long, pivot Yb 152 at two-thirds (44 upstream / 22 downstream), four held angles
 0 / ±12 / ±25°, tip throw ±18.6. Swept envelope **Yb 132–192**.
 
+*Source update (`7fb8ca9`).* The Mechanism Explainer now carries an explicit note — "the 66 vane and
+the lane walls from Yb 108 supersede §6.2–§6.3; Sheets 5 and 6 still show the spec pivot and need
+reconciling" — which confirms the direction of this resolution. **The mid-pivot inconsistency
+itself is unchanged**: the file still reads "pivoted at its middle" beside a ±18.6 tip throw, which
+a mid-pivot cannot produce. The two-thirds split stands as the only reading that reconciles them.
+
 ### R3 — The vane sets a trajectory; the lane noses finish the move
 
 **The conflict.** Belt centreline Xb 90; lane centres L1 49, L2 79.5, L3 108, L4 136.5. Green needs
@@ -156,7 +162,8 @@ The fan zone (throat exit Yb 172 → divider noses Yb 108) is 64 mm, giving **29
 27.9 needed — 1.9 mm of margin.** L1 is comfortable (22.4 mm needed, 48 mm of travel).
 
 **Adopt:** staggered divider noses — L1 and L4 noses furthest aft at Yb 108 (they need the whole fan
-zone), L2 and L3 noses further forward at ≈ Yb 125 (they need less drift and gain jam protection
+zone; `7fb8ca9` **independently confirms Yb 108** as the wall line, and its withdrawn "fan zone
+91–157" annotation converts to Yb 108–174 against the 108–172 derived here), L2 and L3 noses further forward at ≈ Yb 125 (they need less drift and gain jam protection
 from earlier walls). Model the noses as wedges. **This is now the headline correctness experiment**,
 displacing the convergence wedge, which remains the headline *jam* experiment.
 
@@ -165,7 +172,8 @@ displacing the convergence wedge, which remains the headline *jam* experiment.
 **The conflict.** Spec §6.3 and Sheet 5 give the lane run as Yb 152 → 45 = 107. The Mechanism
 Explainer says 63.
 
-**Decision: 63.** The spec measured from the vane pivot and ignored the swept envelope. Under R2/R3
+**Decision: 63**, unchanged and re-confirmed by `7fb8ca9` (lane run 63, three cylinders on the belt,
+the fourth in the flare). The spec measured from the vane pivot and ignored the swept envelope. Under R2/R3
 the numbers close exactly: fan zone Yb 172 → 108 (64) plus dividered lane Yb 108 → 45 (63) equals
 the 127 available from the throat exit to the gate. The spec's 107 double-counts the fan zone.
 

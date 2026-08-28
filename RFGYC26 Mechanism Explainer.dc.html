@@ -1,0 +1,697 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta charset="utf-8">
+<title>RFGYC'26 — Inside Agent B, station by station</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  html,body{margin:0;background:#eceae4}
+  a{color:#1d6f66;text-decoration:none;border-bottom:1px solid rgba(29,111,102,.35)}
+  a:hover{color:#16181a;border-bottom-color:#16181a}
+  input[type=range]{accent-color:#1d6f66}
+  @keyframes beltrun { to { stroke-dashoffset: -24; } }
+  .beltrun { animation: beltrun 1.1s linear infinite; }
+  ::-webkit-scrollbar{width:9px;height:9px}
+  ::-webkit-scrollbar-thumb{background:#cfcbc2;border-radius:9px}
+</style>
+</helmet>
+<div style="display:flex;flex-direction:column;height:100vh;background:#f6f5f1;color:#16181a;font-family:'IBM Plex Sans',ui-sans-serif,sans-serif;overflow:hidden">
+
+  <header style="flex:none;display:flex;align-items:flex-end;justify-content:space-between;gap:22px;padding:13px 22px 11px;border-bottom:1px solid #dcd8cf;background:#fbfaf8">
+    <div>
+      <div style="font-size:10px;letter-spacing:.18em;color:#7c7870;text-transform:uppercase">RFGYC'26 Senior · Rev C · Agent B, cutaway</div>
+      <div style="font-size:22px;font-weight:700;letter-spacing:-.01em;margin-top:3px">Inside the robot — one marker, eight stations</div>
+    </div>
+    <div style="display:flex;align-items:center;gap:18px">
+      <div style="font-size:11.5px;line-height:1.45;color:#5d5a54;max-width:340px">A cutaway of the conveyor chassis, cut on the belt centreline. Follow one green marker from the floor to the deposit. Board-level view: <a href="RFGYC26 Explainer.dc.html">the whole match</a> · <a href="RFGYC26 Robot Drawing Set revC.dc.html">Rev C drawings</a>.</div>
+      <div style="text-align:right;font-family:'IBM Plex Mono',monospace;flex:none;min-width:120px">
+        <div style="font-size:9.5px;letter-spacing:.14em;color:#7c7870;white-space:nowrap">STATION</div>
+        <div ref="{{ stnRef }}" style="font-size:26px;font-weight:600;letter-spacing:-.02em;line-height:1.05;white-space:nowrap">1 / 8</div>
+      </div>
+    </div>
+  </header>
+
+  <div style="flex:1;display:flex;min-height:0">
+    <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:6px;background:radial-gradient(120% 100% at 50% 0%,#fbfaf8 0%,#eeece6 100%);padding:9px 16px 12px">
+
+      <div style="flex:none;display:flex;align-items:center;justify-content:flex-end">
+        <div style="display:flex;border:1px solid #dcd8cf;border-radius:8px;overflow:hidden">
+          <button onClick="{{ showSide }}" style="padding:6px 15px;font:600 11px 'IBM Plex Sans',sans-serif;border:none;cursor:pointer;background:{{ sideBg }};color:{{ sideFg }}">Cutaway A–A · side</button>
+          <button onClick="{{ showPlan }}" style="padding:6px 15px;font:600 11px 'IBM Plex Sans',sans-serif;border:none;cursor:pointer;background:{{ planBg }};color:{{ planFg }}">Cutaway B–B · plan</button>
+        </div>
+      </div>
+
+      <div ref="{{ sideWrapRef }}" style="flex:1;min-height:0;display:flex;flex-direction:column">
+        <div style="flex:none;display:flex;flex-direction:column;margin-bottom:2px">
+          <div style="font-size:10.5px;letter-spacing:.16em;color:#7c7870">CUTAWAY A–A · NEAR FLANK REMOVED, CUT ON THE BELT CENTRELINE</div>
+          <div style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#a09a90">front at left · belt climbs 11° · wheels and the sweeper sit beyond the cut and are drawn thin</div>
+        </div>
+        <svg viewBox="-74 -128 384 172" preserveAspectRatio="xMidYMid meet" style="flex:1;min-height:0;width:100%;display:block">
+          <defs>
+            <pattern id="mgnd" patternUnits="userSpaceOnUse" width="5" height="5" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="5" stroke="#b3aea3" stroke-width="0.7"></line></pattern>
+            <marker id="mae" markerUnits="strokeWidth" markerWidth="9" markerHeight="6" refX="9" refY="3" orient="auto"><path d="M0,0 L9,3 L0,6 z" fill="#16181a"></path></marker>
+            <marker id="mas" markerUnits="strokeWidth" markerWidth="9" markerHeight="6" refX="0" refY="3" orient="auto"><path d="M9,0 L0,3 L9,6 z" fill="#16181a"></path></marker>
+            <marker id="mag" markerUnits="strokeWidth" markerWidth="9" markerHeight="6" refX="9" refY="3" orient="auto"><path d="M0,0 L9,3 L0,6 z" fill="#1d6f66"></path></marker>
+          </defs>
+
+          <rect ref="{{ focusSideRef }}" x="-35" y="-128" width="60" height="172" fill="#1d6f66" fill-opacity="0.07" stroke="#1d6f66" stroke-opacity="0.3" stroke-width="0.8"></rect>
+
+          <rect x="-74" y="0" width="384" height="5" fill="url(#mgnd)"></rect>
+          <line x1="-74" y1="0" x2="306" y2="0" stroke="#16181a" stroke-width="1.1"></line>
+          <g ref="{{ groundRef }}" stroke="#b3aea3" stroke-width="1.2" fill="none">
+            <path d="M-160,6 v7 M-140,6 v7 M-120,6 v7 M-100,6 v7 M-80,6 v7 M-60,6 v7 M-40,6 v7 M-20,6 v7 M0,6 v7 M20,6 v7 M40,6 v7 M60,6 v7 M80,6 v7 M100,6 v7 M120,6 v7 M140,6 v7 M160,6 v7 M180,6 v7 M200,6 v7 M220,6 v7 M240,6 v7 M260,6 v7 M280,6 v7 M300,6 v7 M320,6 v7"></path>
+          </g>
+          <g ref="{{ advanceRef }}">
+            <path d="M120,20 L80,20" stroke="#1d6f66" stroke-width="1.4" fill="none" marker-end="url(#mag)"></path>
+            <text x="124" y="23" fill="#1d6f66" font-family="'IBM Plex Mono',monospace" font-size="7">ROBOT ADVANCING</text>
+          </g>
+
+          <path d="M0,-6 L0,-72 L18,-100 L232,-100 L265,-72 L265,-6 Z" fill="#fbfaf8" stroke="#16181a" stroke-width="1.4" stroke-linejoin="round"></path>
+
+          <g fill="none" stroke="#16181a" stroke-width="0.9">
+            <circle cx="63" cy="-9.5" r="8"></circle>
+            <circle cx="255" cy="-43" r="8"></circle>
+            <circle cx="63" cy="-9.5" r="1.6"></circle>
+            <circle cx="255" cy="-43" r="1.6"></circle>
+          </g>
+          <path d="M63,-17.5 L255,-51 M63,-1.5 L255,-35" stroke="#16181a" stroke-width="1.5" fill="none"></path>
+          <path class="beltrun" d="M63,-17.5 L255,-51" stroke="#1d6f66" stroke-width="2.6" fill="none" stroke-dasharray="7,17" stroke-linecap="round"></path>
+          <path d="M70,-20 L248,-51" stroke="#16181a" stroke-width="2.4" stroke-opacity="0.25" fill="none"></path>
+
+          <path d="M15,-0.3 L63,-17.5" stroke="#16181a" stroke-width="2" fill="none"></path>
+          <path d="M70,-19.7 L70,-25.7" stroke="#16181a" stroke-width="1.8" fill="none"></path>
+
+          <g fill="#fbfaf8" fill-opacity="0.75" stroke="#16181a" stroke-width="0.7" stroke-linejoin="round">
+            <rect ref="{{ fingerSideRef }}" x="-44" y="-26" width="59" height="25"></rect>
+            <path d="M15,-35 L34,-35 L34,-29 L15,-29 Z"></path>
+          </g>
+          <rect ref="{{ fingerLipRef }}" x="-44" y="-26" width="3" height="25" fill="#1d6f66" fill-opacity="0.5" stroke="none"></rect>
+          <g fill="#f0eee8" stroke="#16181a" stroke-width="0.7"><rect x="44" y="-56" width="28" height="20"></rect></g>
+          <g fill="none" stroke="#16181a" stroke-width="0.6" stroke-dasharray="3,2"><path d="M58,-36 L58,-32 L38,-32"></path></g>
+          <g fill="none" stroke="#16181a" stroke-width="0.8"><circle cx="34" cy="-32" r="3.4"></circle></g>
+
+          <g fill="none" stroke="#16181a" stroke-width="1.1">
+            <circle cx="132.5" cy="-30" r="30"></circle>
+            <circle cx="132.5" cy="-30" r="4.5"></circle>
+            <circle cx="25" cy="-10" r="10"></circle>
+            <circle cx="240" cy="-10" r="10"></circle>
+          </g>
+          <g fill="none" stroke="#16181a" stroke-width="0.7" stroke-dasharray="3,2">
+            <rect x="18" y="-100" width="42" height="42"></rect>
+            <rect x="196" y="-100" width="55" height="40"></rect>
+          </g>
+
+          <path d="M93,-24 L93,-92 L108,-92 L108,-27" fill="#f0eee8" stroke="#16181a" stroke-width="1.2"></path>
+          <rect x="96" y="-90" width="9" height="7" fill="#16181a"></rect>
+          <circle cx="100.5" cy="-83" r="2.2" fill="none" stroke="#16181a" stroke-width="0.8"></circle>
+          <circle cx="103" cy="-27.5" r="2" fill="none" stroke="#16181a" stroke-width="0.9"></circle>
+          <g fill="#e8b23c" stroke="none"><circle cx="95" cy="-88" r="1.4"></circle><circle cx="106" cy="-88" r="1.4"></circle></g>
+
+          <g ref="{{ bladeSideRef }}">
+            <path d="M113,-29 L113,-44" stroke="#16181a" stroke-width="1.6" fill="none"></path>
+            <circle cx="113" cy="-44" r="3" fill="#fbfaf8" stroke="#16181a" stroke-width="0.9"></circle>
+          </g>
+
+          <path d="M157,-59 L220,-77 L220,-46 L157,-33 Z" fill="#16181a" fill-opacity="0.05" stroke="#16181a" stroke-width="0.7" stroke-dasharray="4,2.5"></path>
+          <path d="M160,-60 L187,-60 L187,-112 L160,-112 Z" fill="#fbfaf8" stroke="#16181a" stroke-width="1.1"></path>
+          <g fill="#c9922e" fill-opacity="0.55" stroke="#a8802a" stroke-width="0.6">
+            <rect x="162" y="-80" width="23" height="18"></rect>
+            <rect x="162" y="-99" width="23" height="18"></rect>
+          </g>
+          <g fill="none" stroke="#16181a" stroke-width="0.7" stroke-dasharray="3,2"><line x1="160" y1="-112" x2="187" y2="-112"></line></g>
+
+          <g ref="{{ gateSideRef }}">
+            <path d="M220,-44 L220,-64" stroke="#16181a" stroke-width="2.2" fill="none" stroke-linecap="round"></path>
+          </g>
+          <circle cx="220" cy="-64" r="2.6" fill="#fbfaf8" stroke="#16181a" stroke-width="0.9"></circle>
+
+          <path d="M220,-64 L255,-58 M220,-46 L252,-50" stroke="#16181a" stroke-width="1.1" fill="none"></path>
+
+          <g fill="#4b9e4b" fill-opacity="0.85" stroke="#2f6b2f" stroke-width="0.7">
+            <rect x="204" y="-63.5" width="10" height="20" rx="1"></rect>
+            <rect x="191" y="-61.2" width="10" height="20" rx="1"></rect>
+            <rect x="178" y="-58.9" width="10" height="20" rx="1"></rect>
+          </g>
+
+          <rect ref="{{ pieceSideRef }}" x="-39" y="-20" width="10" height="20" rx="1" fill="#4b9e4b" stroke="#245424" stroke-width="0.9"></rect>
+
+          <g ref="{{ dimsSideRef }}" fill="none" stroke="#16181a" stroke-width="0.4">
+            <line x1="-45" y1="-17.5" x2="59" y2="-17.5" stroke-dasharray="3,2" stroke-opacity="0.5"></line>
+            <line x1="-57" y1="-51" x2="251" y2="-51" stroke-dasharray="3,2" stroke-opacity="0.5"></line>
+            <line x1="-51" y1="-17.5" x2="-51" y2="0" marker-start="url(#mas)" marker-end="url(#mae)"></line>
+            <line x1="-63" y1="-51" x2="-63" y2="0" marker-start="url(#mas)" marker-end="url(#mae)"></line>
+            <line x1="15" y1="12" x2="63" y2="12" marker-start="url(#mas)" marker-end="url(#mae)"></line>
+            <line x1="265" y1="12" x2="288" y2="12" marker-start="url(#mas)" marker-end="url(#mae)"></line>
+            <line x1="15" y1="2" x2="15" y2="15"></line>
+            <line x1="63" y1="-6" x2="63" y2="15"></line>
+            <line x1="265" y1="-2" x2="265" y2="15"></line>
+            <line x1="288" y1="2" x2="288" y2="15"></line>
+          </g>
+          <g ref="{{ dimsSideTxtRef }}" fill="#16181a" font-family="'IBM Plex Mono',monospace" font-size="7" text-anchor="middle">
+            <text x="-54" y="-6" transform="rotate(-90 -54 -6)">17.5</text>
+            <text x="-66" y="-42" transform="rotate(-90 -66 -42)">51</text>
+            <text x="39" y="22">48 SCOOP</text>
+            <text x="276" y="22">5–15</text>
+          </g>
+
+          <g fill="#16181a" font-family="'IBM Plex Sans',sans-serif" font-size="7.4" letter-spacing="0.2">
+            <text x="108" y="-116" text-anchor="end">CAMERA TUNNEL</text>
+            <text x="192" y="-120">KIT ESCAPEMENT</text>
+            <text x="238" y="-104">LANE GATE</text>
+            <text x="262" y="-70">TAIL SPOUT</text>
+            <text x="92" y="38">Ø60 WHEEL, BEYOND THE CUT</text>
+            <text x="-72" y="-114">SWEEPER — BEYOND THE CUT</text>
+            <text x="-72" y="-66">MG996R + SPUR PAIR</text>
+          </g>
+          <g fill="none" stroke="#16181a" stroke-width="0.4">
+            <line x1="-34" y1="-112" x2="-34" y2="-28"></line>
+            <line x1="-16" y1="-64" x2="42" y2="-48"></line>
+            <line x1="100" y1="-114" x2="100" y2="-94"></line>
+            <line x1="190" y1="-118" x2="182" y2="-112"></line>
+            <line x1="240" y1="-102" x2="221" y2="-66"></line>
+            <line x1="264" y1="-68" x2="254" y2="-56"></line>
+            <line x1="132" y1="32" x2="132" y2="2"></line>
+            <line x1="-14" y1="14" x2="-22" y2="3"></line>
+          </g>
+        </svg>
+      </div>
+
+      <div ref="{{ planWrapRef }}" style="flex:1;min-height:0;display:flex;flex-direction:column">
+        <div style="flex:none;display:flex;flex-direction:column;margin-bottom:2px">
+          <div style="font-size:10.5px;letter-spacing:.16em;color:#7c7870">CUTAWAY B–B · TOP DECK REMOVED, LOOKING DOWN ONTO THE BELT</div>
+          <div style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#a09a90">the sweeper, the wedge, the diverter and all four lanes lie in this plane · ⟨V⟩ vane 66 at Yb 152 and lanes from Yb 108 supersede §6.2–§6.3 — reconcile Sheets 5 and 6</div>
+        </div>
+        <svg viewBox="-92 -50 400 278" preserveAspectRatio="xMidYMid meet" style="flex:1;min-height:0;width:100%;display:block">
+          <rect ref="{{ focusPlanRef }}" x="-35" y="-50" width="60" height="278" fill="#1d6f66" fill-opacity="0.07" stroke="#1d6f66" stroke-opacity="0.3" stroke-width="0.8"></rect>
+
+          <path d="M0,40 L0,20 L20,0 L245,0 L265,20 L265,160 L245,180 L20,180 L0,160 Z" fill="#fbfaf8" stroke="#16181a" stroke-width="1.4" stroke-linejoin="round"></path>
+
+          <path d="M15,15 L15,165 L63,148 L63,32 Z" fill="#e6e3db" stroke="#16181a" stroke-width="1" stroke-linejoin="round"></path>
+          <line x1="15" y1="15" x2="15" y2="165" stroke="#16181a" stroke-width="2.2"></line>
+          <g stroke="#16181a" stroke-width="0.45" stroke-opacity="0.28" fill="none">
+            <line x1="22" y1="17" x2="58" y2="30"></line>
+            <line x1="22" y1="163" x2="58" y2="150"></line>
+          </g>
+          <g fill="none" stroke="#8f8a80" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M28,84 L38,90 L28,96"></path>
+            <path d="M40,84 L50,90 L40,96"></path>
+          </g>
+          <text x="39" y="76" fill="#8f8a80" font-family="'IBM Plex Mono',monospace" font-size="5.6" text-anchor="middle">STATIC</text>
+          <rect x="63" y="32" width="192" height="116" fill="#f1efe9" stroke="#16181a" stroke-width="0.9"></rect>
+          <line x1="70" y1="32" x2="70" y2="148" stroke="#16181a" stroke-width="1.8"></line>
+          <g class="beltrun" stroke="#1d6f66" stroke-width="1.6" stroke-opacity="0.5" stroke-dasharray="7,17" fill="none">
+            <line x1="63" y1="46" x2="255" y2="46"></line>
+            <line x1="63" y1="74" x2="255" y2="74"></line>
+            <line x1="63" y1="106" x2="255" y2="106"></line>
+            <line x1="63" y1="134" x2="255" y2="134"></line>
+          </g>
+
+          <g fill="none" stroke="#16181a" stroke-width="1.2">
+            <path d="M63,32 L93,75 L93,105 M63,148 L93,105"></path>
+          </g>
+          <rect x="93" y="66" width="15" height="48" fill="#f0eee8" stroke="#16181a" stroke-width="1.2"></rect>
+          <circle cx="100.5" cy="90" r="4" fill="none" stroke="#16181a" stroke-width="0.8"></circle>
+          <circle cx="103" cy="103" r="2.4" fill="none" stroke="#16181a" stroke-width="0.9"></circle>
+
+          <g ref="{{ bladePlanRef }}">
+            <path d="M91,90 L157,90" stroke="#16181a" stroke-width="2.8" fill="none" stroke-linecap="round"></path>
+            <path d="M91,90 L104,90" stroke="#8f8a80" stroke-width="2.8" fill="none" stroke-linecap="round"></path>
+          </g>
+          <circle cx="113" cy="90" r="3.8" fill="#fbfaf8" stroke="#16181a" stroke-width="1.1"></circle>
+          <circle cx="113" cy="90" r="1.3" fill="#16181a"></circle>
+          <g fill="none" stroke="#16181a" stroke-width="0.55" stroke-dasharray="3,2.5" stroke-opacity="0.5">
+            <path d="M93.1,80.7 L152.9,108.6"></path>
+            <path d="M93.1,99.3 L152.9,71.4"></path>
+          </g>
+          <g fill="#1d6f66" fill-opacity="0.05" stroke="none"><rect x="91" y="70" width="66" height="40"></rect></g>
+
+          <g fill="none" stroke="#16181a" stroke-width="1">
+            <path d="M163,34 L157,40 L163,46 M163,34 L220,34"></path>
+            <path d="M163,64 L157,70 L163,76 M163,64 L220,64"></path>
+            <path d="M163,66.5 L157,72 L163,78 M163,66.5 L220,66.5"></path>
+            <path d="M163,92.5 L157,90 L163,88 M163,92.5 L220,92.5"></path>
+            <path d="M163,95 L157,92 L163,90 M163,95 L220,95"></path>
+            <path d="M163,121 L157,112 L163,106 M163,121 L220,121"></path>
+            <path d="M163,123.5 L157,114 L163,108 M163,123.5 L220,123.5"></path>
+            <path d="M163,149.5 L157,140 L163,134 M163,149.5 L220,149.5"></path>
+          </g>
+          <g fill="none" stroke="#16181a" stroke-width="0.9">
+            <path d="M188,90 L206,49 M188,90 L206,79.5 M188,90 L206,108 M188,90 L206,136.5" stroke-opacity="0.45"></path>
+          </g>
+          <g fill="#16181a" font-family="'IBM Plex Mono',monospace" font-size="7.4">
+            <text x="266" y="51">L1 KITS</text>
+            <text x="266" y="81.5">L2 RED</text>
+            <text x="266" y="110">L3 YELLOW</text>
+            <text x="266" y="138.5">L4 GREEN</text>
+          </g>
+          <g fill="none" stroke="#16181a" stroke-width="0.4" stroke-opacity="0.55">
+            <path d="M258,48 L232,48 M258,78.5 L232,78.5 M258,107 L232,107 M258,135.5 L232,135.5"></path>
+          </g>
+
+          <rect x="163" y="34" width="27" height="30" fill="#fbfaf8" stroke="#16181a" stroke-width="1.1"></rect>
+          <rect x="166" y="37" width="21" height="24" fill="#c9922e" fill-opacity="0.5" stroke="#a8802a" stroke-width="0.6"></rect>
+
+          <g ref="{{ gatePlanRef }}" fill="#16181a" fill-opacity="0.75">
+            <rect x="218" y="123.5" width="4" height="26"></rect>
+          </g>
+          <g fill="#16181a" fill-opacity="0.75">
+            <rect x="218" y="34" width="4" height="30"></rect>
+            <rect x="218" y="66.5" width="4" height="26"></rect>
+            <rect x="218" y="95" width="4" height="26"></rect>
+          </g>
+
+          <path d="M222,34 L253,70 M222,149.5 L253,110 M222,64 L253,78 M222,92.5 L253,84 M222,121 L253,96" fill="none" stroke="#16181a" stroke-width="0.9" stroke-opacity="0.55"></path>
+          <line x1="255" y1="32" x2="255" y2="148" stroke="#16181a" stroke-width="1.4"></line>
+
+          <g fill="#4b9e4b" fill-opacity="0.85" stroke="#2f6b2f" stroke-width="0.7">
+            <circle cx="209" cy="136.5" r="10"></circle>
+            <circle cx="188" cy="136.5" r="10"></circle>
+            <circle cx="167" cy="136.5" r="10"></circle>
+          </g>
+          <circle ref="{{ piecePlanRef }}" cx="-34" cy="124" r="10" fill="#4b9e4b" stroke="#245424" stroke-width="0.9"></circle>
+
+          <g fill="none" stroke="#16181a" stroke-width="0.8" stroke-dasharray="4,3" stroke-opacity="0.45">
+            <path d="M34.40,9.52 L-43.60,2.52 L-44.40,11.48 L33.60,18.48 Z"></path>
+            <path d="M34.40,170.48 L-43.60,177.48 L-44.40,168.52 L33.60,161.52 Z"></path>
+          </g>
+          <g ref="{{ fingerLRef }}">
+            <path d="M34.40,9.52 L-43.60,2.52 L-44.40,11.48 L33.60,18.48 Z" fill="#fbfaf8" stroke="#16181a" stroke-width="1.2" stroke-linejoin="round"></path>
+            <path d="M-44.40,11.48 L33.60,18.48 L33.38,20.97 L-44.62,13.97 Z" fill="#1d6f66" fill-opacity="0.55" stroke="none"></path>
+          </g>
+          <g ref="{{ fingerRRef }}">
+            <path d="M34.40,170.48 L-43.60,177.48 L-44.40,168.52 L33.60,161.52 Z" fill="#fbfaf8" stroke="#16181a" stroke-width="1.2" stroke-linejoin="round"></path>
+            <path d="M-44.40,168.52 L33.60,161.52 L33.38,159.03 L-44.62,166.03 Z" fill="#1d6f66" fill-opacity="0.55" stroke="none"></path>
+          </g>
+          <g ref="{{ sweepArrowRef }}" fill="none" stroke="#1d6f66" stroke-width="1.4" marker-end="url(#mag)">
+            <path d="M-36,-8 A88,88 0 0 1 -18,44"></path>
+            <path d="M-36,188 A88,88 0 0 0 -18,136"></path>
+          </g>
+          <g fill="none" stroke="#16181a" stroke-width="1">
+            <circle cx="34" cy="14" r="9"></circle>
+            <circle cx="34" cy="166" r="9"></circle>
+            <circle cx="34" cy="14" r="2.4"></circle>
+            <circle cx="34" cy="166" r="2.4"></circle>
+          </g>
+          <g fill="none" stroke="#16181a" stroke-width="0.55">
+            <path d="M34,23 L34,157" stroke-dasharray="3,3" stroke-opacity="0.4"></path>
+          </g>
+
+          <g ref="{{ dimsPlanRef }}" fill="none" stroke="#16181a" stroke-width="0.4">
+            <line x1="-26" y1="32" x2="-26" y2="148" marker-start="url(#mas)" marker-end="url(#mae)"></line>
+            <line x1="70" y1="188" x2="86" y2="188" marker-start="url(#mas)" marker-end="url(#mae)"></line>
+            <line x1="93" y1="214" x2="108" y2="214" marker-start="url(#mas)" marker-end="url(#mae)"></line>
+            <line x1="-30" y1="32" x2="59" y2="32"></line>
+            <line x1="-30" y1="148" x2="59" y2="148"></line>
+            <line x1="93" y1="118" x2="93" y2="192"></line>
+            <line x1="108" y1="118" x2="108" y2="218"></line>
+            <line x1="-74" y1="7" x2="-74" y2="173" marker-start="url(#mas)" marker-end="url(#mae)"></line>
+            <line x1="-77" y1="7" x2="-46" y2="7"></line>
+            <line x1="-77" y1="173" x2="-46" y2="173"></line>
+            <line x1="15" y1="184" x2="63" y2="184" marker-start="url(#mas)" marker-end="url(#mae)"></line>
+            <line x1="15" y1="168" x2="15" y2="188"></line>
+            <line x1="63" y1="152" x2="63" y2="188"></line>
+          </g>
+          <g ref="{{ dimsPlanTxtRef }}" fill="#16181a" font-family="'IBM Plex Mono',monospace" font-size="7" text-anchor="middle">
+            <text x="-29" y="90" transform="rotate(-90 -29 90)">116 BELT</text>
+            <text x="-77" y="90" transform="rotate(-90 -77 90)">165 OPEN</text>
+            <text x="39" y="181">48</text>
+            <text x="66" y="191" text-anchor="end">30 THROAT</text>
+            <text x="100" y="225">15</text>
+          </g>
+
+          <g fill="#16181a" font-family="'IBM Plex Sans',sans-serif" font-size="7.4" letter-spacing="0.2">
+            <text x="-90" y="-40">SWEEPER — DASHED = OPEN</text>
+            <text x="70" y="-40">CONVERGENCE WEDGE — ONE WALL STRAIGHT, ONE AT 22°</text>
+            <text x="180" y="-28">VANE 66 · FAN ZONE 91–157</text>
+            <text x="226" y="172">FUNNEL 116 → 40</text>
+            <text x="-30" y="212">SCOOP — STATIC SHIM. THE ROBOT'S MOTION SLIDES IT UNDER THE PIECE</text>
+            <text x="196" y="224">6 RETENTION LIP</text>
+          </g>
+          <g fill="none" stroke="#16181a" stroke-width="0.4">
+            <line x1="-16" y1="-37" x2="-8" y2="2"></line>
+            <line x1="94" y1="-38" x2="78" y2="18"></line>
+            <line x1="196" y1="-26" x2="170" y2="84"></line>
+            <line x1="246" y1="166" x2="240" y2="114"></line>
+            <line x1="38" y1="194" x2="39" y2="157"></line>
+            <line x1="96" y1="206" x2="71" y2="150"></line>
+          </g>
+        </svg>
+      </div>
+    </div>
+
+    <aside style="width:352px;flex:none;border-left:1px solid #dcd8cf;background:#fbfaf8;display:flex;flex-direction:column;min-height:0">
+      <div style="flex:none;padding:13px 16px 12px;border-bottom:1px solid #e6e1d8;background:#f2f0ea">
+        <div style="display:flex;align-items:center;gap:9px">
+          <span ref="{{ badgeRef }}" style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:6px;background:#1d6f66;color:#fff;font-size:12px;font-weight:700;font-family:'IBM Plex Mono',monospace">1</span>
+          <span ref="{{ titleRef }}" style="font-size:16px;font-weight:700;letter-spacing:-.005em">Capture</span>
+        </div>
+        <div ref="{{ bodyRef }}" style="font-size:12.5px;line-height:1.5;color:#4d4a45;margin-top:7px">The two sweeper fingers counter-rotate on a single servo, narrowing a 165 mm capture band down to the 116 mm belt width.</div>
+        <div ref="{{ keyRef }}" style="font-size:11.5px;line-height:1.5;color:#1d6f66;margin-top:7px;font-weight:500">Nothing lifts here — the fingers only sweep sideways.</div>
+      </div>
+
+      <div style="flex:1;overflow-y:auto;min-height:0">
+        <div style="padding:12px 16px 6px">
+          <div style="font-size:9.5px;letter-spacing:.16em;color:#7c7870;margin-bottom:8px">THE EIGHT STATIONS</div>
+          <div style="display:flex;flex-direction:column;gap:5px">
+            <sc-for list="{{ stations }}" as="st" hint-placeholder-count="8">
+              <button onClick="{{ st.go }}" style="text-align:left;display:flex;gap:9px;align-items:flex-start;padding:7px 9px;border-radius:8px;cursor:pointer;background:{{ st.bg }};border:1px solid {{ st.bd }}">
+                <span style="display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;flex:none;border-radius:5px;background:{{ st.dotBg }};color:{{ st.dotFg }};font-size:9.5px;font-weight:700;font-family:'IBM Plex Mono',monospace;margin-top:1px">{{ st.n }}</span>
+                <span style="min-width:0;flex:1">
+                  <span style="display:block;font-size:12.5px;font-weight:600;line-height:1.25">{{ st.title }}</span>
+                  <span style="display:block;font-size:10.5px;color:#6d6a64;line-height:1.4;margin-top:1px">{{ st.sub }}</span>
+                </span>
+                <span style="font-family:'IBM Plex Mono',monospace;font-size:9px;color:#a09a90;flex:none;margin-top:3px">{{ st.at }}</span>
+              </button>
+            </sc-for>
+          </div>
+        </div>
+
+        <div style="padding:10px 16px 18px">
+          <div style="font-size:9.5px;letter-spacing:.16em;color:#7c7870;margin-bottom:7px">NUMBERS AT THIS STATION</div>
+          <div ref="{{ specRef }}" style="display:flex;flex-direction:column;gap:0;font-family:'IBM Plex Mono',monospace;font-size:11px;border-top:1px solid #e6e1d8"></div>
+          <div style="margin-top:12px;font-size:10.5px;color:#7c7870;line-height:1.5">Every actuator on this chassis is zero-force. The belt supplies all motive energy; the servos only supply <em>direction</em> (the blade) and <em>permission</em> (the gates).</div>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <footer style="flex:none;border-top:1px solid #dcd8cf;background:#fbfaf8;padding:10px 22px 12px">
+    <div style="display:flex;align-items:center;gap:16px">
+      <div style="display:flex;align-items:center;gap:7px;flex:none">
+        <button onClick="{{ prev }}" style="width:34px;height:34px;border-radius:8px;border:1px solid #dcd8cf;background:#fff;font:600 13px 'IBM Plex Sans',sans-serif;cursor:pointer">‹</button>
+        <button onClick="{{ togglePlay }}" style="width:46px;height:34px;border-radius:8px;border:1px solid #16181a;background:#16181a;color:#fbfaf8;font:600 12px 'IBM Plex Sans',sans-serif;cursor:pointer">{{ playLabel }}</button>
+        <button onClick="{{ next }}" style="width:34px;height:34px;border-radius:8px;border:1px solid #dcd8cf;background:#fff;font:600 13px 'IBM Plex Sans',sans-serif;cursor:pointer">›</button>
+        <button onClick="{{ restart }}" style="height:34px;padding:0 11px;border-radius:8px;border:1px solid #dcd8cf;background:#fff;font:500 11px 'IBM Plex Sans',sans-serif;cursor:pointer">Restart</button>
+        <button onClick="{{ cycleSpeed }}" style="height:34px;padding:0 10px;border-radius:8px;border:1px solid #dcd8cf;background:#fff;font-family:'IBM Plex Mono',monospace;font-size:11px;cursor:pointer">{{ speedLabel }}</button>
+        <button onClick="{{ toggleDims }}" style="height:34px;padding:0 10px;border-radius:8px;border:1px solid #dcd8cf;background:{{ dimsBg }};color:{{ dimsFg }};font:500 11px 'IBM Plex Sans',sans-serif;cursor:pointer">Dimensions</button>
+      </div>
+
+      <div style="flex:1;min-width:0">
+        <div onClick="{{ onScrub }}" style="position:relative;cursor:pointer;padding-top:12px">
+          <div style="position:relative;height:26px;display:flex;gap:2px">
+            <sc-for list="{{ segs }}" as="sg" hint-placeholder-count="8">
+              <div title="{{ sg.label }}" style="flex:{{ sg.flex }};background:{{ sg.bg }};border-radius:4px;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600;color:{{ sg.fg }}">{{ sg.n }}</div>
+            </sc-for>
+          </div>
+          <div ref="{{ headRef }}" style="position:absolute;top:10px;bottom:0;left:0;width:2px;background:#16181a;pointer-events:none"></div>
+        </div>
+      </div>
+
+      <div style="flex:none;display:flex;gap:14px;font-size:10.5px;color:#5d5a54;align-items:center">
+        <div style="display:flex;align-items:center;gap:6px"><span style="width:11px;height:11px;border-radius:3px;background:#4b9e4b"></span>the marker we are following</div>
+        <div style="display:flex;align-items:center;gap:6px"><span style="width:16px;height:3px;background:#1d6f66;border-radius:2px"></span>belt, always running</div>
+        <div style="display:flex;align-items:center;gap:6px"><span style="width:11px;height:11px;border-radius:2px;background:#e6e3db;border:1px solid #8f8a80"></span>scoop, static</div>
+      </div>
+    </div>
+  </footer>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;startPaused&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:false,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Playback&quot;}}">
+// Station windows in seconds. The piece path is keyed to the same clock, so the
+// rail, the callout and both cutaways can never disagree about where it is.
+const STATIONS = [
+  { n: 1, t0: 0,  t1: 4,  title: 'Capture',        sub: 'sweeper fingers, 165 → 116',
+    body: 'The two sweeper fingers counter-rotate on a single MG996R through a 1:1 spur pair, narrowing a 165 mm capture band down to the 116 mm belt width.',
+    key: 'Nothing lifts here — the fingers only sweep sideways. They are the intake funnel and the effector, one part doing both jobs.',
+    spec: [['Capture band', '165'], ['Closed to', '116'], ['Finger', '90 × 25'], ['Cycle', '~0.4 s'], ['In transit', 'held open']] },
+  { n: 2, t0: 4,  t1: 8,  title: 'Scoop',          sub: 'sprung shim, floats on the floor',
+    body: 'A Ø16 nose roller puts the belt top at Z 17.5, so the belt cannot start at floor level. The shim bridges that gap — but it cannot hover: an edge held 0.3 above the surface would strike a 5 mm disc square on and plough it along the floor.',
+    key: 'So the scoop is a trip edge, not a fixed ramp. It pivots on the nose-roller shaft and a torsion spring holds its knife bevel down on the surface. Driven forward it slides under; dragged backwards — which happens at every tail-in deposit — it just rotates up and skates over.',
+    spec: [['Scoop run', '48'], ['Angle', '20°'], ['Leading edge', 'rides the floor'], ['Spring preload', '~1.5 N'], ['Trip travel', '25° up, free']] },
+  { n: 3, t0: 8,  t1: 13, title: 'Belt uptake',    sub: '116 wide, climbing 11°',
+    body: 'A flat 1.5 mm EPDM belt on crowned Ø16 rollers, running continuously at about 60 mm/s. The crown self-centres the belt, so there is no tracking hardware and no fasteners.',
+    key: 'No cleats and no lips anywhere on the belt. Friction-only carry is what makes accumulation possible further down.',
+    spec: [['Belt width', '116'], ['Incline', '11°'], ['Speed', '~60 mm/s'], ['Nose → tail', 'Z 17.5 → 51'], ['Carry margin', '~3×']] },
+  { n: 4, t0: 13, t1: 17, title: 'Triage',         sub: 'camera + colour arbiter',
+    body: 'The convergence wedge funnels 116 mm down to a 30 mm throat — one wall straight, one at 22°, which is standard anti-bridging geometry. Inside a light-proof shroud a downward camera and a TCS34725 read the piece.',
+    key: 'The camera contributes timing; the shrouded photodiode is the more repeatable colour instrument. Two cheap sensors agreeing beats one expensive one guessing.',
+    spec: [['Throat', '30'], ['Asym. wall', '22°'], ['Camera standoff', '60'], ['Dwell in ROI', '~0.6 s'], ['Frames', '~12']] },
+  { n: 5, t0: 17, t1: 21, title: 'Divert',         sub: 'passive vane, pivoted mid-blade',
+    body: 'One MG90S holds a 66 mm vane pivoted at its middle, so the upstream arm catches the piece and starts steering it while the downstream arm swings the other way. That is what lets one blade reach any of the four lanes from a piece arriving on the throat centreline.',
+    key: 'The servo never pushes a load — it only holds an angle against a light side force. The vane works in a divider-free fan zone; the lane walls start aft of its swept envelope and their pointed noses finish the lateral move.',
+    spec: [['Vane', '66 long'], ['Pivot', 'mid-blade, Yb 152'], ['Angles', '0 / ±12 / ±25°'], ['Tip throw', '±18.6'], ['Fan zone', 'clear of walls']] },
+  { n: 6, t0: 21, t1: 26, title: 'Accumulate',     sub: 'queue against a closed gate',
+    body: 'The piece slides down its swim lane until it meets the closed flap gate, then simply rests there while the belt keeps sliding beneath it. Three greens are already queued ahead of it.',
+    key: 'Retarding force is about 0.03 N per piece against a belt that can pull ~30 N. No actuator and no sensor holds the queue — the friction bias does.',
+    spec: [['Lane run', '63'], ['Lane width', '26'], ['On the belt', '3 cylinders'], ['4th', 'waits in the flare'], ['Drag per piece', '~0.03 N']] },
+  { n: 7, t0: 26, t1: 31, title: 'Discharge',      sub: 'one gate opens, funnel to the tail',
+    body: 'The lane gate lifts and the belt carries the queue into a converging funnel that narrows all four lanes to a single 40 mm spout over the tail roller.',
+    key: 'At most one gate may ever be open. The shared funnel is only free of cross-contamination because of that interlock — write it into the gate driver, not the route script.',
+    spec: [['Funnel', '116 → 40'], ['Gate', 'MG90S flap'], ['Interlock', '1 gate max'], ['Belt top at tail', 'Z 51'], ['Spout', 'over the roller']] },
+  { n: 8, t0: 31, t1: 35, title: 'Deposit',        sub: 'gravity drop past the rear face',
+    body: 'The piece falls 51 mm off the tail roller onto the floor behind the robot. Because belt speed is only 60 mm/s the horizontal throw is negligible.',
+    key: 'It lands 5–15 mm behind the rear face, clear of the chassis. The robot then departs nose-out, so it never travels over a piece it has placed.',
+    spec: [['Drop', '51'], ['Landing band', '5 → 15 aft'], ['Ground clearance', '6'], ['Piece height', '20'], ['Posture', 'tail-in, nose-out']] }
+];
+
+const TEND = 35;
+
+// [t, x, z, xb] — x is measured from the front face, z up from the floor,
+// xb is the lateral station in the plan view. Belt top: z = 17.5 + (x-63)*0.1745.
+const PATH = [
+  [0,   -34, 0,    160],
+  [2.4, -6,  0,    152],
+  [4,   15,  0,    138],
+  [8,   63,  17.5, 118],
+  [13,  95,  23.1, 90],
+  [17,  110, 25.7, 90],
+  [19,  120, 27.4, 112],
+  [21,  134, 29.9, 120],
+  [24,  164, 35.1, 136.5],
+  [26,  178, 37.6, 136.5],
+  [28,  178, 37.6, 136.5],
+  [30,  206, 42.5, 136.5],
+  [31,  228, 46.3, 122],
+  [32.6,252, 50.5, 106],
+  [33.8,264, 26,   100],
+  [35,  272, 0,    100]
+];
+
+// x-window each station highlights, in both views
+const FOCUS = [[-38, 62], [8, 72], [56, 102], [88, 114], [86, 162], [150, 228], [200, 264], [242, 292]];
+
+const lerp = (a, b, u) => a + (b - a) * u;
+const ease = u => u < 0.5 ? 2 * u * u : 1 - 2 * (1 - u) * (1 - u);
+
+function sample(t) {
+  if (t <= PATH[0][0]) return { x: PATH[0][1], z: PATH[0][2], xb: PATH[0][3] };
+  const L = PATH[PATH.length - 1];
+  if (t >= L[0]) return { x: L[1], z: L[2], xb: L[3] };
+  for (let i = 0; i < PATH.length - 1; i++) {
+    const a = PATH[i], b = PATH[i + 1];
+    if (t >= a[0] && t <= b[0]) {
+      const u = ease((t - a[0]) / (b[0] - a[0]));
+      return { x: lerp(a[1], b[1], u), z: lerp(a[2], b[2], u), xb: lerp(a[3], b[3], u) };
+    }
+  }
+  return { x: L[1], z: L[2], xb: L[3] };
+}
+
+function ramp(t, t0, t1) { return t <= t0 ? 0 : t >= t1 ? 1 : ease((t - t0) / (t1 - t0)); }
+
+class Component extends DCLogic {
+  // One cutaway at a time. Side by side, each view got 263px of a 571px stage and
+  // every label rendered at 4-5px; alone, a view gets the full width and the same
+  // labels land at ~12px, which is the whole point of a close-up.
+  state = { playing: true, speed: 1, idx: 0, dims: true, view: 'side' };
+
+  constructor(props) {
+    super(props);
+    ['pieceSideRef', 'piecePlanRef', 'fingerLRef', 'fingerRRef', 'sweepArrowRef', 'groundRef', 'advanceRef', 'bladePlanRef', 'bladeSideRef',
+     'fingerSideRef', 'fingerLipRef', 'sideWrapRef', 'planWrapRef',
+     'gateSideRef', 'gatePlanRef', 'focusSideRef', 'focusPlanRef', 'headRef', 'stnRef',
+     'badgeRef', 'titleRef', 'bodyRef', 'keyRef', 'specRef', 'dimsSideRef', 'dimsPlanRef',
+     'dimsSideTxtRef', 'dimsPlanTxtRef'].forEach(k => { this[k] = React.createRef(); });
+    this.t = 0;
+    this.shownIdx = -1;
+  }
+
+  componentDidMount() {
+    try {
+      const s = JSON.parse(localStorage.getItem('rfgyc-mech-v1') || '{}');
+      if (typeof s.t === 'number' && s.t >= 0 && s.t < TEND - 0.5) this.t = s.t;
+      if (typeof s.speed === 'number') this.setState({ speed: s.speed });
+      if (typeof s.dims === 'boolean') this.setState({ dims: s.dims });
+    } catch (e) {}
+    if (this.props.startPaused) this.setState({ playing: false });
+    this.last = performance.now();
+    this.saveAt = 0;
+    this.loop = now => {
+      const dt = Math.min(0.05, (now - this.last) / 1000);
+      this.last = now;
+      if (this.state.playing) {
+        this.t += dt * this.state.speed;
+        if (this.t >= TEND) { this.t = TEND; this.setState({ playing: false }); }
+      }
+      this.frame(now);
+      this.raf = requestAnimationFrame(this.loop);
+    };
+    this.raf = requestAnimationFrame(this.loop);
+  }
+
+  componentWillUnmount() { cancelAnimationFrame(this.raf); }
+
+  stationAt(t) {
+    for (let i = 0; i < STATIONS.length; i++) if (t >= STATIONS[i].t0 && t < STATIONS[i].t1) return i;
+    return STATIONS.length - 1;
+  }
+
+  frame(now) {
+    const t = this.t, p = sample(t);
+    const set = (ref, attrs) => { const el = ref.current; if (el) for (const k in attrs) el.setAttribute(k, attrs[k]); };
+
+    // the marker, in both cutaways
+    set(this.pieceSideRef, { x: (p.x - 5).toFixed(2), y: (-p.z - 20).toFixed(2) });
+    set(this.piecePlanRef, { cx: p.x.toFixed(2), cy: p.xb.toFixed(2) });
+
+    // The scoop is a static shim, so nothing on the robot carries the piece from
+    // the floor to the belt nose — the robot driving forward does. These views are
+    // in the ROBOT frame, so that shows up as world-fixed ground ticks scrolling
+    // aft at exactly the piece's own relative rate. Without them the static shim
+    // reads as if it were conveying, which is the one thing it is not.
+    const adv = Math.min(t, 8.2);
+    set(this.groundRef, { transform: 'translate(' + ((sample(adv).x + 34) % 20).toFixed(2) + ',0)' });
+    if (this.advanceRef.current) {
+      this.advanceRef.current.setAttribute('opacity', (1 - ramp(t, 8.2, 9.6)).toFixed(2));
+    }
+
+    // Sweeper fingers. Pivots at (52,16) and (52,164), arms 90 long. Open puts the
+    // tips on the 165 capture band (Xb 7.5 / 172.5); closed puts them on the belt
+    // edges (Xb 32 / 148). That is 15.6 deg of arm travel — the honest number for a
+    // 90 arm moving its tip 24.5 laterally — so the open position is also held as a
+    // dashed phantom, otherwise the closure is too small to read.
+    const close = ramp(t, 0.6, 3.4) - ramp(t, 6.2, 7.8);
+    set(this.fingerLRef, { transform: 'rotate(' + (-close * 55).toFixed(2) + ' 34 14)' });
+    set(this.fingerRRef, { transform: 'rotate(' + (close * 55).toFixed(2) + ' 34 166)' });
+    // The rake is 55 deg about a vertical pivot, so in the SIDE cutaway the finger
+    // foreshortens: its tip runs from x -44 (open) to -16.5 (closed) while the
+    // cranked arm at x 15-34 stays put. Animating the blade's x/width is what makes
+    // the closure legible in a view that only sees the projection.
+    const bx = -44 + close * 27.5;
+    set(this.fingerSideRef, { x: bx.toFixed(2), width: (15 - bx).toFixed(2) });
+    set(this.fingerLipRef, { x: bx.toFixed(2) });
+    if (this.sweepArrowRef.current) {
+      this.sweepArrowRef.current.setAttribute('opacity', (t < 5.2 ? 1 - ramp(t, 3.8, 5.2) : 0).toFixed(2));
+    }
+
+    // plow blade swings to −25° for the green lane, then relaxes after the piece passes
+    // Pivot is mid-blade (140), so the upstream arm swings one way while the
+    // downstream arm swings the other — that is what lets one blade reach any of
+    // the four lanes from a piece arriving on the throat centreline.
+    const blade = ramp(t, 15, 18.5) - ramp(t, 22, 24);
+    set(this.bladePlanRef, { transform: 'rotate(' + (blade * 25).toFixed(2) + ' 140 90)' });
+    set(this.bladeSideRef, { transform: 'rotate(' + (blade * 14).toFixed(2) + ' 113 -46)' });
+
+    // L4 gate lifts at station 7 only
+    const gate = ramp(t, 26.4, 28.4);
+    set(this.gateSideRef, { transform: 'rotate(' + (-gate * 78).toFixed(2) + ' 220 -64)' });
+    set(this.gatePlanRef, { opacity: (1 - gate * 0.82).toFixed(2) });
+
+    // focus band follows the active station
+    const idx = this.stationAt(t), f = FOCUS[idx];
+    set(this.focusSideRef, { x: f[0], width: f[1] - f[0] });
+    set(this.focusPlanRef, { x: f[0], width: f[1] - f[0] });
+
+    if (this.headRef.current) this.headRef.current.style.left = (t / TEND * 100).toFixed(2) + '%';
+    if (this.stnRef.current) this.stnRef.current.textContent = (idx + 1) + ' / 8';
+
+    if (idx !== this.shownIdx) {
+      this.shownIdx = idx;
+      const s = STATIONS[idx];
+      if (this.badgeRef.current) this.badgeRef.current.textContent = String(s.n);
+      if (this.titleRef.current) this.titleRef.current.textContent = s.title;
+      if (this.bodyRef.current) this.bodyRef.current.textContent = s.body;
+      if (this.keyRef.current) this.keyRef.current.textContent = s.key;
+      const host = this.specRef.current;
+      if (host) {
+        host.textContent = '';
+        s.spec.forEach(row => {
+          const line = document.createElement('div');
+          line.style.cssText = 'display:flex;justify-content:space-between;gap:10px;padding:4px 0;border-bottom:1px solid #eeebe4';
+          const a = document.createElement('span'); a.textContent = row[0]; a.style.color = '#6d6a64';
+          const b = document.createElement('span'); b.textContent = row[1]; b.style.fontWeight = '600';
+          line.appendChild(a); line.appendChild(b); host.appendChild(line);
+        });
+      }
+      if (idx !== this.state.idx) this.setState({ idx: idx });
+    }
+
+    if (now - this.saveAt > 1500) {
+      this.saveAt = now;
+      try { localStorage.setItem('rfgyc-mech-v1', JSON.stringify({ t: this.t, speed: this.state.speed, dims: this.state.dims })); } catch (e) {}
+    }
+  }
+
+  seek(t) { this.t = Math.max(0, Math.min(TEND, t)); this.shownIdx = -1; this.setState({ playing: true }); }
+
+  renderVals() {
+    const idx = this.state.idx, dims = this.state.dims, view = this.state.view;
+    [this.dimsSideRef, this.dimsPlanRef, this.dimsSideTxtRef, this.dimsPlanTxtRef].forEach(r => {
+      if (r.current) r.current.style.display = dims ? '' : 'none';
+    });
+    if (this.sideWrapRef.current) this.sideWrapRef.current.style.display = view === 'side' ? 'flex' : 'none';
+    if (this.planWrapRef.current) this.planWrapRef.current.style.display = view === 'plan' ? 'flex' : 'none';
+    return {
+      sideWrapRef: this.sideWrapRef, planWrapRef: this.planWrapRef,
+      fingerSideRef: this.fingerSideRef, fingerLipRef: this.fingerLipRef,
+      showSide: () => this.setState({ view: 'side' }),
+      showPlan: () => this.setState({ view: 'plan' }),
+      sideBg: view === 'side' ? '#16181a' : '#fff',
+      sideFg: view === 'side' ? '#fbfaf8' : '#16181a',
+      planBg: view === 'plan' ? '#16181a' : '#fff',
+      planFg: view === 'plan' ? '#fbfaf8' : '#16181a',
+      pieceSideRef: this.pieceSideRef, piecePlanRef: this.piecePlanRef,
+      fingerLRef: this.fingerLRef, fingerRRef: this.fingerRRef, sweepArrowRef: this.sweepArrowRef,
+      groundRef: this.groundRef, advanceRef: this.advanceRef,
+      bladePlanRef: this.bladePlanRef, bladeSideRef: this.bladeSideRef,
+      gateSideRef: this.gateSideRef, gatePlanRef: this.gatePlanRef,
+      focusSideRef: this.focusSideRef, focusPlanRef: this.focusPlanRef,
+      headRef: this.headRef, stnRef: this.stnRef, badgeRef: this.badgeRef,
+      titleRef: this.titleRef, bodyRef: this.bodyRef, keyRef: this.keyRef, specRef: this.specRef,
+      dimsSideRef: this.dimsSideRef, dimsPlanRef: this.dimsPlanRef,
+      dimsSideTxtRef: this.dimsSideTxtRef, dimsPlanTxtRef: this.dimsPlanTxtRef,
+      playLabel: this.state.playing ? 'Pause' : 'Play',
+      speedLabel: this.state.speed + '\u00d7',
+      dimsBg: dims ? '#16181a' : '#fff',
+      dimsFg: dims ? '#fbfaf8' : '#16181a',
+      togglePlay: () => { if (!this.state.playing && this.t >= TEND - 0.01) this.t = 0; this.setState({ playing: !this.state.playing }); },
+      restart: () => { this.t = 0; this.shownIdx = -1; this.setState({ playing: true }); },
+      prev: () => this.seek(STATIONS[Math.max(0, idx - 1)].t0 + 0.05),
+      next: () => this.seek(STATIONS[Math.min(STATIONS.length - 1, idx + 1)].t0 + 0.05),
+      cycleSpeed: () => this.setState({ speed: this.state.speed === 1 ? 2 : this.state.speed === 2 ? 0.5 : 1 }),
+      toggleDims: () => this.setState({ dims: !dims }),
+      onScrub: e => { const r = e.currentTarget.getBoundingClientRect(); this.seek((e.clientX - r.left) / r.width * TEND); },
+      stations: STATIONS.map((s, i) => ({
+        n: String(s.n), title: s.title, sub: s.sub, at: s.t0 + 's',
+        go: () => this.seek(s.t0 + 0.05),
+        bg: i === idx ? '#eaf4f2' : '#fff',
+        bd: i === idx ? '#1d6f66' : '#e6e1d8',
+        dotBg: i === idx ? '#1d6f66' : '#d8d3c9',
+        dotFg: i === idx ? '#fff' : '#5d5a54'
+      })),
+      // Segment width tracks duration, not label length — 27-32px per segment
+      // against names needing 33-62px — so the rail carries numerals only. The
+      // name is already at 16px in the header and again in the station list;
+      // the full string stays in the title tooltip.
+      segs: STATIONS.map((s, i) => ({
+        flex: String(s.t1 - s.t0),
+        n: String(s.n),
+        label: s.n + ' · ' + s.title,
+        bg: i === idx ? '#1d6f66' : 'rgba(29,111,102,.16)',
+        fg: i === idx ? '#fff' : '#2c5a54'
+      }))
+    };
+  }
+}
+</script>
+</body>
+</html>

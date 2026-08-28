@@ -26,11 +26,11 @@
 
   <header style="display:flex;align-items:flex-end;justify-content:space-between;gap:24px;padding:14px 22px 12px;border-bottom:1px solid #ddd8cf;background:#fbfaf8">
     <div>
-      <div style="font-size:10px;letter-spacing:.18em;color:#7c7870;text-transform:uppercase">ITU Robotics for Good Youth Challenge 2026–27 · Senior</div>
+      <div style="font-size:10px;letter-spacing:.18em;color:#7c7870;text-transform:uppercase">ITU Robotics for Good Youth Challenge 2026–27 · Senior · Rev C</div>
       <div style="font-size:22px;font-weight:700;letter-spacing:-.01em;margin-top:3px">Two robots, four jobs, 120 seconds</div>
     </div>
     <div style="display:flex;align-items:center;gap:18px">
-      <div style="font-size:11.5px;line-height:1.45;color:#5d5a54;max-width:330px">Press play and watch the whole match. Turn parts on and off, spin the board, jump to any step. Then read the <a href="RFGYC26 Robot Drawing Set.dc.html">engineering drawings</a>.</div>
+      <div style="font-size:11.5px;line-height:1.45;color:#5d5a54;max-width:330px">Press play and watch the whole match. Turn parts on and off, spin the board, jump to any step. Then read the <a href="RFGYC26 Robot Drawing Set revC.dc.html">Rev C engineering drawings</a>.</div>
       <div style="text-align:right;font-family:'IBM Plex Mono',monospace;flex:none;min-width:132px">
         <div style="font-size:9.5px;letter-spacing:.14em;color:#7c7870;white-space:nowrap">ROUND CLOCK</div>
         <div ref="{{ clockRef }}" style="font-size:26px;font-weight:600;letter-spacing:-.02em;line-height:1.05;white-space:nowrap">T+000 s</div>
@@ -109,7 +109,7 @@
               </button>
             </sc-for>
           </div>
-          <div style="margin-top:12px;font-size:10.5px;color:#7c7870;line-height:1.5">Every part here is drawn to its real size in millimetres, from the same numbers as the drawing sheets. Grey out Agent A to study Agent B on its own.</div>
+          <div style="margin-top:12px;font-size:10.5px;color:#7c7870;line-height:1.5">Both robots are the same chassis: an 11° conveyor belt 116 mm wide, stepper drive on stub axles at the centroid, four ball transfers. Every part here is drawn to its real size in millimetres, from the same numbers as the Rev C drawing sheets.</div>
         </div>
       </div>
     </aside>
@@ -133,12 +133,12 @@
           <div style="display:flex;flex-direction:column;gap:4px">
             <div style="position:relative;height:22px;background:#f0eee8;border:1px solid #e6e1d8;border-radius:5px;overflow:hidden">
               <sc-for list="{{ laneA }}" as="bk" hint-placeholder-count="5">
-                <div style="position:absolute;top:0;bottom:0;left:{{ bk.left }};width:{{ bk.width }};background:{{ bk.bg }};border-right:1px solid #fbfaf8;display:flex;align-items:center;padding-left:7px;font-size:10px;font-weight:500;color:{{ bk.fg }};white-space:nowrap;overflow:hidden">{{ bk.label }}</div>
+                <div style="position:absolute;top:0;bottom:0;left:{{ bk.left }};width:{{ bk.width }};background:{{ bk.bg }};border-right:1px solid #fbfaf8;display:flex;align-items:center;padding-left:7px;font-size:10px;font-weight:500;color:{{ bk.fg }};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:5px">{{ bk.label }}</div>
               </sc-for>
             </div>
             <div style="position:relative;height:22px;background:#f0eee8;border:1px solid #e6e1d8;border-radius:5px;overflow:hidden">
               <sc-for list="{{ laneB }}" as="bk" hint-placeholder-count="5">
-                <div style="position:absolute;top:0;bottom:0;left:{{ bk.left }};width:{{ bk.width }};background:{{ bk.bg }};border-right:1px solid #fbfaf8;display:flex;align-items:center;padding-left:7px;font-size:10px;font-weight:500;color:{{ bk.fg }};white-space:nowrap;overflow:hidden">{{ bk.label }}</div>
+                <div style="position:absolute;top:0;bottom:0;left:{{ bk.left }};width:{{ bk.width }};background:{{ bk.bg }};border-right:1px solid #fbfaf8;display:flex;align-items:center;padding-left:7px;font-size:10px;font-weight:500;color:{{ bk.fg }};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:5px">{{ bk.label }}</div>
               </sc-for>
             </div>
           </div>
@@ -165,16 +165,17 @@ const COL = {
 };
 
 const GROUPS = [
-  { k: 'field',  label: 'Board, walls & zones',      dot: '#9c978c' },
-  { k: 'agentA', label: 'Agent A — chassis & wheels', dot: '#4f5fd7' },
-  { k: 'intakeA',label: 'A · disc scoop + roller',    dot: '#12a08c' },
-  { k: 'magA',   label: 'A · magazine + dispenser',   dot: '#2b93c9' },
-  { k: 'beamC',  label: 'A · beam pockets + beams',   dot: '#d98324' },
-  { k: 'agentB', label: 'Agent B — chassis & wheels', dot: '#8b5cd6' },
-  { k: 'funnelB',label: 'B · funnel + colour sensor', dot: '#00a3b4' },
-  { k: 'binsB',  label: 'B · sort bins + markers',    dot: '#cf4c8c' },
-  { k: 'kitsB',  label: 'B · kit tubes + kits',       dot: '#c9922e' },
-  { k: 'discs',  label: 'Sample discs',               dot: '#d8b483' }
+  { k: 'field',  label: 'Board, walls & zones',         dot: '#9c978c' },
+  { k: 'agentA', label: 'Agent A — chassis & wheels',   dot: '#4f5fd7' },
+  { k: 'beltA',  label: 'A · conveyor belt + sweeper',  dot: '#12a08c' },
+  { k: 'magA',   label: 'A · Ø58 chute-magazine',       dot: '#2b93c9' },
+  { k: 'beamC',  label: 'A · beam pockets + beams',     dot: '#d98324' },
+  { k: 'agentB', label: 'Agent B — chassis & wheels',   dot: '#8b5cd6' },
+  { k: 'beltB',  label: 'B · conveyor belt + sweeper',  dot: '#00a3b4' },
+  { k: 'triage', label: 'B · camera triage + diverter', dot: '#e0693f' },
+  { k: 'lanesB', label: 'B · swim lanes + markers',     dot: '#cf4c8c' },
+  { k: 'kitsB',  label: 'B · kit escapement + kits',    dot: '#c9922e' },
+  { k: 'discs',  label: 'Sample discs',                 dot: '#d8b483' }
 ];
 
 // Agent A's OUTER envelope is 285 x 235 -- the beam pockets sit at local y +/-105.5
@@ -185,14 +186,14 @@ const GROUPS = [
 const PATH_A = [
   [0,974.5,140,180],[3,974.5,140,180],[7,700,150,180],[10,470,150,180],
   [13,342.5,150,180],[17,262.5,150,180],[20,232.5,150,180],[23,150,150,180],
-  [27,470,150,180],[29,470,210,180],[31,470,210,90],[34,431.5,210,90],
-  [37,431.5,257,90],[40,431.5,210,90],[42,431.5,210,0],[45,571.5,210,0],
-  [47,571.5,210,90],[50,571.5,257,90],[53,571.5,210,90],[55,571.5,210,0],
-  [58,711.5,210,0],[60,711.5,210,90],[63,711.5,257,90],[66,711.5,210,90],
+  [27,470,150,180],[29,431.5,210,180],[31,431.5,210,270],[34,431.5,230,270],
+  [37,431.5,262.5,270],[40,431.5,200,270],[42,431.5,200,0],[45,571.5,200,0],
+  [47,571.5,200,270],[50,571.5,262.5,270],[53,571.5,200,270],[55,571.5,200,0],
+  [58,711.5,200,0],[60,711.5,200,270],[63,711.5,262.5,270],[66,711.5,200,270],
   [69,711.5,358,90],[71,711.5,358,180],[76,430,358,180],[80,144.5,358,180],
   [82,144.5,358,180],[85,144.5,430,180],[88,430,430,180],[90,430,430,270],
-  [94,395.5,144.5,270],[97,395.5,144.5,270],[100,500,144.5,270],[104,560,660,270],
-  [120,560,660,270]
+  [94,395.5,144.5,270],[97,395.5,144.5,270],[100,500,144.5,270],[104,350,560,270],
+  [120,350,560,270]
 ];
 
 // Agent B: 265 x 180 body, half-diagonal 160. It works the top strip and the two
@@ -208,40 +209,42 @@ const PATH_B = [
   [67.5,200,950,270],[69,140,950,270],[72,200,900,270],[75,200,813.5,270],
   [78,200,713.5,270],[81,200,613.5,270],[84,200,840,270],[86,100,840,270],
   [88,100,813.5,270],[91,100,713.5,270],[94,100,613.5,270],[97,100,840,270],
-  [100,140,1000,270],[103,140,1000,270],[105,200,1000,270],[106.5,200,1000,0],
-  [110,571,980,0],[113,571,980,0],[114.5,800,980,0],[116,800,980,270],
-  [118,800,230,270],[120,800,230,270]
+  [100,140,1000,270],[103,140,1000,270],[105,300,960,0],[108,450,940,0],
+  [110.3,571,940,270],[113,571,940,270],[115,700,900,0],[116.5,800,700,90],
+  [118,800,372,90],[120,800,372,90]
 ];
 
 const CHAPTERS = [
   { t: 0, badge: 'A+B', title: 'The playing field',
     body: 'A walled table 1143 × 1181 mm — a giant board game. Two robots, 120 seconds, no human allowed to touch them once the round starts.' },
   { t: 0, badge: 'A+B', title: 'Both robots start in one small box',
-    body: 'Everything must fit inside a 480 × 280 mm rectangle of black tape: Agent A with two wooden beams in side slots, Agent B with 10 medical kits stacked in two tubes.' },
+    body: 'Everything must fit inside a 480 × 280 mm rectangle of black tape: Agent A with two wooden beams in open-ended side pockets, Agent B with 10 medical kits — 4 on its belt, 6 in a tube above it.' },
+  { t: 0, badge: 'A+B', title: 'One chassis, built twice',
+    body: 'Both robots are the same rolling chassis and the same conveyor: a rubber belt 116 mm wide climbing at 11° from the nose to the tail. They differ only in a printed lane cassette, Agent A\u2019s beam pockets, and the software.' },
   { t: 5, badge: 'A', title: 'Sweep the quarantine corner',
-    body: 'Three sample discs lie somewhere in the corner. Agent A never looks for them — it drives the corner with a 165 mm mouth open, and a foam roller drags whatever it meets up a thin ramp into a stack tube.' },
+    body: 'Three sample discs lie somewhere in the corner. Agent A never looks for them — two sweeper fingers hold a 165 mm mouth open and rake whatever they meet onto a thin steel scoop. Nothing lifts: the robot driving forward slides the scoop under the disc like a dustpan.' },
   { t: 16, badge: 'B', title: 'Collect and colour-sort the markers',
-    body: '12 markers sit on fixed spots, but their colours change every match. Agent B comes down each column from above, so the funnel mouth meets one marker at a time: a colour sensor inside a light-proof box reads it, then a flap flicks it into the red, yellow or green bin.' },
+    body: '12 markers sit on fixed spots, but their colours change every match. Each one rides the belt through a light-proof tunnel where a camera and a colour sensor read it, then a plow blade tips it into one of four swim lanes. The belt does all the work; the servos only choose a direction.' },
   { t: 37, badge: 'A', title: 'Post the samples into the lab',
-    body: 'Three 60 mm holes. Agent A drops each disc through a funnel-shaped snout hanging 8 mm above the plate — the 45° chamfer swallows up to 10 mm of driving error, so the shape does the precision, not the code.' },
+    body: 'The belt carries each disc up to a Ø58 chute at the tail, which is also the magazine. Agent A reverses over the plate and a gate at the chute base releases one disc per stroke, 8 mm above the hole — the 45° chamfer swallows up to 10 mm of driving error.' },
   { t: 43, badge: 'B', title: 'Deliver the medical kits',
-    body: '6 kits at the Hospital, 2 at each Primary Care Centre. A shutter flicks open and one cube drops through a hole in the robot floor. Zero sensors in this whole job.' },
+    body: '6 kits at the Hospital, 2 at each Primary Care Centre. Agent B backs into the zone, opens one lane gate, and the kits fall 51 mm off the tail roller onto the floor behind it — then it drives away nose-first, never over its own deposit.' },
   { t: 76, badge: 'A', title: 'Seal the corner — beam 1',
-    body: 'Drive into the left wall until the bumper switches click, open the two fingers, then slide sideways. The 280 mm beam is left standing on its 20 mm edge: lean it past 18.4° and it topples.' },
+    body: 'Drive into the left wall until the motors stall, then simply drive forward: the pocket is open at that end, so the beam slides straight out. Every release is axial — no sideways shuffle, no turning. The beam is left standing on its 20 mm edge, and past 18.4° it topples.' },
   { t: 90, badge: 'A', title: 'Seal the corner — beam 2',
-    body: 'Back out, turn 90°, and push the 250 mm beam along the bottom wall until a microswitch feels it touch beam 1. That touch is the stop signal — wheel counting alone drifts 12–24 mm, which is far too much.' },
+    body: 'Back onto the bottom wall, creep north until a microswitch feels beam 2 touch beam 1, then drive forward out of the other pocket. That touch is the stop signal — step counting alone drifts far too much to trust.' },
   { t: 100, badge: 'B', title: 'Discharge by colour',
-    body: 'Red to the Hospital, yellow to a Primary Care Centre, green to the Recovery Zone. The Recovery Zone is inside the start box, so the last drop brings Agent B home.' },
+    body: 'Red to the Hospital, yellow to a Primary Care Centre, green to the Recovery Zone. Only one lane gate may ever be open at a time, or the shared funnel would mix colours. The Recovery Zone is inside the start box, so the last drop brings Agent B home.' },
   { t: 118, badge: 'A+B', title: 'Round complete',
     body: 'Beams are worth 70 points, samples 50, and the kits and markers the rest. Everything was decided before the buzzer — the robots ran the whole plan alone.' }
 ];
 
 const PHASE_A = [
-  [0, 25, 'Sweeping for samples', 'One pass across the quarantine corner with the intake roller spinning — the mouth meets each disc in turn.'],
-  [25, 66, 'Posting samples', 'Lining up on each 60 mm hole in the laboratory plate and releasing one disc.'],
-  [66, 85, 'Placing beam 1', 'Squaring on the left wall, opening the fingers, sliding clear.'],
-  [85, 100, 'Placing beam 2', 'Turning 90°, pushing until the contact switch closes, then reversing straight back.'],
-  [100, 121, 'Parked', 'Standing clear — nothing may touch the finished beams.']
+  [0, 25, 'Sweeping for samples', 'Sweeper fingers open at 165 mm; the scoop slides under each disc and the belt carries it up the 11° incline.'],
+  [25, 66, 'Posting samples', 'Reversing over the lab plate so the tail chute sits above each 60 mm hole, then releasing one disc.'],
+  [66, 85, 'Placing beam 1', 'Stalling square on the left wall, then driving forward so the beam slides out of the open pocket end.'],
+  [85, 100, 'Placing beam 2', 'Backing onto the bottom wall, creeping north to contact closure, then pulling axially clear.'],
+  [100, 121, 'Parked', 'Standing clear east of the sealed corner — nothing may touch the finished beams.']
 ];
 
 const PHASE_B = [
@@ -252,9 +255,9 @@ const PHASE_B = [
   [113, 121, 'Green, then home', 'Green into the Recovery Zone — which sits inside the start box, so this drop brings it home.']];
 
 const LANE_A = [[0,25,'Sweep corner'],[25,66,'Post samples'],[66,85,'Beam 1'],[85,100,'Beam 2'],[100,120,'Park']];
-const LANE_B = [[0,40,'Markers right'],[40,72,'Deliver kits'],[72,97,'Markers left'],[97,113,'Discharge'],[113,120,'Green + home']];
+const LANE_B = [[0,40,'Markers right'],[40,72,'Deliver kits'],[72,97,'Markers left'],[97,120,'Discharge']];
 
-const BIN_LOCAL = { red: 60, yellow: 0, green: -60 };
+const BIN_LOCAL = { red: 10.5, yellow: -18, green: -46.5 };
 
 // pick = the moment the carrier's front edge arrives; dest is derived from the
 // carrier's own pose at drop time (see resolveDests), never hand-placed.
@@ -318,13 +321,13 @@ let DESTS_READY = false;
 function resolveDests() {
   if (DESTS_READY) return;
   DESTS_READY = true;
-  DISCS.forEach(d => { d.dest = worldOf(samplePath(PATH_A, d.drop), 115, 0); });
-  KITS.forEach(k => { k.dest = worldOf(samplePath(PATH_B, k.drop), -89, k.lane); });
+  DISCS.forEach(d => { d.dest = worldOf(samplePath(PATH_A, d.drop), -109.5, 0); });
+  KITS.forEach((k, i) => { k.dest = worldOf(samplePath(PATH_B, k.drop), -142, ((i % 3) - 1) * 30); });
   const seen = { red: 0, yellow: 0, green: 0 };
   CYL.forEach(c => {
-    // spread the four same-colour cylinders into a short row under the chute
+    // all four of a colour leave through the same tail spout, spread so they read
     const spread = (seen[c.c]++ - 1.5) * 24;
-    c.dest = worldOf(samplePath(PATH_B, c.drop), -8, BIN_LOCAL[c.c] + spread);
+    c.dest = worldOf(samplePath(PATH_B, c.drop), -142, spread);
   });
 }
 
@@ -556,15 +559,21 @@ class Component extends DCLogic {
     const A = samplePath(PATH_A, t);
     const B = samplePath(PATH_B, t);
 
-    // Agent A parts (local: +x forward, +y left)
-    this.addPart(A, 0, 0, 285, 190, 6, 52, cA, 'agentA');
-    this.addPart(A, 0, 87.5, 65, 25, 0, 65, shade(cA, 0.55), 'agentA');
-    this.addPart(A, 0, -87.5, 65, 25, 0, 65, shade(cA, 0.55), 'agentA');
-    this.addPart(A, -102, 0, 22, 22, 58, 22, '#d64545', 'agentA');
-    this.addPart(A, 125, 0, 35, 165, 0, 40, '#12a08c', 'intakeA');
-    this.addPart(A, 106, 0, 30, 165, 11, 30, shade('#12a08c', 0.75), 'intakeA');
-    this.addPart(A, 80, 0, 62, 62, 13, 77, '#2b93c9', 'magA', 0.42);
-    this.addPart(A, 115, 0, 35, 64, 8, 60, shade('#2b93c9', 0.8), 'magA', 0.6);
+    // ---- Agent A: Rev C common chassis (local +x forward, +y left) --------
+    // body 285 fore-aft x 235 wide, axle Xa 142.5 = body centre, track 150.
+    // Belt runs Xa 210 (nose, top Z 17.5) -> Xa 35 (tail, top Z 51) at 11 deg,
+    // drawn as five stepped segments so the climb reads in the isometric.
+    this.addPart(A, 0, 0, 285, 160, 6, 40, cA, 'agentA');
+    this.addPart(A, 0, 75, 60, 22, 0, 60, shade(cA, 0.55), 'agentA');
+    this.addPart(A, 0, -75, 60, 22, 0, 60, shade(cA, 0.55), 'agentA');
+    this.addPart(A, 60, 62, 42, 42, 40, 40, shade(cA, 0.78), 'agentA');
+    this.addPart(A, 60, -62, 42, 42, 40, 40, shade(cA, 0.78), 'agentA');
+    this.addPart(A, -102, 55, 20, 20, 42, 20, '#d64545', 'agentA');
+    [[50, 14], [15, 22], [-20, 30], [-55, 38], [-90, 45]].forEach(seg =>
+      this.addPart(A, seg[0], 0, 35, 116, 6, seg[1], '#12a08c', 'beltA', 0.55));
+    this.addPart(A, 132, 68, 22, 58, 0, 26, shade('#12a08c', 0.8), 'beltA');
+    this.addPart(A, 132, -68, 22, 58, 0, 26, shade('#12a08c', 0.8), 'beltA');
+    this.addPart(A, -109.5, 0, 58, 58, 11, 46, '#2b93c9', 'magA', 0.4);
     this.addPart(A, 0, 105.5, 285, 24, 0, 10, '#d98324', 'beamC');
     this.addPart(A, 0, -105.5, 285, 24, 0, 10, '#d98324', 'beamC');
 
@@ -576,35 +585,46 @@ class Component extends DCLogic {
     if (beam2Placed) S(this.rectPts(290, 127, 20, 250, 0), 0, 60, COL.beam, 'beamC');
     else this.addPart(A, 17.5, -105.5, 250, 20, 0, 60, COL.beam, 'beamC');
 
-    // Agent B parts
-    this.addPart(B, 0, 0, 265, 180, 6, 46, cB, 'agentB');
-    this.addPart(B, -22.5, 72.5, 65, 25, 0, 65, shade(cB, 0.55), 'agentB');
-    this.addPart(B, -22.5, -72.5, 65, 25, 0, 65, shade(cB, 0.55), 'agentB');
-    this.addPart(B, -72.5, 60, 22, 22, 52, 22, '#d64545', 'agentB');
-    this.addPart(B, 117.5, 0, 30, 90, 0, 40, '#00a3b4', 'funnelB', 0.62);
-    this.addPart(B, 94, 0, 24, 48, 6, 24, shade('#00a3b4', 0.7), 'funnelB');
-    this.addPart(B, 65, 0, 26, 36, 0, 50, shade('#00a3b4', 0.86), 'funnelB', 0.62);
-    [60, 0, -60].forEach((ly, i) => this.addPart(B, -8, ly, 24, 24, 0, 90, i === 0 ? '#cf4c8c' : i === 1 ? shade('#cf4c8c', 0.86) : shade('#cf4c8c', 0.72), 'binsB', 0.42));
-    this.addPart(B, -89, 35, 27, 27, 0, 110, '#c9922e', 'kitsB', 0.42);
-    this.addPart(B, -89, -35, 27, 27, 0, 110, '#c9922e', 'kitsB', 0.42);
+    // ---- Agent B: same chassis, 265 x 180, axle Yb 132.5, lane cassette ----
+    // local lx = Yb - 132.5, ly = 90 - Xb. Belt Yb 202 -> 10, five stepped segs.
+    this.addPart(B, 0, 0, 265, 160, 6, 40, cB, 'agentB');
+    this.addPart(B, 0, 75, 60, 22, 0, 60, shade(cB, 0.55), 'agentB');
+    this.addPart(B, 0, -75, 60, 22, 0, 60, shade(cB, 0.55), 'agentB');
+    this.addPart(B, 93, 65, 42, 42, 40, 40, shade(cB, 0.78), 'agentB');
+    this.addPart(B, 93, -65, 42, 42, 40, 40, shade(cB, 0.78), 'agentB');
+    this.addPart(B, -72.5, 55, 20, 20, 42, 20, '#d64545', 'agentB');
+    [[50.3, 12], [11.9, 20], [-26.5, 28], [-64.9, 36], [-103.3, 45]].forEach(seg =>
+      this.addPart(B, seg[0], 0, 38, 116, 6, seg[1], '#00a3b4', 'beltB', 0.55));
+    this.addPart(B, 117, 62, 22, 56, 0, 26, shade('#00a3b4', 0.8), 'beltB');
+    this.addPart(B, 117, -62, 22, 56, 0, 26, shade('#00a3b4', 0.8), 'beltB');
+    this.addPart(B, 55, 0, 30, 48, 20, 22, '#e0693f', 'triage', 0.5);
+    this.addPart(B, 32, 0, 15, 44, 24, 66, shade('#e0693f', 0.85), 'triage', 0.42);
+    this.addPart(B, 12, -14, 8, 52, 24, 12, shade('#e0693f', 0.7), 'triage');
+    [[41, 30], [10.5, 26], [-18, 26], [-46.5, 26]].forEach((ln, i) =>
+      this.addPart(B, -34, ln[0], 107, ln[1], 24, 30,
+        i === 0 ? '#c9922e' : i === 1 ? '#cf4c8c' : i === 2 ? shade('#cf4c8c', 0.86) : shade('#cf4c8c', 0.72),
+        i === 0 ? 'kitsB' : 'lanesB', 0.34));
+    this.addPart(B, 6, 41, 27, 30, 54, 116, '#c9922e', 'kitsB', 0.34);
+    this.addPart(B, -105, 0, 35, 60, 30, 26, shade(cB, 0.7), 'agentB', 0.5);
 
-    // kits
+    // kits — staged in lane L1 / the escapement tube, discharged off the tail
     KITS.forEach((k, i) => {
-      const idx = Math.floor(i / 2);
-      const p = this.pieceAt({ home: [0, 0], pick: -1, drop: k.drop, dest: k.dest }, B, [-89, k.lane, 4 + idx * 20], t);
+      const inTube = i >= 4;
+      const local = inTube ? [6, 41, 54 + (i - 4) * 20] : [-70 + (i * 26), 41, 26];
+      const p = this.pieceAt({ home: [0, 0], pick: -1, drop: k.drop, dest: k.dest }, B, local, t);
       S(this.rectPts(p.x, p.y, 25, 25, p.carried ? B.h * Math.PI / 180 : 0), p.z, 20, COL.wood, 'kitsB');
     });
-    // discs
+    // discs — ride the belt, then stack in the Ø58 tail chute-magazine
     DISCS.forEach((d, i) => {
-      const p = this.pieceAt(d, A, [80, 0, 20 + i * 8], t);
+      const p = this.pieceAt(d, A, [-109.5, 0, 14 + i * 6], t);
       S(this.discPts(p.x, p.y, 28, 12), p.z, 5, COL.disc, 'discs');
     });
-    // cylinders
+    // markers — accumulate against a closed gate at the aft end of their lane
     const binCount = { red: 0, yellow: 0, green: 0 };
     CYL.forEach(c => {
       const slot = binCount[c.c]++;
-      const p = this.pieceAt(c, B, [-8, BIN_LOCAL[c.c], 4 + slot * 21], t);
-      S(this.discPts(p.x, p.y, 10, 8), p.z, 20, COL[c.c], 'binsB');
+      const p = this.pieceAt(c, B, [-78 + slot * 22, BIN_LOCAL[c.c], 26], t);
+      S(this.discPts(p.x, p.y, 10, 8), p.z, 20, COL[c.c], 'lanesB');
     });
 
     // draw solids back to front

@@ -18,6 +18,11 @@ from .params import Chassis, AgentA, Field, Piece
 HZ = 50.0
 MATCH = 120.0            # rules g.1
 HOLE_BUDGET = 17.0       # measured cost of one reverse dock plus its post
+# 56, and this was measured rather than guessed.  At 44 the laboratory gets a
+# second slot -- worth +18 -- and the seal then starts 15 s later and misses:
+# over twelve seeds the mean went from +69 to about +50, with four matches
+# running past the buzzer with no beams down at all.  The seal is 70 points
+# and it is the phase with no slack, so it gets the clock it needs first.
 BEAM_BUDGET = 56.0       # measured cost of the two-beam seal from the lab
 def _wrap(a): return (a + 180.0) % 360.0 - 180.0
 

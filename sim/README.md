@@ -107,6 +107,12 @@ Where this came from, same twelve seeds:
 | samples only, after the clock work | +37 | — | 2/12 |
 | **samples + beams** | **+69** | **10/12** | **1/12** |
 
+One more measurement worth having: dropping the beam budget to 44 s buys the
+laboratory a **second** slot, worth +18 — and costs far more than it earns.
+The seal then starts 15 s later and misses: over the same twelve seeds the mean
+fell from +69 to about +50, with four matches running past the buzzer with no
+beams down at all. The 70-point task has no slack, so it takes the clock first.
+
 **Read the sample column honestly: it is one slot, not three.** The two tasks do
 not both fit in 120 s, so the laboratory runs on a budget and stops when the
 beams need the clock (F51). One posted sample and a sealed corner is +79; three
@@ -717,17 +723,38 @@ drawings.
 
 ---
 
-## 7. Next steps, in the order I would do them
+## 7. What the build has to change, before you order anything
 
-1. **Trim the match clock.** 7 of 12 finish inside 120 s and the rest are 3–51 s
-   over. Nothing is broken there — it is the two sweep passes (10 s of dwell
-   each) and the three docks (8–19 s each) adding up.
-2. **Then odometry instead of ground truth** (F38), and the slot-probe datum on
-   top of it. Until the robot can be wrong about where it is, the datum has
-   nothing to correct — and that is the difference between these numbers and the
-   real robot's.
+These are the Rev C departures the beam work forced. All of them are cheap; the
+point of listing them here is that none is optional.
+
+| Change | Why | Cost |
+|---|---|---|
+| **Beam pockets lose their outboard walls** — inner wall on Ya 95.5/139.5, open bottom, the beam's own face is the envelope | The robot does not fit beside its own cargo once either beam is down (F44) | none, it is less material |
+| **Beams are carried 12 mm clear and set down to place** — one cradle servo per pocket, 34 mm stroke, 20 mm retaining lip | A dragging beam cannot cross the 6 mm laboratory, and that left no legal pivot in the southern half of the field (F45/F46) | 2 × MG90S-class servo + a cam |
+| **The escapement retainer shortens to 62 mm on a 64 mm stroke** | At 80/74 it parks 16.5 mm inside a beam pocket, at exactly the height a carried beam rides (F47) | none, it is a smaller part |
+| **The pocket end stops start at Za 16, not at the floor** | Below Za 6 they plough the laboratory on every reverse dock (F52) | none |
+| **The cradle wedges the beam against the pocket wall** | A loose beam's inertia arrives late and destroys the dock (F50) | shape of the lip |
+| Sweeper finger pivots may need 5–8 mm aft | Only if you keep the beam's forward face flush with the chassis nose | none |
+
+Bench-test before committing: the intake at a ≤5 mm powered edge (F25), and
+turn efficiency for `Chassis.WHEEL_COLLISION_W`.
+
+## 8. Next steps, in the order I would do them
+
+1. **Seed 3, and the sample column.** One match in twelve loses the magazine
+   early and scores −9; the rest post one slot out of three because the seal
+   takes the clock. Both are the same problem — the sample phase is 70 s and
+   should be 45. The sweep dwell and the three-pass dock are where it is.
+2. **Odometry instead of ground truth** (F38), and the slot-probe datum on top
+   of it. Until the robot can be wrong about where it is, the datum has nothing
+   to correct — and that is the difference between these numbers and the real
+   robot's. It matters more for the beams than for the samples: every beam lane
+   here is dead reckoning between two wall stalls.
 3. **Bench-test the intake before ordering the belt** (F25). A knife edge at
    ≤5 mm picks up; a Ø16 roller never does.
 4. **Measure turn efficiency on the real robot** and set
    `Chassis.WHEEL_COLLISION_W` from it.
-5. Then Agent B.
+5. **Bench-test the beam cradle**: 200 g at 108 mm off the pocket wall, 34 mm
+   of lift, and the release has to leave the beam standing within 5 mm.
+6. Then Agent B.

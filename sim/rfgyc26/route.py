@@ -268,7 +268,7 @@ def settle_stack(rb, cycles=2):
 import os
 
 
-def dock_and_post(rb, hole_x, hole_y, chute_offset, stroke=0.28, aboard=0,
+def dock_and_post(rb, hole_x, hole_y, chute_offset, stroke=0.60, aboard=0,
                   depart=None, log=print, clk=None):
     """Reverse the chute onto a lab hole along a straight line, then meter one disc.
 
@@ -338,14 +338,39 @@ def dock_and_post(rb, hole_x, hole_y, chute_offset, stroke=0.28, aboard=0,
         yield from reseat(rb, cycles=2)
         n = rb.mag_count()
     log("      magazine holds %d" % n)
+
+    def _stack(tag):
+        if not os.environ.get("ESC_DEBUG"):
+            return
+        import mujoco as _mj
+        out = []
+        for _i in range(3):
+            _b = _mj.mj_name2id(rb.m, _mj.mjtObj.mjOBJ_BODY, "disc%d" % _i)
+            if _b < 0:
+                continue
+            _p = rb.to_local(rb.d.xpos[_b])
+            out.append("d%d(%6.1f,%5.1f,%5.1f)" % (_i, _p[0], _p[1], _p[2]))
+        log("        [esc %-9s] %s" % (tag, "  ".join(out)))
+
+    _stack("before")
     rb.blade(n >= 2)
     yield from wait(rb, 0.5)
+    _stack("blade in")
+    # HOLD THE SHELF OPEN LONG ENOUGH FOR THE PIECE TO CLEAR IT (F41).  At 0.28 s
+    # the released disc was still at Za 7.2 -- barely below the shelf line at 8 --
+    # when the shelf came back, and the returning shelf caught it and swept it
+    # 10.7 mm sideways, where it jammed half in the bore and was then dragged
+    # along by the departure.  It does not fall freely: the retainer's knife lip
+    # rests on it, so it is released rather than dropped.
     rb.gate(True)
     yield from wait(rb, stroke)
+    _stack("gate out")
     rb.gate(False)
     yield from wait(rb, 0.5)
+    _stack("gate back")
     rb.blade(False)
     yield from wait(rb, 0.9)
+    _stack("blade out")
     # depart nose-out: the robot already faces away from the hole, so driving
     # forward retraces the approach line straight back to the pivot station
     lap("posted")

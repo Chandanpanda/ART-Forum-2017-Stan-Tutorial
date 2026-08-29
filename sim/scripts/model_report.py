@@ -65,16 +65,13 @@ simulator is NOT proving what it looks like it is proving.
    Bench-test the intake alone before committing: one belt, one nose bar, a
    sloped board, and a disc.
 
-2. THE LAB PLATE IS SOLID (the collision-bit cheat is gone) BUT ITS THICKNESS IS
-   AN ADMITTED FICTION.  Field.LAB_PLATE_T is 1.0 mm.  The rules require a sample
-   to end up "completely inside" a slot and a sample is a 5 mm disc, so a real
-   laboratory is at least 5 mm.  At 1 mm a posted disc stands 4 mm proud and the
-   robot knocks it out again.  Set it to 6.0 and the mission collapses -- the
-   robot cannot climb a 3 mm edge, let alone 6 (F33), and moving the rear ball
-   transfers forward so the tail overhangs instead is parameterised but not yet
-   adopted because it needs a docking controller that expects it.  THIS IS THE
-   TOP OPEN RISK: if the supplied laboratory is 6 mm ply, the design scores
-   nothing as it stands.
+2. THE LABORATORY IS SOLID AND 6 mm, AND THE ROBOT REACHES OVER IT.  Both of the
+   old cheats here are gone.  It used to sit on its own collision bit so the
+   chassis ignored it, and it used to be 1 mm -- a thickness in which a 5 mm
+   sample cannot sit, so the rules would not have accepted a single posting.  It
+   is now 6 mm (a sample thick, F32), the chassis really collides with it, and
+   the rear ball transfers sit at Xa 115 so the tail overhangs rather than trying
+   to climb an edge a O20 ball cannot climb (F33/F39).
 
 3. THE WHEELS COLLIDE ON A 6 mm PROXY, 22 mm wide visually (F4).  A rigid
    cylinder's line contact over-predicts scrub, which put turn-in-place at 21%
@@ -85,10 +82,10 @@ simulator is NOT proving what it looks like it is proving.
    22 mm: 0.21,  12 mm: 0.44,  8 mm: 0.60,  6 mm: 0.70 -- so set the parameter
    from the bench number and re-run, rather than trusting 0.70.
 
-4. THE MISSION DOES NOT FIT THE MATCH.  Not a modelling stand-in but the biggest
-   practical risk: the match is 120 s (rules g.1) and the route takes 157-184.
-   demo_pick_place.py now prints both the final score and the score AT THE
-   BUZZER, which is the one that counts.
+4. THE MATCH CLOCK IS TIGHT.  120 s (rules g.1) against runs of 90-171 s: 7 of
+   12 finish inside it and the rest post two or three samples by the buzzer.
+   demo_pick_place.py prints both the final score and the score AT THE BUZZER,
+   which is the one that counts.
 
 5. THE STEPPERS ARE VELOCITY SOURCES with step quantisation and optional step
    loss -- not a torque/speed curve, and StallGuard is a torque-saturation

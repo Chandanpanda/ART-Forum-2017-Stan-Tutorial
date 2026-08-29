@@ -74,9 +74,9 @@ number from here.
 
 ## 2. Status — where this actually stands
 
-**10 of 12 randomised matches now place all three samples inside the 120 s
-match**, into a 6 mm laboratory that satisfies the rules. That is up from 4 of 12
-and a mean of +23 before the docking work.
+**9 of 12 randomised matches place all three samples**, into a 6 mm laboratory
+that satisfies the rules, and **no match now scores below +27** — the timeouts
+and the dropped-sample runs are both gone.
 
 | | |
 |---|---|
@@ -84,39 +84,29 @@ and a mean of +23 before the docking work.
 | 13 geometry assertions | **all pass** |
 | Conveyor carry on the incline | **works** — 59.2 mm/s against a 60 mm/s belt |
 | **Pick: samples off the floor into the magazine** | **works — 24 of 24**, all three seated |
-| **Magazine escapement: one piece per stroke** | **works — 3 of 3** on the bench |
-| **Dock all three slots, 6 mm laboratory** | **works — 1.4–2.0 mm**, 8–19 s each |
-| **Full mission, all three placed at the buzzer** | **10 of 12** |
-| Full mission inside 120 s | **8 of 12** |
+| **Magazine escapement: one piece per stroke** | **works** — in the mission, not just on the bench |
+| **Dock all three slots, 6 mm laboratory** | **works — 0.3–2.1 mm**, 8–19 s each |
+| **All three samples placed at the buzzer** | **9 of 12** |
+| Full mission inside 120 s | **7 of 12** |
 
 ```
 seed          1    2    3    4    5    6    7    8    9   10   11   12
-at buzzer    +9  +50  +50  +50  +50  +50  +50   +9  +50  +50  +50  +27
-time (s)    240  141   93  110  110  114  113  109  115  112  126  129
-mean at the buzzer  +41
+at buzzer   +50  +50  +50  +27  +50  +50  +50  +27  +50  +50  +50  +27
+time (s)    111  140  112  120  126  114   91  171  109  111  124  123
+mean at the buzzer  +44        worst case  +27        timeouts  none
 ```
 
-Two changes did it, both about the drive being a pair of steppers rather than a
-servo:
+Progress over the last three rounds, same twelve seeds:
 
-* **Real clearance for the rear ball transfers** (F39). At Xa 90 the arithmetic
-  said 14 mm of margin; the *measured* ball surface sat at Y 360 — exactly the
-  laboratory edge. So a dock either grazed it or caught on it, and catching froze
-  the robot 5.5 mm short with the terminal commanding 11 mm/s into a 13 N contact
-  for as long as its guard allowed. That is the whole bimodal 15-s-or-never
-  result. Xa 115 buys the margin the arithmetic thought it had.
-* **Creep and settle in the last 8 mm** (F40). The terminal used to servo
-  continuously; commanding 5 mm/s still left the chassis coasting at 13, so it
-  hunted and never landed inside 2 mm. Steppers are position devices — move in
-  0.18 s bursts, stop, re-measure on a stationary robot. Applied across the whole
-  endgame it spends 60% of the time stopped and blows the clock; applied to the
-  last 8 mm only, it converges.
+| | all three placed | mean | worst | timeouts |
+|---|---|---|---|---|
+| before the docking work | 4/12 | +23 | −9 | 4 |
+| after F39/F40 (docking) | 10/12 | +41 | +9 | 1 |
+| **after F41 (escapement)** | **9/12** | **+44** | **+27** | **0** |
 
-The remaining two failures are not docking. At hole 2 the escapement can release
-**two** pieces onto the plate and then trap one under the gate at 3 N, dragging
-it — the departure stalls against its own sample. The magazine meters perfectly
-on the bench (3 of 3) but not while the robot is pitched over the laboratory.
-That is the next thing.
+The +50 count moved by one seed either way — that is chaos, not signal. What
+moved for real is the **floor**: every match now lands at least two samples, and
+nothing runs out of time.
 
 ## 3. Findings — things the simulator discovered about the design
 
@@ -555,6 +545,31 @@ Scope matters as much as the idea: applied across the whole endgame the duty
 cycle spends 60% of the time stopped, which fixed the hunting seeds and pushed
 the marginal ones over the match clock. Restricted to the last 8 mm it does both.
 
+**F41. The escapement shelf was closing on the piece it had just released.** The
+magazine metered 3 of 3 on the bench and still lost samples in the mission, which
+is the signature of a timing bug rather than a geometry one. Watching the stack
+through a release, in robot-frame coordinates:
+
+```
+hole 1, works        gate out  d1(z= 5.4)     gate back  d1(z=2.5)   landed
+hole 2, fails        gate out  d2(z= 7.2)     gate back  d2(z=9.1, dy -10.7)
+```
+
+At hole 2 the released disc was still at Za 7.2 — barely below the shelf line at
+Za 8 — when the shelf came back after 0.28 s. The returning shelf caught it,
+swept it **10.7 mm sideways**, and left it jammed half in the bore, where the
+departure then dragged it along the laboratory at 3 N.
+
+It does not fall freely, which is why 0.28 s was not enough: the retainer's knife
+lip is resting on the piece, so it is *released* rather than dropped, and it
+leaves at zero velocity with the lip still in contact. Holding the shelf open for
+0.60 s costs 1 s across the whole match and fixes it — every hole now reads
+`gate out z≈5.6 → gate back z≈2.9 → landed z=2.5`.
+
+The bench rig never caught this because it loads the magazine by placing discs at
+fixed heights, which leaves them centred and free. A stack the sweeper built sits
+a few millimetres off-axis, and off-axis is where the shelf can reach it.
+
 ---
 
 ## 4. Modelling decisions you should know about
@@ -612,12 +627,13 @@ drawings.
 
 ## 7. Next steps, in the order I would do them
 
-1. **Meter reliably while pitched over the laboratory.** The escapement is 3 of 3
-   on the bench and still drops two pieces at hole 2 in the mission, then traps
-   one under the gate and drags it. That is the last two failing seeds.
+1. **Trim the match clock.** 7 of 12 finish inside 120 s and the rest are 3–51 s
+   over. Nothing is broken there — it is the two sweep passes (10 s of dwell
+   each) and the three docks (8–19 s each) adding up.
 2. **Then odometry instead of ground truth** (F38), and the slot-probe datum on
    top of it. Until the robot can be wrong about where it is, the datum has
-   nothing to correct.
+   nothing to correct — and that is the difference between these numbers and the
+   real robot's.
 3. **Bench-test the intake before ordering the belt** (F25). A knife edge at
    ≤5 mm picks up; a Ø16 roller never does.
 4. **Measure turn efficiency on the real robot** and set

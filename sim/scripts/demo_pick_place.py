@@ -30,8 +30,14 @@ def main():
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--video", action="store_true", help="write out/pick_place.mp4 frames")
     ap.add_argument("--gui", action="store_true", help="open the interactive viewer")
+    # Viewer controls (standard MuJoCo): left-drag orbits, RIGHT-drag pans,
+    # scroll zooms, [ and ] cycle the fixed cameras (field / lab / quar /
+    # A_chase), Esc returns to the free camera, Tab toggles the side panel.
     ap.add_argument("--timeout", type=float, default=240.0)
     ap.add_argument("--step-loss", type=float, default=0.0)
+    ap.add_argument("--speed", type=float, default=0.0,
+                    help="playback rate vs real time: 1.0 = real time, 0.25 = quarter "
+                         "speed, 0 = as fast as the machine manages (default)")
     a = ap.parse_args()
 
     rng = np.random.default_rng(a.seed)
@@ -62,7 +68,10 @@ def main():
         import mujoco.viewer as _mjv          # 'import mujoco.viewer' would shadow the global
         viewer = _mjv.launch_passive(m, d)
 
+    if a.gui and a.speed == 0.0:
+        a.speed = 1.0            # unthrottled is unwatchable; pace the viewer
     t0, done, k = time.time(), False, 0
+    wall0 = time.perf_counter()
     settle = 2500      # let the last release settle before the referee judges
     while d.time < a.timeout:
         if k % CTRL_DECIM == 0 and not done:
@@ -77,6 +86,12 @@ def main():
         if viewer is not None and k % 20 == 0:
             if not viewer.is_running(): break
             viewer.sync()
+        if a.speed > 0 and k % 20 == 0:
+            # launch_passive hands the physics loop to US, so the viewer does no
+            # pacing of its own -- without this the run is as fast as the CPU
+            # allows, which is ~3x real time here.
+            lag = d.time / a.speed - (time.perf_counter() - wall0)
+            if lag > 0: time.sleep(lag)
         if done:
             settle -= 1
             if settle <= 0: break

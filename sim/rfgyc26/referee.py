@@ -93,18 +93,48 @@ def score_beams(beams):
             detail.append((i, "beam %d placed on the %s" % (i, wall), +25))
     pts = 25*placed
     if placed == 2:
-        # T-joint: the closest approach between beam 2's end faces and beam 1's
-        # south side face.
-        (x0, y0), (x1, y1) = ends[1]
-        gap = min(_seg_gap((x0, y0), (x1, y1), e) for e in ends[2])
-        if gap <= BEAM_TOUCH_TOL + Piece.BEAM_W:
+        # T-JOINT: THE GAP BETWEEN THE TWO FOOTPRINTS, FACE TO FACE.
+        #
+        # This used to measure beam 2's centreline endpoint against beam 1's
+        # centreline SEGMENT and then allow a whole beam width of slack.  Two
+        # errors that mostly cancelled, and when they did not it scored joints
+        # that are visibly open: beam 1 landing 5 mm high left a 7 mm air gap
+        # and still collected the +20.  A closed perimeter is a physical
+        # condition -- the pieces touch -- so measure the pieces, not their
+        # axes, and allow only the tolerance.
+        gap = _rect_gap(_rect(*beams[0][:2], _beam_frame(beams[0][3])[0],
+                              Piece.BEAM1_L, Piece.BEAM_W),
+                        _rect(*beams[1][:2], _beam_frame(beams[1][3])[0],
+                              Piece.BEAM2_L, Piece.BEAM_W))
+        if gap <= BEAM_TOUCH_TOL:
             pts += 20
             detail.append((-1, "perimeter closed (T-joint gap %.1f mm)"
-                           % max(0.0, gap - Piece.BEAM_W), +20))
+                           % max(0.0, gap), +20))
         else:
-            detail.append((-1, "perimeter NOT closed: %.0f mm gap at the T-joint"
-                           % (gap - Piece.BEAM_W), 0))
+            detail.append((-1, "perimeter NOT closed: %.1f mm gap at the T-joint"
+                           % gap, 0))
     return pts, detail
+
+
+def _rect(x, y, yaw, length, width):
+    """World corners of a beam's floor footprint."""
+    c, s = np.cos(np.radians(yaw)), np.sin(np.radians(yaw))
+    return np.array([(x + sx*length/2*c - sy*width/2*s,
+                      y + sx*length/2*s + sy*width/2*c)
+                     for sx, sy in ((1, 1), (1, -1), (-1, -1), (-1, 1))])
+
+
+def _rect_gap(A, B):
+    """Separation between two convex polygons; 0 once they touch or overlap."""
+    best = 0.0
+    for P, Q in ((A, B), (B, A)):
+        for i in range(len(P)):
+            e = P[(i + 1) % len(P)] - P[i]
+            n = np.array([-e[1], e[0]])
+            n = n/np.linalg.norm(n)
+            pa, qa = P @ n, Q @ n
+            best = max(best, qa.min() - pa.max(), pa.min() - qa.max())
+    return float(best)
 
 
 def _seg_gap(a, b, p):

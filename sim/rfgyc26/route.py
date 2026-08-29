@@ -23,8 +23,13 @@ HOLE_BUDGET = 17.0       # measured cost of one reverse dock plus its post
 # over twelve seeds the mean went from +69 to about +50, with four matches
 # running past the buzzer with no beams down at all.  The seal is 70 points
 # and it is the phase with no slack, so it gets the clock it needs first.
-BEAM_BUDGET = 42.0       # measured cost of the two-beam seal from the lab
-MIN_DOCK    = 9.0        # no point starting an approach with less than this
+BEAM_BUDGET = 39.0       # measured cost of the two-beam seal from the lab
+# 13, which is what a dock MEASURES: 11-16 s from arriving at the pivot to
+# being clear of the plate again.  At 9 the robot starts approaches it cannot
+# finish -- one match began its third slot at T+66, left the plate at T+84,
+# and the seal then ran 7 s past the buzzer and scored nothing.  A slot is
+# worth 18 and the seal 70; when they compete, the seal wins.
+MIN_DOCK    = 11.0       # floor on the estimate; a clean dock is 11-12 s
 def _wrap(a): return (a + 180.0) % 360.0 - 180.0
 
 
@@ -526,14 +531,48 @@ def mission_agent_a(rb, holes, hole_y, chute_offset, log=print, clock=None):
     t = (lambda: "") if clock is None else (lambda: "T+%5.1f  " % clock())
     log(t() + "leaving the deployment box nose-first (no pivot: swept R 185 > 140 to the wall)")
     yield from guard(drive_straight(rb, 300.0, speed=220.0), 10.0)
-    log(t() + "sweep pass 1, mouth on Y 130")
-    yield from guard(pursue(rb, 430.0, 130.0, speed=220.0, tol=40.0), 20.0)
-    yield from guard(sweep_line(rb, 130.0, 158.0, want=3), 45.0)
-    log(t() + "sweep pass 2, mouth on Y 215")
-    yield from guard(back_to(rb, 470.0, 235.0), 22.0)
-    yield from guard(turn_to(rb, 180.0), 12.0)
-    yield from guard(pursue(rb, 430.0, 215.0, speed=200.0, tol=40.0), 20.0)
-    yield from guard(sweep_line(rb, 215.0, 158.0, want=3), 45.0)
+    # TWO LANES, BUT NOT THESE TWO -- AND THE NORTH ONE FIRST.
+    #
+    # Samples are randomised in Y 80 .. 230 (rules 2.1, and random_discs).  The
+    # sweeper takes a piece whose centre is within about 55 mm of its lane -- the
+    # finger tips are at +/-82.5 and the disc is O56, so beyond ~55 the centre is
+    # outside the tips and the piece is not funnelled, it is SHOVED.  The chassis
+    # is 235 wide, so each pass carries 62 mm of bulldozer beyond each side of
+    # what it can actually collect.
+    #
+    # Lanes at 130 and 215 covered the band between them, but the first pass
+    # moved pieces the second one was relying on: seed 3's sample went
+    # (60, 226) -> (37, 273), out of the quarantine AND into beam 1's footprint,
+    # so the beam landed on it and lost its own +25 too.  Seeds 5 and 12 lost one
+    # the same way.  Three of twelve matches, all the same 62 mm.
+    #
+    # Y 178 then Y 120 is the pair where that cannot happen:
+    #     pass 1 collects 123 .. 233  -- its north bulldozer band starts ABOVE
+    #                                   the highest a sample can be, so nothing
+    #                                   is ever shoved out of the quarantine
+    #     pass 2 collects  65 .. 175  -- and picks up whatever pass 1 pushed
+    #                                   south, which is the only way pass 1 can
+    #                                   push anything
+    # Between them they cover 65 .. 233 with a 52 mm overlap, and every sample
+    # that moves at all moves TOWARD the next pass.
+    log(t() + "sweep pass 1, mouth on Y 178")
+    yield from guard(pursue(rb, 430.0, 178.0, speed=220.0, tol=40.0), 20.0)
+    yield from guard(sweep_line(rb, 178.0, 158.0, want=3), 45.0)
+    # Second lane only if the bore says something is still out there.  When the
+    # samples happen to fall in the north half this is the whole pass saved --
+    # 10 s, and the beams need every one of them.
+    if rb.mag_count() < 3:
+        log(t() + "%d aboard -- second lane, mouth on Y 120" % rb.mag_count())
+        # Back out to Y 195: the southernmost legal pivot with the beams aboard
+        # is 184.7 (swept R against the south wall) and everything further north
+        # is lane the next pass has to crab back off.  And DO NOT pursue() the
+        # lane from there -- the target is ~90 mm away and the loaded turn radius
+        # at sweep speed is 190, so pursue circles the point instead of arriving
+        # (measured: 20 s of a 120 s match spent going round it).  sweep_line
+        # holds its own lane; let it.
+        yield from guard(back_to(rb, 470.0, 195.0), 22.0)
+        yield from guard(turn_to(rb, 180.0), 12.0)
+        yield from guard(sweep_line(rb, 120.0, 158.0, want=3), 45.0)
     log(t() + "settling the magazine")
     yield from guard(settle_stack(rb, want=len(holes)), 30.0)
 
@@ -560,16 +599,24 @@ def mission_agent_a(rb, holes, hole_y, chute_offset, log=print, clock=None):
     # 56 s left and then sealed the quarantine in 39.  A deadline lets the robot
     # spend every second it actually has and stop the moment the beams need it,
     # including part-way through an approach.
-    dl = MATCH - BEAM_BUDGET
+    dl, est = MATCH - BEAM_BUDGET, MIN_DOCK
     for i, hx in enumerate(holes):
-        if clock is not None and clock() > dl - MIN_DOCK:
-            log(t() + "  hole %d not started: T+%.0f, the beams take over at %.0f"
-                % (i+1, clock(), dl))
+        # ...and the estimate of what a slot costs is MEASURED, not assumed.
+        # Docks run 11-17 s depending on how the approach goes, and a constant
+        # is wrong in both directions: too small and the robot starts a slot it
+        # cannot finish, losing the 70-point seal to gain 18; too large and it
+        # gives up a slot it had time for.  Time the last one instead.
+        if clock is not None and clock() + est > dl:
+            log(t() + "  hole %d not started: T+%.0f + %.0f would pass %.0f"
+                % (i+1, clock(), est, dl))
             break
         log(t() + "  hole %d (x=%.1f)" % (i+1, hx))
+        t0 = clock() if clock else 0.0
         yield from dock_and_post(rb, hx, hole_y, chute_offset,
                                  aboard=len(holes) - i, log=log, clk=clock,
                                  deadline=dl)
+        if clock is not None:
+            est = max(MIN_DOCK, clock() - t0)
     yield from seal_quarantine(rb, log=log, clk=clock)
     rb.stop()
 
@@ -595,7 +642,7 @@ def mission_agent_a(rb, holes, hole_y, chute_offset, log=print, clock=None):
 
 
 def stall_drive(rb, v, hold_heading, max_mm=400.0, thresh=0.30, settle=0.35,
-                line=None, crab_max=12.0):
+                line=None, crab_max=12.0, gain=1.0, taper_mm=70.0):
     """Drive until the drive torque saturates -- the spec's wall-stall datum.
 
     This is the localisation primitive the spec calls "left-wall stall" and
@@ -646,8 +693,8 @@ def stall_drive(rb, v, hold_heading, max_mm=400.0, thresh=0.30, settle=0.35,
             # laid down at, and the referee wants it within 10 deg of its line.
             # A 12 mm residual is 12 deg, which is a fail on yaw alone.
             rem = abs((line[0] - x)*np.cos(t) + (line[1] - y)*np.sin(t))
-            taper = float(np.clip(rem / 70.0, 0.0, 1.0))
-            aim = hold_heading - np.clip(1.0*lat, -crab_max, crab_max) * \
+            taper = float(np.clip(rem / taper_mm, 0.0, 1.0))
+            aim = hold_heading - np.clip(gain*lat, -crab_max, crab_max) * \
                   taper * (1.0 if v > 0 else -1.0)
         # 3.5, not 2.2: the crab angle has to be REACHED, not approached.  At
         # 2.2 the robot spent the first 80 mm of a 150 mm run-in still turning
@@ -664,7 +711,7 @@ def stall_drive(rb, v, hold_heading, max_mm=400.0, thresh=0.30, settle=0.35,
 
 
 
-def line_drive(rb, v, head, line, dist_mm):
+def line_drive(rb, v, head, line, dist_mm, side=None):
     """Cover `dist_mm` along the approach axis while converging onto it.
 
     Same law as stall_drive's run-in, distance-terminated instead of
@@ -680,6 +727,13 @@ def line_drive(rb, v, head, line, dist_mm):
             rb.stop(); return
         lat = -(x - line[0])*np.sin(t) + (y - line[1])*np.cos(t)
         aim = head - np.clip(1.0*lat, -22.0, 22.0) * (1.0 if v > 0 else -1.0)
+        # One-sided, when the caller says so: with a beam already on the field
+        # the crab is safe on one side of the approach and a collision on the
+        # other (see dress_safe).  Give up the correction rather than take it
+        # from the wrong side -- this is a transit, and the run-in that follows
+        # is what actually has to be on the line.
+        if side is not None and side*_wrap(aim - head) < 0.0:
+            aim = head
         # +/-60 deg/s, not 26.  A crab leg lasts about half a second and at
         # 26 deg/s the chassis is still turning onto its crab when the leg
         # ends -- 85 mm of travel bought 9 mm of cross-track instead of 32.
@@ -729,11 +783,75 @@ def dress_onto_line(rb, head, line, net_mm=0.0, tol=10.0, phi=12.0, leg=75.0,
     yield from guard(turn_to(rb, head, tol=1.5), 7.0)
 
 
+def dress_safe(rb, head, line, side=1.0, tol=5.0, phi=12.0, leg=80.0,
+               passes=9, recock=True):
+    """Shuffle onto a line WITHOUT EVER CRABBING TO THE WRONG SIDE OF IT.
+
+    dress_onto_line alternates the crab angle either side of the approach
+    heading.  That is free on an empty field and fatal once something is
+    standing on it, because the robot's cargo does not sit on the axle: beam 1
+    is carried 137 mm ahead of the pivot and 107 mm to the left, so a few
+    degrees of yaw swing its mid-section a long way in Y.  Measured, at the
+    moment beam 1 is being lined up:
+
+        heading    clearance from the carried beam's south face
+                   to beam 2's north end face, robot on the line
+          192          +23 .. +7 mm     (lifts away)
+          180           +3.8 mm         (the design clearance)
+          173           -10 .. -1 mm    (through it)
+          168           -21 .. -5 mm
+
+    -- so the crab is safe on one side and a collision on the other, and
+    dress_onto_line spends half its legs on the wrong one.  On seed 6 that
+    dragged the beam already placed 20 mm east and 9 deg round.  Nothing looks
+    wrong at the time: beam 2 still scores its +25, and the T-joint it no longer
+    makes is not read until the buzzer.
+
+    So pin the crab to the safe side and get the other direction of travel by
+    REVERSING instead of by crabbing the other way -- at head + side*a, forward
+    moves the robot one way across the line and reverse moves it back.  Each
+    cycle then squares up and runs its own along-track travel back off, because
+    four descending legs in a row would otherwise walk the carried beam into
+    the west wall.
+    """
+    t = np.radians(head)
+    for _ in range(passes):
+        x, y, _ = rb.pose
+        lat = -(x - line[0])*np.sin(t) + (y - line[1])*np.cos(t)
+        if abs(lat) < tol:
+            break
+        # Forward at head + side*a changes lat by +side*sin(a) per mm travelled,
+        # reverse by -side*sin(a).  The crab angle never changes sign; only the
+        # gear does.
+        a    = min(phi, max(6.0, abs(lat)))
+        fwd  = (lat < 0.0) == (side > 0.0)
+        step = min(leg, abs(lat)/max(np.sin(np.radians(a)), 0.1))
+        yield from guard(turn_to(rb, head + side*a, tol=2.0), 5.0)
+        yield from guard(drive_straight(rb, step if fwd else -step,
+                                        speed=200.0), 4.0)
+        # Square up BEFORE running the station back.  The return leg is the one
+        # part of the cycle that has to be flat: it is driven at the approach
+        # heading, where the design clearance is 3.8 mm and nothing is spare.
+        #
+        # recock=False leaves the along-track travel where it fell.  That halves
+        # the cycle -- one turn and one leg instead of two of each, 2.6 s against
+        # 4 -- and it is right whenever the caller has something else that will
+        # put the station back, which place_beam does: it line_drives to its own
+        # staging point before the run-in anyway.
+        yield from guard(turn_to(rb, head, tol=1.5), 5.0)
+        if recock:
+            back = step*np.cos(np.radians(a))
+            yield from guard(drive_straight(rb, -back if fwd else back,
+                                            speed=200.0), 4.0)
+    yield from guard(turn_to(rb, head, tol=1.5), 6.0)
+
 def place_beam(rb, which, log=print, clk=None, withdraw=0.0,
-               withdraw_line=None, back=170.0, station=None):
+               withdraw_line=None, back=170.0, station=None, crab=12.0,
+               gain=1.0, taper_mm=70.0, side=None):
     """Set one beam down against its wall and back away from it."""
     lap = (lambda w: None) if clk is None else \
-          (lambda w: log("        %-16s T+%5.1f" % (w, clk())))
+          (lambda w: log("        %-16s T+%5.1f  axle (%6.1f,%6.1f,%6.1f)"
+                         % ((w, clk()) + rb.pose)))
     st  = station or (AgentA.BEAM1_STATION if which == 1
                       else AgentA.BEAM2_STATION)
     ax, ay, head = st
@@ -758,12 +876,14 @@ def place_beam(rb, which, log=print, clk=None, withdraw=0.0,
     along = (sx - px)*np.cos(t) + (sy - py)*np.sin(t)     # + is toward the nose
     if abs(along) > 15.0:
         yield from guard(line_drive(rb, 200.0 if along > 0 else -200.0, head,
-                                    (ax, ay), abs(along)), 12.0)
+                                    (ax, ay), abs(along), side=side), 12.0)
     lap("staged")
     # Run in and stall on the wall.  The beam is still carried clear, so the
     # piece that meets the wall is the beam's own end face, not the chassis.
     ok = yield from guard(stall_drive(rb, 120.0 if fwd else -120.0, head,
-                                      max_mm=back + 120.0, line=(ax, ay)), 16.0)
+                                      max_mm=back + 120.0, line=(ax, ay),
+                                      crab_max=crab, gain=gain,
+                                      taper_mm=taper_mm), 16.0)
     lap("wall stall")
     # STRAIGHTEN AND RESEAT.  The run-in crabs to kill its cross-track, and
     # whatever crab is left when the beam meets the wall is the angle the beam
@@ -893,9 +1013,15 @@ def seal_quarantine(rb, log=print, clk=None):
     # and it ends by driving the beam into a wall -- so whatever crab is still
     # on at the stall is the angle the beam gets laid down at.  10 mm of
     # residual is 10 deg of yaw, and the referee wants the beam within 10.
+    # tol 18, not 5.  This used to shuffle the last 15 mm onto the lane by hand
+    # at 5.6 s a time, and it does not have to: place_beam line_drives 130 mm to
+    # its own staging point before the run-in, crabbing onto the lane as it goes,
+    # and the run-in itself is 220 mm with a proper line follower on it.  The
+    # shuffle is a safety net for a pivot that lands badly, not the way the robot
+    # is supposed to get onto its line.
     yield from guard(dress_onto_line(rb, AgentA.BEAM2_STATION[2],
                                      AgentA.BEAM2_STATION[:2],
-                                     tol=5.0, passes=6), 16.0)
+                                     tol=18.0, passes=2), 8.0)
     # HOW FAR TO WITHDRAW IS THE WHOLE COST OF THE NEXT PHASE.  The pivot after
     # this one has to clear beam 2, and every millimetre of over-retreat is a
     # millimetre beam 1's approach has to be parked back down again -- at about
@@ -906,7 +1032,8 @@ def seal_quarantine(rb, log=print, clk=None):
     # 99.4 mm of x-offset from beam 2's north-west corner, so y >= 406.  The
     # release leaves the axle at 187.5, hence 222 with 4 mm to spare.  It was
     # and loses the T-joint: the pivot then clears beam 2 by 4 mm, not 12.
-    yield from place_beam(rb, 2, log=log, clk=clk, withdraw=230.0, back=220.0)
+    yield from place_beam(rb, 2, log=log, clk=clk, withdraw=230.0, back=220.0,
+                          gain=1.2, taper_mm=45.0)
     log(t() + "beam 1 (west wall)")
     # DERIVE BEAM 1's LINE FROM WHERE BEAM 2 ACTUALLY LANDED (F54).
     # Beam 2's north end face is at its stall axle + STOP2_X, and beam 1 has to
@@ -921,29 +1048,75 @@ def seal_quarantine(rb, log=print, clk=None):
     line1 = (AgentA.BEAM1_STATION[0], n_end + AgentA.POCKET_Y + Piece.BEAM_W/2.0 + 1.0)
     log("      beam 2's north face read at Y %.1f -> beam 1 line Y %.1f"
         % (n_end, line1[1]))
-    # WITHDRAW STRAIGHT, THEN SIDESTEP.  The withdrawal used to crab onto the
-    # dress lane as it went, which walks the pocket's inner wall 78 mm east --
-    # straight through the beam that has just been set down, shoving it 80 mm
-    # and yawing it 20 deg.  Go straight out first; once the robot is north of
-    # the beam's far end it can move east for free.
-    yield from guard(turn_to(rb, 180.0, tol=2.0), 10.0)
-    yield from guard(drive_straight(rb, -(LANE - AgentA.BEAM2_STATION[0]),
-                                    speed=180.0), 6.0)
+    # COME DOWN THE DIAGONAL, DO NOT SHUFFLE DOWN.  The robot is now at
+    # (194, 458) and beam 1's line is 87 mm south of that: a lateral shuffle
+    # costs 1.9 s per 17 mm and there is no 10 s to spend.  Reversing at 150 deg
+    # covers both axes at once -- 113 mm of travel is 98 east and 57 south --
+    # and lands on the staging X with about 30 mm still to come off, which is
+    # what the run-in's crab is for.
+    #
+    # 150 IS A FLOOR, NOT A CHOICE.  Steeper diagonals land closer to the line
+    # and drag the carried beam's trailing half through beam 2 on the way:
+    # measured at the same start, 147.5 clears by 1.6 mm, 145 by -7, 140 by -25.
+    # Shallower ones are safe but leave more for the run-in than it can take.
+    # STEP EAST BEFORE ANY PIVOT.  Beam 2's lane is Xa 177.5 and the CHASSIS
+    # half-diagonal is 184.7, so from the withdrawal point the robot is boxed
+    # into headings 55.6 .. 124.4 and cannot reach 180 by turning at all, in
+    # either direction -- a front corner goes 7.2 mm inside the west wall at
+    # heading 140.  The carried beam is not even involved; this pivot was never
+    # legal, loaded or empty.
+    #
+    # turn_to hides it.  It sees a pivot that is not happening, backs off 45 mm
+    # along its own axis and tries again, and on seed 7 that back-off drove the
+    # carried beam into the beam just placed: 10 mm east, 5 deg round, T-joint
+    # gone.  The score said +100 and nothing in the log said why.
+    #
+    # Forward at 65 deg is the cheapest heading in the box that gains X, and
+    # 44 mm of it puts the axle at (196, 462), where the pivot clears the wall
+    # by 8 mm and beam 2 by 10.
+    px, py, _ = rb.pose
+    yield from guard(turn_to(rb, 65.0, tol=2.5), 8.0)
+    yield from guard(drive_straight(rb, float(np.clip(
+        (196.0 - px)/np.cos(np.radians(65.0)), 25.0, 90.0)), speed=180.0), 5.0)
+    log("      stepped east to (%.0f, %.0f) -- the pivot is legal there" % rb.pose[:2])
+    STAGE_X = 292.0                       # the lab plate caps it; see below
+    px, py, _ = rb.pose
+    tgt = (STAGE_X, line1[1] + 30.0)
+    h2  = float(np.clip((np.degrees(np.arctan2(tgt[1]-py, tgt[0]-px)) + 180.0) % 360.0,
+                        150.0, 176.0))
+    yield from guard(turn_to(rb, h2, tol=2.5), 9.0)
+    px, py, _ = rb.pose
+    run = (STAGE_X - px)/max(0.2, -np.cos(np.radians(h2)))
+    yield from guard(drive_straight(rb, -float(np.clip(run, 30.0, 220.0)),
+                                    speed=180.0), 7.0)
+    log("      down the diagonal at %.0f deg to (%.0f, %.0f)" % ((h2,) + rb.pose[:2]))
+    # Safety net only.  If the diagonal lands badly the shuffle picks it up, and
+    # it is the ONE-SIDED shuffle: beam 2 is on the field and the carried beam
+    # only clears its north end face by 3.8 mm, so crabbing below 180 puts the
+    # cargo through the piece already placed (see dress_safe).
+    # ...and shuffle it down to within 3 mm FIRST.  The run-in's crab is a
+    # cascaded loop -- crab angle commanded from cross-track, yaw rate commanded
+    # from crab angle -- and the inner loop's 0.29 s makes it sluggish, not
+    # tight: from 11 mm out it cleared 7 and laid beam 1 down 4 mm high, which
+    # is a 7 mm air gap at the T-joint.  Winding the gain up to 2.5 did not fix
+    # it, it made it overshoot: seed 6 went 6 mm PAST the line and drove the
+    # beam into beam 2, losing both.  So do not ask the run-in for authority it
+    # has not got.  Two shuffle cycles cost 5 s and hand it a 3 mm error, which
+    # is inside what it can actually clear.
+    yield from guard(dress_safe(rb, 180.0, (line1[0], line1[1] + 2.0),
+                                side=+1.0, tol=4.0, phi=20.0, leg=115.0,
+                                passes=3, recock=False), 10.0)
     # Stage no further east than Xa 292.  At heading 180 the shell's FORWARD
     # section -- the part at Za 6, which cannot ride over the 6 mm laboratory --
     # reaches axle + 52.5, and the plate starts at 351.5.  The first version
     # staged at 312 and ploughed the plate edge for the whole run-in, which
     # yawed beam 1 by 8 deg and left it 28 mm out.
-    # The pivot has to be >= 185 mm from beam 2, which puts it at Y >= 421;
-    # beam 1's line is Y 369.5 and the laboratory edge caps the staging at
-    # X 292.  That is a 67 mm lateral shift with 77 mm of room, so shuffle onto
-    # the line instead of trying to drive onto it.
-    yield from guard(dress_onto_line(rb, 180.0, line1), 22.0)
-    # Stage 150 mm out, not 75.  The shuffle only has to get the robot roughly
-    # onto the line -- inside 10 mm -- because place_beam then reverses 77 mm
-    # to the staging point and runs 150 mm in, both crabbing, and 227 mm of
-    # crab is worth 75 mm of cross-track.  Xa 292 is as far east as the staging
-    # can go: the rear ball transfers sit at axle + 27.5 and the laboratory
-    # edge, which a O20 ball cannot climb, is at 351.5.
+    #
+    # crab 20, not 12.  The run-in now arrives ~30 mm NORTH of the line and has
+    # 150 mm to take it off; at 12 deg that is 24 mm of authority and beam 1
+    # lands 6 mm high, which is most of the T-joint budget.  Twenty is free
+    # here: the correction is northward, so the crab tips the carried beam AWAY
+    # from beam 2, and the taper still squares it up before the wall.
     yield from place_beam(rb, 1, log=log, clk=clk, withdraw=60.0, back=150.0,
-                          station=(line1[0], line1[1], 180.0))
+                          station=(line1[0], line1[1], 180.0), crab=24.0,
+                          gain=1.2, taper_mm=45.0, side=+1.0)

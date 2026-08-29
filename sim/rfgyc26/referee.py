@@ -136,9 +136,3 @@ def _rect_gap(A, B):
             best = max(best, qa.min() - pa.max(), pa.min() - qa.max())
     return float(best)
 
-
-def _seg_gap(a, b, p):
-    a, b, p = np.array(a), np.array(b), np.array(p)
-    ab = b - a
-    t = np.clip(np.dot(p - a, ab) / max(np.dot(ab, ab), 1e-9), 0.0, 1.0)
-    return float(np.linalg.norm(p - (a + t*ab)))

@@ -662,6 +662,94 @@ Za 12–72, so a stop spanning 16–52 engages it and still clears the plate.
 The same trap caught the cradle: its shelves and lips are on the belt's
 collision bit, not the floor's, so they can drop below the field plane.
 
+**F53. The pocket lips have to sit on the forward half of the beam.** Beam 1's
+run-in and its shuffle both take the robot along the north side of beam 2, and a
+retaining lip at Xa 42 swings out to X 262–328 as the chassis crabs — straight
+through beam 2's east half, which it shoved 30 mm and yawed 14°. At Xa 172/242
+the lips never enter beam 2's X band at all, at any heading the approach uses.
+
+**F54. Beam 1's line has to be read off where beam 2 actually landed, not
+assumed.** The wall stall leaves beam 2 0–3 mm off the south wall depending on
+how hard it arrived, and 3 mm is the whole T-joint tolerance. Worse, the pocket-L
+end stop rides on beam 1's own south face, so a line 2 mm too far south does not
+merely open the joint — it drives the stop through the beam already on the
+field. The robot knows the number: it stalled there. The route now derives the
+line from that stall.
+
+**F55. The escapement shelf was bolting the robot to the laboratory, and the
+score said nothing.** A disc that perches on the slot's countersink instead of
+dropping through gets pinched between that countersink and the returning shelf —
+4 N on the shelf, 3 N on the cone — and the robot then cannot drive off in *any*
+direction; rocking does not free it. The disc still scores, so the referee is
+happy, and the failure surfaces 20 s later as a pivot that will not turn. Leave
+the shelf open until the robot is clear of the slot.
+
+**F56. The T-joint test was passing joints that are physically open, and that
+hid two real defects.** It measured beam 2's centreline *endpoint* against beam
+1's centreline *segment*, then allowed a whole beam width of slack — two errors
+that mostly cancel. When they did not, beam 1 landing 5 mm high left a 7 mm air
+gap and still collected the +20. Scoring the two footprints face to face, with
+only the 3 mm tolerance, turned two +120s back into +100s and pointed straight at
+the run-in. **If a referee cannot fail the thing you are trying to get right, it
+is not measuring it.**
+
+**F57. The pivot after beam 2 was never legal — the beam had nothing to do with
+it.** Beam 2's lane is Xa 177.5 and the *chassis* half-diagonal is 184.7, so
+turning 90° → 180° there puts a front corner 7.2 mm inside the west wall, loaded
+or empty. Measured, the robot is boxed into headings 55.6–124.4 and cannot reach
+180 by turning in either direction. `turn_to` hid it for months: it sees a pivot
+that is not happening, backs off 45 mm along its own axis and tries again — and
+that back-off drove the carried beam into the beam just placed, 10 mm east and
+5° round. The route now steps 44 mm east at 65° first, from where the pivot
+clears the wall by 8 mm and beam 2 by 10. **A recovery that succeeds quietly is
+worse than a failure that stops.**
+
+**F58. Clearance to a placed beam is one-sided, so shuffles near one must be
+too.** Beam 1 is carried 137 mm ahead of the axle and 107 to the left, so a few
+degrees of yaw swing its mid-section a long way in Y — and its line clears beam
+2's end face by 3.8 mm by design. Measured, robot on the line:
+
+| heading | carried beam's south face vs beam 2's end face |
+|---|---|
+| 192° | +23 … +7 mm (lifts clear) |
+| 180° | +3.8 mm (the design clearance) |
+| 173° | −10 … −1 mm (through it) |
+| 168° | −21 … −5 mm |
+
+A shuffle that alternates either side of the approach therefore spends half its
+legs inside the piece already placed. `dress_safe` pins the crab to the safe side
+and gets the other direction of travel by reversing instead. The same asymmetry
+sets the floor on the approach diagonal: 150° clears, 147.5° clears by 1.6 mm,
+145° is −7 and 140° is −25.
+
+**F59. Every sweep pass carries 62 mm of bulldozer beyond each side of what it
+can collect, and which way it shoves decides whether the piece is recoverable.**
+The mouth takes a sample within about 55 mm of its lane; the chassis is 235 wide.
+A sample shoved *south* stays in the quarantine and in reach of the next lane; one
+shoved *north* leaves the zone, and on seed 3 it landed at (37, 273) — inside beam
+1's footprint, so the beam came down on top of it and lost its own +25 as well.
+One defect, two tasks. Moving the lanes does not fix it, it moves it: at Y 178 a
+sample 45 mm off the lane meets the guide's leading edge instead of its inner
+face, jams the nose and yaws the chassis 25°, and the pass then ploughs the other
+two — 1 of 3 collected against 3 of 3 at Y 130. The lanes stay at 130 and 215;
+a third lane at Y 265 goes after whatever the first one shoved out.
+
+**F60. The bore rangefinder cannot be trusted to skip work.** It reads the top of
+the stack, so a piece that arrives perched — which is the entire reason
+`settle_stack` exists — reads as a full magazine. Measured on seed 1: three
+counted after one pass, one actually aboard, the other two still on the field,
+and the match scored +7. The count is good enough to decide whether to spend a
+*bonus* pass; it is not good enough to skip one the robot needs.
+
+**F61. The run-in's line follower is a cascade, and the answer to a sluggish
+cascade is not more gain.** Crab angle is commanded from cross-track and yaw rate
+from crab angle, so the inner loop's 0.29 s sets a floor: at gain 1.0 over a
+70 mm taper the outer loop cleared 7 mm of an 11 mm error and laid beam 1 down
+4 mm high. Winding it to 2.5 made it overshoot 6 mm *past* the line and drive the
+beam into beam 2 — both pieces lost. It is fixed by handing the loop a smaller
+error, not more authority: one steep shuffle leg brings the robot inside 3 mm
+first, and the run-in then lands within about 1.
+
 **F51. Both tasks do not fit in 120 s, and the samples are the ones to cut.**
 Samples ≈ 70 s, seal ≈ 52 s. At 50 points against 70, the laboratory is the
 phase that gives way — and the order is forced anyway: the beams seal the

@@ -531,48 +531,50 @@ def mission_agent_a(rb, holes, hole_y, chute_offset, log=print, clock=None):
     t = (lambda: "") if clock is None else (lambda: "T+%5.1f  " % clock())
     log(t() + "leaving the deployment box nose-first (no pivot: swept R 185 > 140 to the wall)")
     yield from guard(drive_straight(rb, 300.0, speed=220.0), 10.0)
-    # TWO LANES, BUT NOT THESE TWO -- AND THE NORTH ONE FIRST.
+    # THE LANES ARE 130 AND 215, AND THE THIRD PASS IS THE FIX.
     #
-    # Samples are randomised in Y 80 .. 230 (rules 2.1, and random_discs).  The
-    # sweeper takes a piece whose centre is within about 55 mm of its lane -- the
-    # finger tips are at +/-82.5 and the disc is O56, so beyond ~55 the centre is
-    # outside the tips and the piece is not funnelled, it is SHOVED.  The chassis
-    # is 235 wide, so each pass carries 62 mm of bulldozer beyond each side of
-    # what it can actually collect.
+    # The mouth collects a piece whose centre is within about 55 mm of the lane;
+    # the chassis is 235 wide.  So every pass carries ~62 mm of bulldozer beyond
+    # each side of what it can actually take, and a sample shoved NORTH leaves
+    # the quarantine, where the second lane cannot reach it -- seed 3's went
+    # (60, 226) -> (37, 273) and, worse, into beam 1's footprint, so the beam
+    # landed on it and lost its own +25 as well.  Seeds 5 and 12, the same.
     #
-    # Lanes at 130 and 215 covered the band between them, but the first pass
-    # moved pieces the second one was relying on: seed 3's sample went
-    # (60, 226) -> (37, 273), out of the quarantine AND into beam 1's footprint,
-    # so the beam landed on it and lost its own +25 too.  Seeds 5 and 12 lost one
-    # the same way.  Three of twelve matches, all the same 62 mm.
+    # Moving the lanes does not fix it, it moves it: at Y 178 a sample 45 mm off
+    # the lane meets the guide's leading edge instead of its inner face, jams the
+    # nose and yaws the chassis 25 deg, and the pass then ploughs the other two
+    # (measured on seed 1 -- 1 of 3 collected, against 3 of 3 at Y 130).  These
+    # two lanes were tuned against 24 randomised samples and they collect; the
+    # defect is what happens to the ones they miss.
     #
-    # Y 178 then Y 120 is the pair where that cannot happen:
-    #     pass 1 collects 123 .. 233  -- its north bulldozer band starts ABOVE
-    #                                   the highest a sample can be, so nothing
-    #                                   is ever shoved out of the quarantine
-    #     pass 2 collects  65 .. 175  -- and picks up whatever pass 1 pushed
-    #                                   south, which is the only way pass 1 can
-    #                                   push anything
-    # Between them they cover 65 .. 233 with a 52 mm overlap, and every sample
-    # that moves at all moves TOWARD the next pass.
-    log(t() + "sweep pass 1, mouth on Y 178")
-    yield from guard(pursue(rb, 430.0, 178.0, speed=220.0, tol=40.0), 20.0)
-    yield from guard(sweep_line(rb, 178.0, 158.0, want=3), 45.0)
-    # Second lane only if the bore says something is still out there.  When the
-    # samples happen to fall in the north half this is the whole pass saved --
-    # 10 s, and the beams need every one of them.
-    if rb.mag_count() < 3:
-        log(t() + "%d aboard -- second lane, mouth on Y 120" % rb.mag_count())
-        # Back out to Y 195: the southernmost legal pivot with the beams aboard
-        # is 184.7 (swept R against the south wall) and everything further north
-        # is lane the next pass has to crab back off.  And DO NOT pursue() the
-        # lane from there -- the target is ~90 mm away and the loaded turn radius
-        # at sweep speed is 190, so pursue circles the point instead of arriving
-        # (measured: 20 s of a 120 s match spent going round it).  sweep_line
-        # holds its own lane; let it.
-        yield from guard(back_to(rb, 470.0, 195.0), 22.0)
-        yield from guard(turn_to(rb, 180.0), 12.0)
-        yield from guard(sweep_line(rb, 120.0, 158.0, want=3), 45.0)
+    # So keep them, and go and get the strays.  A third lane at Y 265 covers the
+    # strip a Y 130 pass shoves into.
+    #
+    # ONLY THE THIRD PASS IS CONDITIONAL.  Skipping the second when the bore
+    # already reads three looked like 12 s for nothing, and it is not: the bore
+    # is a rangefinder down the magazine and it reads the top of the stack, so a
+    # piece that arrives perched -- which is the whole reason settle_stack
+    # exists -- reads as a full magazine.  Measured on seed 1: three counted
+    # after one pass, one actually aboard, the other two still on the field, and
+    # the match scored +7.  The count is good enough to decide whether to spend
+    # a bonus pass; it is not good enough to skip a pass the robot needs.
+    for tag, lane, ret in (("1", 130.0, None), ("2", 215.0, 235.0),
+                           ("3", 265.0, 280.0)):
+        if tag == "3" and rb.mag_count() >= 3:
+            break
+        if ret is not None:
+            log(t() + "%d aboard -- sweep pass %s, mouth on Y %.0f"
+                % (rb.mag_count(), tag, lane))
+            # Back out ALONG the field, then let sweep_line find its own lane.
+            # Do NOT pursue() it: the target is under 100 mm away and the loaded
+            # turn radius at sweep speed is 190, so pursue circles the point
+            # instead of arriving -- 20 s of a 120 s match, measured.
+            yield from guard(back_to(rb, 470.0, ret), 22.0)
+            yield from guard(turn_to(rb, 180.0), 12.0)
+        else:
+            log(t() + "sweep pass %s, mouth on Y %.0f" % (tag, lane))
+            yield from guard(pursue(rb, 430.0, lane, speed=220.0, tol=40.0), 20.0)
+        yield from guard(sweep_line(rb, lane, 158.0, want=3), 45.0)
     log(t() + "settling the magazine")
     yield from guard(settle_stack(rb, want=len(holes)), 30.0)
 
@@ -955,12 +957,6 @@ def seal_quarantine(rb, log=print, clk=None):
     x ~ 200 lane north of the corner -- which is why the route looks indirect.
     """
     t = (lambda: "") if clk is None else (lambda: "T+%5.1f  " % clk())
-    # The pivot lane.  Two hard limits set it: the robot's shell must stay west
-    # of the laboratory's edge (Xa 351.5 - 97 = 254, because the forward shell
-    # sits at Za 6 and the plate top is Za 6, and driving over it drags at 9 N),
-    # and a pivot needs 185 mm from the west wall.  So every heading change in
-    # the beam phase happens on X 185-254.  215 is the middle of it.
-    LANE = 255.0
     log(t() + "sealing the quarantine: beam 2 (south wall) first")
     # Turn onto the bearing BEFORE pursuing.  pursue() refuses a target more
     # than 100 deg off the nose and returns instantly, and after the last

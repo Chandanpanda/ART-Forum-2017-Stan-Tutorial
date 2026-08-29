@@ -168,20 +168,34 @@ def align_reverse(rb, chute_offset, tx, ty, heading, tol=2.5, max_ticks=900):
 # directly south of the plate: that corridor is 360 mm wide and needs 370.
 PIVOT_W = (230.0, 195.0)
 PIVOT_E = (900.0, 190.0)
+PIVOT_Y = 195.0          # the corridor line, south of the laboratory
+
 
 def nearest_pivot(hole_x, hole_y):
-    """Dock each hole from whichever legal station is closer.
+    """Turn directly SOUTH OF THE SLOT, and approach it square.
 
-    Measured dock error: holes 1 and 2 from the west station converge to ~2 mm;
-    hole 3 from the east station holds ~15 mm, because its approach is diagonal
-    and the lateral component of a straight reverse cannot be nulled without
-    rotating (which swings the chute).  Forcing hole 3 onto the west station is
-    worse still -- a 420 mm blind reverse drifts ~150 mm.
+    F36 retires F10.  F10 said there was no legal pivot in the corridor between
+    the south wall and the laboratory -- 360 mm of room against a 370 mm swept
+    circle -- so every dock had to start from a station west or east of the
+    plate, and every approach after the first was therefore DIAGONAL.  That is
+    fatal once the laboratory is solid and a sample thick: on a diagonal the rear
+    ball transfers cross its edge, and a O20 ball cannot climb 6 mm (F33/F35).
+
+    But the swept circle is the CHASSIS, and the chassis floor is at Za 6 while
+    the laboratory is 6 mm tall.  The corners pass over it.  The only robot parts
+    low enough to touch are the ball transfers and the wheels, and those are well
+    inboard.  Measured, turning 0 -> 270 with a 6 mm laboratory:
+
+        y 150   scrapes the south wall, 136 N
+        y 170   scrapes, 102 N
+        y 180   scrapes, 89 N
+        y 190   CLEAN
+        y 210   CLEAN
+
+    So the pivot goes directly south of each slot, the approach is square, the
+    balls never meet the edge, and the long cross-field trips disappear.
     """
-    # Bias toward the west station: the distances are near-tied for the middle
-    # hole and the western approach converges better (its reverse line is less
-    # oblique).  Only the far hole is clearly better served from the east.
-    return PIVOT_E if hole_x > 650.0 else PIVOT_W
+    return (hole_x, PIVOT_Y)
 
 def reseat(rb, cycles=1):
     """One stroke of the positive-feed plunger and back."""
@@ -214,7 +228,7 @@ def settle_stack(rb, cycles=2):
 
 
 def dock_and_post(rb, hole_x, hole_y, chute_offset, stroke=0.28, aboard=0,
-                  depart=130.0, log=print, clk=None):
+                  depart=None, log=print, clk=None):
     """Reverse the chute onto a lab hole along a straight line, then meter one disc.
 
     F10: with a 185 mm swept radius there is NO legal pivot between the south wall
@@ -251,6 +265,12 @@ def dock_and_post(rb, hole_x, hole_y, chute_offset, stroke=0.28, aboard=0,
         px, py, _ = rb.pose
         th = np.degrees(np.arctan2(py - hole_y, px - hole_x))   # face away from hole
         yield from guard(turn_to(rb, th, tol=1.2), 22.0)
+        # Let the chassis come to rest before the terminal.  align_reverse closes
+        # on the CHUTE, 106 mm behind the axle, so any residual yaw rate is
+        # 1.9 mm of chute movement per degree -- starting it while the robot is
+        # still settling is what made a dock that takes 15 s from rest burn three
+        # 20 s passes in the mission.
+        yield from wait(rb, 0.4)
         yield from guard(align_reverse(rb, chute_offset, hole_x, hole_y, th,
                                        tol=2.0, max_ticks=2600), 20.0)
         cx, cy = rb.chute_xy(chute_offset)
@@ -295,7 +315,13 @@ def dock_and_post(rb, hole_x, hole_y, chute_offset, stroke=0.28, aboard=0,
     # that is needed here is to get the tail clear of the plate.  Forward travel
     # is capped by the south wall: docked, the axle sits at Y ~293 and the nose
     # is 142.5 ahead of it.
-    yield from guard(drive_straight(rb, depart, speed=220.0), 8.0)
+    # Depart onto the PIVOT LINE, not past it.  Docked, the axle sits ~106 mm
+    # south of the slot; driving a fixed 130 mm put it at y 163, and turning
+    # there scrapes the south wall (clean only at y >= 190, F36), so every
+    # inter-hole turn was slow and sloppy.  Stop where the next turn is clean.
+    px, py, th = rb.pose
+    d_out = depart if depart is not None else max(40.0, py - PIVOT_Y)
+    yield from guard(drive_straight(rb, d_out, speed=220.0), 8.0)
     lap("departed")
 
 

@@ -416,6 +416,19 @@ def agent_a_body(name="agentA", pose=None, with_beams=False):
                   height=mm(AgentA.LEAD_H), thick=0.0005)
 
     # ---- ball transfers ---------------------------------------------------
+    # Skid lips ahead of the rear balls, so a ball meeting the laboratory edge on
+    # a diagonal approach rides up instead of stopping dead (F35).
+    if Chassis.SKID_LEN > 0 and Chassis.TAIL_CLEAR > Chassis.SKID_Z0:
+        rise = Chassis.TAIL_CLEAR - Chassis.SKID_Z0
+        ang  = degrees_atan(rise, Chassis.SKID_LEN)
+        ln   = (Chassis.SKID_LEN**2 + rise**2) ** 0.5
+        for sy, tag in ((1, "l"), (-1, "r")):
+            o.append(box(f"A_skid_{tag}",
+                         lx(Chassis.BALL_REAR_X + Chassis.SKID_LEN/2),
+                         sy*mm(Chassis.BALL_Y), mm((Chassis.SKID_Z0+Chassis.TAIL_CLEAR)/2),
+                         mm(ln/2), mm(Chassis.SKID_W/2), mm(0.8), C_BODY, "robot",
+                         euler=(0, ang, 0)))
+
     for i, (bx, sy) in enumerate(((Chassis.BALL_FRONT_X,  1), (Chassis.BALL_FRONT_X, -1),
                                   (Chassis.BALL_REAR_X,   1), (Chassis.BALL_REAR_X,  -1))):
         o.append(f'<geom name="A_ball{i}" class="ball" type="sphere" '

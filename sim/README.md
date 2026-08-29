@@ -74,64 +74,50 @@ number from here.
 
 ## 2. Status — where this actually stands
 
-Read this section before the findings: **the score went down this round, on
-purpose.** Two of the three big modelling stand-ins are gone, and removing them
-showed that some of the earlier numbers were bought with things that do not
-exist on the real field.
+**The robot now posts into a laboratory the rules would accept.** That is new.
+Every earlier result was against a 1 mm decal in which a 5 mm sample cannot sit
+(F32); the laboratory is now 6 mm, the samples drop right inside it, and the tail
+reaches over it instead of trying to climb it.
 
 | | |
 |---|---|
 | Model generation from one parameter file | **works** |
 | 13 geometry assertions | **all pass** |
-| Drive: straight line / turn in place | **works** — turn efficiency **calibrated, not predicted** |
 | Conveyor carry on the incline | **works** — 59.2 mm/s against a 60 mm/s belt |
-| Accumulation at a closed gate | **works** — 0.146 N mean, peaking at **0.47 N** (F23) |
 | **Pick: samples off the floor into the magazine** | **works — 24 of 24**, all three seated |
 | **Magazine escapement: one piece per stroke** | **works — 3 of 3** |
-| **Place: all three lab holes, from a good dock** | **works — 3 of 3**, dock error 0.0 mm |
-| **Reverse onto the laboratory plate, for real** | **works** — square 3 mm edge, unaided (F24) |
-| **Full mission inside the 120 s match** | **2 of 12 — this is the blocker** |
+| **Dock and post all three slots, 6 mm laboratory** | **works — 3 of 3, +50**, 1.9–2.6 mm, 40 s |
+| **Full mission, best case** | **+50 at the buzzer**, 3 of 12 seeds |
+| Full mission, typical | **+9 to +27** — docking convergence is the variance |
 
-### What the assumptions were worth
+```
+seed          1    2    3    4    5    6    7    8    9
+at buzzer   +50  +27   +9   +9   +9  +50   -9  +50   +9
+time (s)    127  159  240  231  173  136  240  128  240
+```
 
-Same code, same 12 seeds, only the laboratory model changed. "At the buzzer" is
-the score on the field when the 2 minutes run out — the only one that counts.
+Three changes got the posting to work at all against a real laboratory, and one
+of them retires a finding that had shaped the whole route:
 
-| laboratory model | inside 120 s | mean score at the buzzer |
-|---|---|---|
-| 4 mm lead-in modelled as a raised collar (**not real**) | 5 / 12 | **+36** |
-| no lead-in at all | 2 / 12 | +19 |
-| **1 mm countersink inside the plate (correct)** | **2 / 12** | **+26** |
+* **The tail overhangs instead of climbing** (F31/F33). Rear ball transfers moved
+  from Xa 40 to Xa 90, shell stepped up to 14 mm aft of them. A Ø20 ball cannot
+  climb 6 mm — it needs 2.25× the supported weight as push — so the robot must
+  reach over the laboratory, and it now does.
+* **Pivot directly south of each slot** (F36, retires F10). The corridor south of
+  the laboratory *is* wide enough to turn in: measured clean at y ≥ 190. F10 said
+  it was not, computing the swept circle against the chassis — but the chassis
+  floor is at Za 6 and the laboratory is 6 mm tall, so the corners pass over it.
+  That makes every approach square instead of diagonal, which is what keeps the
+  ball transfers off the edge.
+* **Let the chassis settle before the terminal** (F37). One `wait(0.4)`. Docking
+  closes on the chute, 106 mm behind the axle, where a residual yaw rate is
+  1.9 mm of chute movement per degree. Starting the terminal while the robot was
+  still settling turned a 15 s dock into three failed 20 s passes: seed 1 went
+  from **227 s to 125 s** on that line alone.
 
-A chamfer is cut *into* a plate. On a 1 mm plate it is at most 1 mm deep and sits
-below the top face. It had been modelled as a 4 mm cone rising *above* the plate
-— a raised collar — and that collar was quietly doing two jobs: catching
-near-misses that would otherwise scatter, and (once the plate became solid)
-wedging the rear ball transfers hard enough to stop the robot dead. **The good
-scores were leaning on a field feature the rulebook does not promise and that
-cannot exist on a 1 mm plate.**
-
-So the honest state is: pick and place each work, the robot really climbs the
-plate, and **docking accuracy is not good enough to post reliably without help
-from the hole.** That is the next thing to fix, and it needs the physical datum
-(reverse until the chassis stalls against the laboratory, then step a known
-offset) rather than more tuning.
-
-### Time
-
-The match is 120 s (rules g.1). Two changes this round took the typical run from
-158 s to about 105:
-
-* **Depart forward, not back to the pivot.** Returning to the station a hole was
-  approached from, only to set off for the next one, cost 35 s on one hole — its
-  entire guard, because the drive never even arrived.
-* **Sweep dwell 22 s → 10 s.** Measured cost: 22 s → 24/24 captured, 14 s →
-  23/24, 10 s → 23/24, 7 s → 19/24.
-* **Three 20 s docking passes instead of two 55 s ones.** A pass that will work
-  converges in 7–14 s; one that will not spends its whole guard hunting.
-
-Runs that still overrun are ones where docking never converges — the same root
-cause as the score, not a separate problem.
+What is left is docking *convergence*, not accuracy: the good seeds dock at
+1.9–2.6 mm and finish inside the match, the bad ones never converge and burn
+every pass. See F38 for why the slot-probe datum does not fix this in simulation.
 
 ## 3. Findings — things the simulator discovered about the design
 
@@ -499,6 +485,49 @@ laboratory the rules imply, the signal is six times larger and trivially
 detectable — but then the robot cannot get to the slot at all. **The datum is
 blocked behind the overhanging-tail redesign, not behind the sensing.**
 
+**F36. There IS a legal pivot south of the laboratory. F10 was wrong.** F10 said
+the corridor between the south wall and the laboratory is 360 mm against a 370 mm
+swept circle, so the robot could only turn west or east of the plate — which
+forced every dock after the first onto a diagonal approach, and a diagonal drags
+the rear ball transfers across the laboratory edge, where they jam (F33). Turning
+0° → 270° with a 6 mm laboratory, measured:
+
+| axle Y | 150 | 170 | 180 | 190 | 210 |
+|---|---|---|---|---|---|
+| result | wall, 136 N | wall, 102 N | wall, 89 N | **clean** | **clean** |
+
+The swept circle is the *chassis*, and the chassis floor sits at Za 6 while the
+laboratory is 6 mm tall — the corners pass straight over it. The only robot parts
+low enough to touch are the ball transfers and the wheels, and both are well
+inboard. So the pivot goes directly south of each slot, the approach is square,
+and the cross-field trips disappear.
+
+**F37. A 0.4 s wait is worth 100 seconds of match time.** Docking closes on the
+chute, which is 106 mm behind the axle — so a residual yaw rate of 1°/s moves the
+chute 1.9 mm/s. Starting the terminal controller while the chassis was still
+settling from its turn made a dock that takes 15 s from rest burn three 20 s
+passes and still finish 4 mm out. One `wait(rb, 0.4)` before the terminal took
+seed 1 from **227 s to 125 s** and the dock error from 4.8 mm to 1.9 mm.
+
+**F38. The slot-probe datum cannot be validated in this simulator, and that is a
+statement about the simulator.** The probes are built — two downward rangefinders
+40 mm forward of the chute at ±20 mm, standing in for the spec's TCRT array, with
+the edge-timing maths worked out: reverse across a slot, record where each probe
+crosses the rim, and the lateral error follows from the difference,
+`e ≈ (s_L − s_R) / 1.79` for a Ø60 slot.
+
+But a physical datum exists to correct **odometry drift**, and this robot has
+none: `rb.pose` reads the simulator's ground truth, so the controller already
+knows exactly where its chute is. The residual 2 mm is the controller failing to
+converge, not the robot failing to know. Wiring the datum in would measure an
+error that is zero by construction.
+
+Making it meaningful needs the robot navigating on its own dead-reckoned estimate
+— `rb.odo_steps` and the `--step-loss` injection are already there for it — so
+that drift is real and the datum has something to recover. That is the honest
+next step, and it is a bigger job than the datum itself: `route.py` reads true
+pose throughout.
+
 ---
 
 ## 4. Modelling decisions you should know about
@@ -556,17 +585,14 @@ drawings.
 
 ## 7. Next steps, in the order I would do them
 
-1. **Redesign the tail to overhang the laboratory** (F33). Everything else is
-   downstream of this. The robot cannot climb a laboratory thick enough to hold a
-   sample, so it must reach over one instead: rear ball transfers forward to
-   Xa 90, shell stepped up aft of them, and `align_reverse` retuned for the new
-   support polygon. Both halves are already parameterised; adopting them needs
-   the controller work, because each on its own regressed the mission.
-2. **Then the slot-probe datum** (F34). The sensors and the maths are in place and
-   the signal is six times bigger against a realistic laboratory. This is what
-   closes the 2 mm posting budget.
+1. **Make docking converge.** The good seeds dock at 1.9–2.6 mm in 15 s; the bad
+   ones never converge and burn three passes. That single behaviour is the whole
+   spread between +50 and +9. It is a controller problem, not a geometry one.
+2. **Then give the robot odometry instead of ground truth** (F38), and wire in the
+   slot-probe datum against it. Until the robot can be wrong about where it is,
+   the datum has nothing to correct and its value cannot be measured.
 3. **Bench-test the intake before ordering the belt** (F25). A knife edge at
    ≤5 mm picks up; a Ø16 roller never does.
 4. **Measure turn efficiency on the real robot** and set
-   `Chassis.WHEEL_COLLISION_W` from it — the sim cannot settle that one.
+   `Chassis.WHEEL_COLLISION_W` from it.
 5. Then Agent B.

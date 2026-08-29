@@ -31,7 +31,7 @@ class Field:
     # anything, and knocked straight out again as the robot departs, which is
     # visible in the viewer.  Set this to 6.0 to see the real problem: the
     # mission collapses to one sample or none.  That is the top open risk.
-    LAB_PLATE_T     = 1.0
+    LAB_PLATE_T     = 6.0
     # The plate collides with the ROBOT, not just with game pieces.
     #
     # F24 WAS WRONG AND IS WITHDRAWN.  It claimed Agent A climbs a square 3 mm
@@ -134,7 +134,7 @@ class Chassis:
     # sample everywhere -- it changes the support polygon the docking controller
     # was tuned against.  It is parameterised, documented and NOT adopted: the
     # move has to come with a docking controller that expects it.
-    BALL_REAR_X     = 40.0             # 90.0 makes the tail overhang the lab
+    BALL_REAR_X     = 90.0             # overhangs the lab instead of climbing it
     BALL_FRONT_X    = 245.0
     BALL_Y          = 80.0
     GROUND_CLEAR    = 6.0
@@ -143,7 +143,18 @@ class Chassis:
     # move it is the right shape and it also regressed the mission on its own, so
     # it is parameterised and documented rather than adopted.  Set 14.0 with
     # BALL_REAR_X 90 to model the overhanging tail.
-    TAIL_CLEAR      = 6.0
+    TAIL_CLEAR      = 14.0
+    # F35.  A skid: a bent lip sloping from just off the floor up to TAIL_CLEAR,
+    # ahead of each rear ball transfer.  The overhanging tail (F31) keeps the
+    # balls off the laboratory on a PERPENDICULAR dock, but there is no legal
+    # place to turn south of the laboratory (the corridor is 360 wide and the
+    # swept circle needs 370, F10), so every approach after the first is
+    # DIAGONAL -- and on a diagonal the balls cross the edge anyway and jam at
+    # 20 N.  A O20 ball cannot climb 6 mm: cos a = (10-6)/10 needs 2.25x the
+    # supported weight as push.  A 20 deg wedge needs 0.36x, which the drive has.
+    SKID_LEN        = 40.0             # Xa run, ahead of the rear balls
+    SKID_Z0         = 2.0              # leading edge, just clear of the floor
+    SKID_W          = 26.0             # width, straddling each ball
     TAIL_X          = 90.0             # everything aft of this is stepped up
     CHAMFER         = 40.0
 

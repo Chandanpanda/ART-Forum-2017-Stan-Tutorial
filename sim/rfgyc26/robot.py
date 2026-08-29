@@ -29,6 +29,8 @@ class AgentARobot:
         self.s_tof = gid(mujoco.mjtObj.mjOBJ_SENSOR, "a_tof")
         self.s_gyro= gid(mujoco.mjtObj.mjOBJ_SENSOR, "a_gyro")
         self.s_mag = gid(mujoco.mjtObj.mjOBJ_SENSOR, "a_mag")
+        self.s_pl  = gid(mujoco.mjtObj.mjOBJ_SENSOR, "a_probe_l")
+        self.s_pr  = gid(mujoco.mjtObj.mjOBJ_SENSOR, "a_probe_r")
         self.odo_steps = np.zeros(2)          # commanded steps, the robot's belief
 
     # ---------------------------------------------------------------- state
@@ -95,6 +97,23 @@ class AgentARobot:
         above the bottom disc, so the shelf can slide out from under just that
         one.  Parked it is clear of the bore."""
         self.d.ctrl[self.a_blade] = -mm(AgentA.ESC_Y) if inserted else 0.0
+
+    def probe_mm(self):
+        """Raw slot-probe ranges, mm.  -1 means no return at all."""
+        l = self.d.sensordata[self.m.sensor_adr[self.s_pl]]
+        r = self.d.sensordata[self.m.sensor_adr[self.s_pr]]
+        return (-1.0 if l < 0 else l*1000.0, -1.0 if r < 0 else r*1000.0)
+
+    def over_slot(self, ref_mm, step_mm=0.5):
+        """(left, right) -- is each probe looking into a slot?
+
+        `ref_mm` is the range the probe reads over the laboratory SURFACE, which
+        the robot learns on the way in rather than assuming: the rulebook gives
+        the laboratory no thickness, so the step into a slot is not a number we
+        are entitled to know in advance.
+        """
+        l, r = self.probe_mm()
+        return (l < 0 or l > ref_mm + step_mm, r < 0 or r > ref_mm + step_mm)
 
     def mag_count(self):
         """Pieces in the magazine, from the bore rangefinder.  Empty reads the

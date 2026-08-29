@@ -65,10 +65,16 @@ simulator is NOT proving what it looks like it is proving.
    Bench-test the intake alone before committing: one belt, one nose bar, a
    sloped board, and a disc.
 
-2. THE LAB PLATE IS NOW SOLID -- this stand-in is retired.  It used to sit on its
-   own collision bit so the chassis ignored it.  Re-tested honestly, the robot
-   climbs a square 3 mm edge in reverse unaided (6 of 6 matches, 16-21 N peak on
-   the rear ball transfers), so the cheat is gone and Field.LAB_SOLID is True.
+2. THE LAB PLATE IS SOLID (the collision-bit cheat is gone) BUT ITS THICKNESS IS
+   AN ADMITTED FICTION.  Field.LAB_PLATE_T is 1.0 mm.  The rules require a sample
+   to end up "completely inside" a slot and a sample is a 5 mm disc, so a real
+   laboratory is at least 5 mm.  At 1 mm a posted disc stands 4 mm proud and the
+   robot knocks it out again.  Set it to 6.0 and the mission collapses -- the
+   robot cannot climb a 3 mm edge, let alone 6 (F33), and moving the rear ball
+   transfers forward so the tail overhangs instead is parameterised but not yet
+   adopted because it needs a docking controller that expects it.  THIS IS THE
+   TOP OPEN RISK: if the supplied laboratory is 6 mm ply, the design scores
+   nothing as it stands.
 
 3. THE WHEELS COLLIDE ON A 6 mm PROXY, 22 mm wide visually (F4).  A rigid
    cylinder's line contact over-predicts scrub, which put turn-in-place at 21%

@@ -373,17 +373,12 @@ claim stands. **Size the gate servo for the peak, not the mean** — 0.47 N agai
 a 37 mm shelf is ~0.017 N·m of holding torque, still nothing for an MG90S, but it
 is 4× what the spec's figure implies and it arrives as an impact, not a load.
 
-**F24. Agent A CAN reverse up the laboratory plate — F11 was wrong, or has been
-overtaken.** F11 said the Ø20 ball transfers stalled on a square 3 mm edge, and
-put the plate on its own collision bit so the chassis would ignore it. That cheat
-has been in every result since. Re-tested with the plate solid and no approach
-ramp — a square edge, which is what the rulebook actually describes — the robot
-climbs it in reverse unaided at 16–21 N peak on the rear balls, and the full
-mission still places all three samples in 6 of 6 matches. The bitmask is gone and
-`Field.LAB_SOLID` is True by default. What changed since F11: the ball transfers
-got compliant mounts, the boundary tape became an optical marker (F13), and the
-plate thinned from 3 mm to 1 (F11's own conclusion). Any one of those may be the
-reason; the point is the assumption stopped being true and nothing re-tested it.
+**F24. WITHDRAWN — it was wrong.** It claimed Agent A climbs a square 3 mm plate
+edge unaided and that F11 had been overtaken. The evidence was a rig in which the
+robot was **launched at initialisation** — it crossed the field in 2 s of a
+90 mm/s drive and never touched the laboratory at all. See F33 for what actually
+happens. The mission results quoted alongside it were real (they ran against a
+solid 1 mm laboratory, which the robot does climb); the 3 mm claim was not.
 
 **F25. The intake has a one-millimetre cliff, and the spec's roller is on the
 wrong side of it.** The powered surface at the intake was modelled reaching the
@@ -449,6 +444,61 @@ side of the field. On one hole that round trip spent the entire 35 s guard and
 never arrived. Departing forward off the plate instead, and letting the next hole
 choose its own approach, took the typical mission from 158 s to about 105.
 
+**F33. Agent A cannot drive onto the laboratory, and the laboratory is thicker
+than the model says.** Two findings that only make sense together.
+
+Re-tested on a rig that verifies the robot has settled before it drives — the
+check the F24 rig lacked — reversing onto a square laboratory edge:
+
+| laboratory thickness | 1 mm | 3 mm | 6 mm | 9 mm | 12 mm |
+|---|---|---|---|---|---|
+| result | climbs, 62 N | **blocked** | blocked | blocked | blocked |
+
+The chute stops at Y 355–359 against a plate edge at 360. It does not get on at
+all. That is the original F11, and it stands.
+
+Meanwhile the model's 1 mm laboratory cannot be right. The rules require a sample
+to finish **"completely inside"** a slot (2.1) and a sample is a **5 mm** disc, so
+the laboratory is at least a sample thick. At 1 mm the disc falls through the slot
+until it rests on the floor and stands **4 mm proud** of the surface — not inside
+anything, and with only 2 mm under the robot's tail it is knocked straight out as
+the robot departs. That is visible in the viewer, and it is what a user watching
+an x-rayed run reported: *"the first drop is correct but after the movement of the
+robot it gets displaced."*
+
+Put together: **a laboratory thick enough to satisfy the rules is one this robot
+cannot dock at.** Set `Field.LAB_PLATE_T = 6.0` and the mission collapses to one
+sample or none. This is the top open risk in the whole project — bigger than the
+match clock, bigger than the intake — because it is not a tuning problem.
+
+The shape of the fix is clear and is parameterised in `params.py`, but **not
+adopted**, because each half regressed the mission on its own and they need a
+docking controller built to expect them:
+
+* `Chassis.BALL_REAR_X = 90` (from 40) — moves the rear ball transfers forward so
+  the tail **overhangs** the laboratory instead of climbing onto it. Docking puts
+  the chute on a slot 40 mm inside the plate edge, so balls more than 40 mm
+  forward of the chute stay off the plate; 90 leaves 14 mm of margin. Verified in
+  isolation: with this, the robot reaches the slot at 1, 3 and 6 mm.
+* `Chassis.TAIL_CLEAR = 14` with `TAIL_X = 90` — steps the shell up aft of the
+  balls so the overhanging tail clears a wooden structure. Verified in isolation:
+  it removes the rear-wall and side-plate contacts at 6 mm.
+
+**F34. The slot probes are in, the datum algorithm is not.** Two downward
+rangefinders (`a_probe_l`, `a_probe_r`) now straddle the chute axis 40 mm forward
+of it, standing in for the spec's TCRT array. They read the laboratory surface
+and see a slot as a step, which is what an edge-timing datum needs: reverse across
+a slot, time when each probe crosses its rim, and the two chord lengths give both
+the along-track centre and the lateral offset in closed form —
+`e = (c_L² − c_R²) / 320` for probes at ±20 mm on a Ø60 slot.
+
+It is not wired into the route yet, and the reason is F33: with the model's 1 mm
+laboratory the step is 1 mm and the robot's own pitch as it crosses the edge
+drifts the reading by as much, so the probes cannot resolve it. With the 6 mm
+laboratory the rules imply, the signal is six times larger and trivially
+detectable — but then the robot cannot get to the slot at all. **The datum is
+blocked behind the overhanging-tail redesign, not behind the sensing.**
+
 ---
 
 ## 4. Modelling decisions you should know about
@@ -506,16 +556,17 @@ drawings.
 
 ## 7. Next steps, in the order I would do them
 
-1. **Dock on a physical datum.** This is now the whole game (F28). Posting
-   tolerance is 2 mm and dead-reckoned docking lands at 1.5–2.1, so the robot
-   only posts reliably when the hole helps it — and the field will not. Reverse
-   until the chassis stalls against the laboratory structure, take a known
-   offset from there, and use the TCRT array on the plate markings for X. That
-   turns the error into the repeatability of a mechanical stop.
-2. **Bench-test the intake before ordering the belt** (F25). A knife edge at
-   ≤5 mm picks up; a Ø16 roller never does. Twenty minutes, and it decides a part.
-3. **Measure turn efficiency on the real robot** and set
+1. **Redesign the tail to overhang the laboratory** (F33). Everything else is
+   downstream of this. The robot cannot climb a laboratory thick enough to hold a
+   sample, so it must reach over one instead: rear ball transfers forward to
+   Xa 90, shell stepped up aft of them, and `align_reverse` retuned for the new
+   support polygon. Both halves are already parameterised; adopting them needs
+   the controller work, because each on its own regressed the mission.
+2. **Then the slot-probe datum** (F34). The sensors and the maths are in place and
+   the signal is six times bigger against a realistic laboratory. This is what
+   closes the 2 mm posting budget.
+3. **Bench-test the intake before ordering the belt** (F25). A knife edge at
+   ≤5 mm picks up; a Ø16 roller never does.
+4. **Measure turn efficiency on the real robot** and set
    `Chassis.WHEEL_COLLISION_W` from it — the sim cannot settle that one.
-4. **Model the sweeper finger stroke in contact**, now that the intake height is
-   pinned.
 5. Then Agent B.

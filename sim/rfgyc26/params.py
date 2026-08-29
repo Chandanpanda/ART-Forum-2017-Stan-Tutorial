@@ -23,13 +23,23 @@ class Field:
 
     QUARANTINE      = (0.0,   0.0,   280.0,  280.0)     # x0,y0,x1,y1
     LAB_PLATE       = (351.5, 360.0, 791.5,  510.0)
+    # F32.  1.0 IS KNOWN TO BE WRONG and is kept only because the robot cannot
+    # yet cope with the right value.  The rules require a sample to end up
+    # "completely inside" a slot (2.1) and a sample is a 5 mm disc, so a real
+    # laboratory is at least 5 mm thick.  At 1 mm the disc drops through until it
+    # rests on the floor and stands 4 mm PROUD of the surface -- not inside
+    # anything, and knocked straight out again as the robot departs, which is
+    # visible in the viewer.  Set this to 6.0 to see the real problem: the
+    # mission collapses to one sample or none.  That is the top open risk.
     LAB_PLATE_T     = 1.0
-    # F24 (retires F11).  The plate now collides with the ROBOT, not just with
-    # game pieces.  F11 said Agent A could not reverse up a square 3 mm edge and
-    # put the plate on its own collision bit to get past it; re-tested after the
-    # ball transfers were given compliant mounts and the tape was made an optical
-    # marker, it climbs a square 3 mm edge unaided -- 6 of 6 matches, peak 16-21 N
-    # on the rear balls.  Set False only to reproduce the old behaviour.
+    # The plate collides with the ROBOT, not just with game pieces.
+    #
+    # F24 WAS WRONG AND IS WITHDRAWN.  It claimed Agent A climbs a square 3 mm
+    # edge unaided, on the strength of a rig in which the robot was LAUNCHED at
+    # initialisation and crossed the field in 2 s of a 90 mm/s drive -- it never
+    # touched the laboratory at all.  With a rig that checks the robot has
+    # actually settled before it drives (F33), the original F11 stands: the robot
+    # gets onto a 1 mm edge at 62 N and is STOPPED DEAD by 3 mm and above.
     LAB_SOLID       = True
     # No approach ramp.  One was modelled on the plate's south edge, but the
     # laboratory is a supplied part (F21) so assuming a ramp on it was never
@@ -108,7 +118,33 @@ class Chassis:
     # measured turn efficiency vs this value: 22mm=0.21 12mm=0.44 8mm=0.60 6mm=0.70.
     WHEEL_COLLISION_W = 6.0
     BALL_D          = 20.0
+    # F31.  The rear ball transfers moved forward, from Xa 40 to Xa 90, so the
+    # tail OVERHANGS the laboratory instead of driving onto it.  Agent A cannot
+    # climb the laboratory: measured on a rig that checks the robot has actually
+    # settled before it drives (the earlier one had not, and reported the
+    # opposite), it gets onto a 1 mm edge at 62 N and is STOPPED DEAD by 3 mm and
+    # anything above.  The rulebook gives the laboratory no thickness at all, so
+    # a design that has to drive onto it is a design that scores nothing if the
+    # supplied part is 6 mm ply.
+    # Geometry: docking puts the chute on a slot 40 mm inside the plate edge, so
+    # the rear balls stay off the plate when they sit more than 40 mm forward of
+    # the chute.  Xa 90 leaves 14 mm of margin.
+    # DEFAULT IS STILL THE ORIGINAL 40.  Moving the balls forward is the right
+    # answer to the geometry, but on its own it regressed the mission to one
+    # sample everywhere -- it changes the support polygon the docking controller
+    # was tuned against.  It is parameterised, documented and NOT adopted: the
+    # move has to come with a docking controller that expects it.
+    BALL_REAR_X     = 40.0             # 90.0 makes the tail overhang the lab
+    BALL_FRONT_X    = 245.0
+    BALL_Y          = 80.0
     GROUND_CLEAR    = 6.0
+    # A step up in the shell aft of TAIL_X, for when the tail overhangs the
+    # laboratory (F31).  DEFAULT EQUALS GROUND_CLEAR, i.e. no step: like the ball
+    # move it is the right shape and it also regressed the mission on its own, so
+    # it is parameterised and documented rather than adopted.  Set 14.0 with
+    # BALL_REAR_X 90 to model the overhanging tail.
+    TAIL_CLEAR      = 6.0
+    TAIL_X          = 90.0             # everything aft of this is stepped up
     CHAMFER         = 40.0
 
     STEPS_PER_REV   = 200 * 2          # NEMA17 200 x GT2 2:1
@@ -270,6 +306,22 @@ class AgentA:
     FEED_D          = 46.0             # foot; forward edge Xa 59, clear of the tail
     FEED_Z_UP       = 87.0             # parked: foot centre (face at 84)
     FEED_STROKE     = 58.0             # face down to Za 26, the top of a full stack
+
+    # SLOT PROBES (F30).  Two downward reflectance sensors -- the spec's TCRT
+    # array -- straddling the chute axis, mounted one bore-radius FORWARD of it so
+    # they clear the bore and the escapement.  Reversing, the chute crosses a slot
+    # first and the probes follow PROBE_DX later, so the slot can be measured
+    # after the chute has passed over it and the dock corrected from the
+    # measurement rather than from dead reckoning.
+    #
+    # This is the only laboratory feature the rulebook actually guarantees: it
+    # gives no thickness, no height and no frame, just "3 marked slots of 60 mm"
+    # in wood (rules 3.2).  Anything datumed off a plate edge or a back wall
+    # would be assuming a part nobody has specified -- the mistake F21 and F27
+    # already cost us twice.
+    PROBE_DX        = 40.0             # Xa forward of the chute axis
+    PROBE_DY        = 20.0             # +/- lateral; chord over a O60 slot is 45
+    PROBE_Z         = 20.0             # site height, below the belt underside
 
     POCKET_L_Y      = (211.0, 235.0)   # beam 1, open at the FRONT
     POCKET_R_Y      = (0.0,   24.0)    # beam 2, open at the REAR

@@ -152,7 +152,8 @@ def preamble(timestep=0.001):
 # collar, escapement, feed plunger -- lives INSIDE these six plates, so from any
 # useful camera angle they hide the whole machine.  set_xray() fades them.
 SHELL_GEOMS = ["A_deck", "A_rear", "A_side_l", "A_side_r",
-               "A_pocket_l", "A_pocket_r"]
+               "A_sidef_l", "A_sidef_r", "A_pocket_l", "A_pocket_r",
+               "A_pocketf_l", "A_pocketf_r"]
 XRAY_ALPHA = 0.10
 
 
@@ -287,15 +288,44 @@ def agent_a_body(name="agentA", pose=None, with_beams=False):
 
     # ---- structure -------------------------------------------------------
     o.append(box("A_deck", 0, 0, mm(96.5), mm(AgentA.L/2), mm(AgentA.W/2), mm(1.5), C_BODY, "robot"))
-    o.append(box("A_rear", lx(0)-mm(1.5), 0, mm(50), mm(1.5), mm(AgentA.W/2), mm(44), C_BODY, "robot"))
+    # Aft of Chassis.TAIL_X the shell is stepped up to TAIL_CLEAR: that stretch
+    # overhangs the laboratory while the robot posts, and GROUND_CLEAR does not
+    # clear a wooden structure (F31/F32).
+    tz0, gz0, top = Chassis.TAIL_CLEAR, Chassis.GROUND_CLEAR, 94.0
+    o.append(box("A_rear", lx(0)-mm(1.5), 0, mm((tz0+top)/2),
+                 mm(1.5), mm(AgentA.W/2), mm((top-tz0)/2), C_BODY, "robot"))
+    # (the rear wall is aft of TAIL_X by definition, so it always takes the step)
+    # Split into an aft (stepped-up) and a forward section ONLY when there is
+    # actually a step.  With TAIL_CLEAR == GROUND_CLEAR the split would be two
+    # geoms describing one plate, and even that reshuffles the contact ordering
+    # enough to move a chaotic mission's score -- so emit one geom.
+    stepped = Chassis.TAIL_CLEAR > Chassis.GROUND_CLEAR
     for s, tag in ((1, "l"), (-1, "r")):
-        o.append(box(f"A_side_{tag}", 0, s*mm(AgentA.W/2), mm(50),
-                     mm(AgentA.L/2), mm(1.5), mm(44), C_BODY, "robot"))
+        if stepped:
+            o.append(box(f"A_side_{tag}", (lx(0)+lx(Chassis.TAIL_X))/2, s*mm(AgentA.W/2),
+                         mm((tz0+top)/2), (lx(Chassis.TAIL_X)-lx(0))/2, mm(1.5),
+                         mm((top-tz0)/2), C_BODY, "robot"))
+            o.append(box(f"A_sidef_{tag}", (lx(Chassis.TAIL_X)+lx(AgentA.L))/2,
+                         s*mm(AgentA.W/2), mm((gz0+top)/2),
+                         (lx(AgentA.L)-lx(Chassis.TAIL_X))/2, mm(1.5),
+                         mm((top-gz0)/2), C_BODY, "robot"))
+        else:
+            o.append(box(f"A_side_{tag}", 0, s*mm(AgentA.W/2), mm((gz0+top)/2),
+                         mm(AgentA.L/2), mm(1.5), mm((top-gz0)/2), C_BODY, "robot"))
         # beam-pocket inner wall, open-bottomed, full length
         # open-bottomed pocket: walls start at the ground-clearance line
-        pz0 = Chassis.GROUND_CLEAR
-        o.append(box(f"A_pocket_{tag}", 0, s*mm(93.5), mm((pz0+AgentA.POCKET_H)/2),
-                     mm(AgentA.L/2), mm(1.5), mm((AgentA.POCKET_H-pz0)/2), C_BODY, "robot"))
+        if stepped:
+            o.append(box(f"A_pocket_{tag}", (lx(0)+lx(Chassis.TAIL_X))/2, s*mm(93.5),
+                         mm((tz0+AgentA.POCKET_H)/2), (lx(Chassis.TAIL_X)-lx(0))/2,
+                         mm(1.5), mm((AgentA.POCKET_H-tz0)/2), C_BODY, "robot"))
+            o.append(box(f"A_pocketf_{tag}", (lx(Chassis.TAIL_X)+lx(AgentA.L))/2,
+                         s*mm(93.5), mm((gz0+AgentA.POCKET_H)/2),
+                         (lx(AgentA.L)-lx(Chassis.TAIL_X))/2, mm(1.5),
+                         mm((AgentA.POCKET_H-gz0)/2), C_BODY, "robot"))
+        else:
+            o.append(box(f"A_pocket_{tag}", 0, s*mm(93.5),
+                         mm((gz0+AgentA.POCKET_H)/2), mm(AgentA.L/2), mm(1.5),
+                         mm((AgentA.POCKET_H-gz0)/2), C_BODY, "robot"))
 
     # ---- belt ------------------------------------------------------------
     # MODELLING DECISION: one continuous conveyor from the scoop tip (top surface
@@ -386,10 +416,11 @@ def agent_a_body(name="agentA", pose=None, with_beams=False):
                   height=mm(AgentA.LEAD_H), thick=0.0005)
 
     # ---- ball transfers ---------------------------------------------------
-    for i, (sx, sy) in enumerate(((1, 1), (1, -1), (-1, 1), (-1, -1))):
+    for i, (bx, sy) in enumerate(((Chassis.BALL_FRONT_X,  1), (Chassis.BALL_FRONT_X, -1),
+                                  (Chassis.BALL_REAR_X,   1), (Chassis.BALL_REAR_X,  -1))):
         o.append(f'<geom name="A_ball{i}" class="ball" type="sphere" '
-                 f'pos="{sx*mm(102.5):.5f} {sy*mm(80.0):.5f} {mm(10.0):.5f}" '
-                 f'size="{mm(10):.5f}" rgba="0.4 0.4 0.42 1"/>')
+                 f'pos="{lx(bx):.5f} {sy*mm(Chassis.BALL_Y):.5f} {mm(Chassis.BALL_D/2):.5f}" '
+                 f'size="{mm(Chassis.BALL_D/2):.5f}" rgba="0.4 0.4 0.42 1"/>')
 
     body = [f'<body name="{name}" pos="{mm(px):.5f} {mm(py):.5f} 0" euler="0 0 {ph}">',
             '  <freejoint name="A_free"/>',
@@ -498,7 +529,13 @@ def agent_a_body(name="agentA", pose=None, with_beams=False):
         f'rgba="0.9 0.55 0.2 1"/>',
         '  </body>']
 
-    body += [f'  <site name="A_mag" pos="{cx:.5f} 0 {mm(70):.4f}" zaxis="0 0 -1"/>',
+    body += [f'  <site name="A_probe_l" '
+             f'pos="{lx(AgentA.CHUTE_X + AgentA.PROBE_DX):.5f} '
+             f'{mm(AgentA.PROBE_DY):.5f} {mm(AgentA.PROBE_Z):.5f}" zaxis="0 0 -1"/>',
+             f'  <site name="A_probe_r" '
+             f'pos="{lx(AgentA.CHUTE_X + AgentA.PROBE_DX):.5f} '
+             f'{-mm(AgentA.PROBE_DY):.5f} {mm(AgentA.PROBE_Z):.5f}" zaxis="0 0 -1"/>',
+             f'  <site name="A_mag" pos="{cx:.5f} 0 {mm(70):.4f}" zaxis="0 0 -1"/>',
              f'  <site name="A_imu" pos="0 0 {mm(60):.4f}"/>',
              f'  <site name="A_tof" pos="{lx(AgentA.L):.5f} 0 {mm(45):.4f}" zaxis="1 0 0"/>',
              f'  <camera name="A_chase" pos="{-mm(560):.4f} 0 {mm(420):.4f}" xyaxes="0 -1 0 0.6 0 0.8"/>',
@@ -528,6 +565,13 @@ def agent_a_body(name="agentA", pose=None, with_beams=False):
          per piece is how the robot knows how many are left, and so whether the
          escapement needs its retainer at all. -->
     <rangefinder name="a_mag"  site="A_mag" noise="0.0005"/>
+    <!-- The TCRT slot probes.  Modelled as rangefinders because MuJoCo has no
+         reflectance sensor: over the laboratory surface they read its top face,
+         over a slot they read whatever is below it.  A real TCRT keys on the
+         printed marking and the shadow rather than on depth, so it has MORE
+         margin than this model, not less -- see F30. -->
+    <rangefinder name="a_probe_l" site="A_probe_l" noise="0.0003"/>
+    <rangefinder name="a_probe_r" site="A_probe_r" noise="0.0003"/>
     <jointvel    name="a_wvel_l" joint="A_w_l"/>
     <jointvel    name="a_wvel_r" joint="A_w_r"/>
     <actuatorfrc name="a_frc_l" actuator="a_drive_l"/>

@@ -23,7 +23,7 @@ HOLE_BUDGET = 17.0       # measured cost of one reverse dock plus its post
 # over twelve seeds the mean went from +69 to about +50, with four matches
 # running past the buzzer with no beams down at all.  The seal is 70 points
 # and it is the phase with no slack, so it gets the clock it needs first.
-BEAM_BUDGET = 56.0       # measured cost of the two-beam seal from the lab
+BEAM_BUDGET = 44.0       # measured cost of the two-beam seal from the lab
 def _wrap(a): return (a + 180.0) % 360.0 - 180.0
 
 
@@ -142,7 +142,7 @@ def back_to(rb, x, y, speed=130.0, tol=25.0):
         yield
 
 
-def dwell_until_loaded(rb, cap=None, quiet=4.6):
+def dwell_until_loaded(rb, cap=None, quiet=4.6, want=None):
     """Wait for the belt to finish delivering, not for a fixed time (F42).
 
     The belt runs continuously, so a piece picked up at the end of a pass is
@@ -163,6 +163,13 @@ def dwell_until_loaded(rb, cap=None, quiet=4.6):
     for _ in range(int(cap * HZ)):
         rb.stop()
         c = rb.mag_count()
+        # If everything that exists is already aboard there is nothing left to
+        # wait for.  The robot knows the match has three samples in it, and the
+        # bore rangefinder tells it how many it is holding, so a pass that
+        # swept the lot can leave the instant the last one seats.  Worth 4-5 s,
+        # and it costs nothing when the pass was not that lucky.
+        if want is not None and c >= want:
+            return
         steady = steady + 1.0/HZ if c == n else 0.0
         n = c
         if steady >= quiet:
@@ -170,7 +177,7 @@ def dwell_until_loaded(rb, cap=None, quiet=4.6):
         yield
 
 
-def sweep_line(rb, y, x_to, speed=140.0):
+def sweep_line(rb, y, x_to, speed=140.0, want=None):
     """Collecting run along a constant-Y line, fingers open, heading held at 180.
 
     Fingers OPEN is right once the guides start at the mouth width (F22): the
@@ -185,7 +192,7 @@ def sweep_line(rb, y, x_to, speed=140.0):
         lat = np.clip(1.6*(y - rb.pose[1]), -20, 20)     # hold the line
         rb.drive(speed, np.clip(2.0*_wrap(180.0-th) - lat, -22, 22)); yield
     rb.stop()
-    yield from dwell_until_loaded(rb)
+    yield from dwell_until_loaded(rb, want=want)
 
 
 def align_reverse(rb, chute_offset, tx, ty, heading, tol=2.5, max_ticks=900):
@@ -316,7 +323,7 @@ def reseat(rb, cycles=1):
         yield from wait(rb, 0.5)
 
 
-def settle_stack(rb, cycles=2):
+def settle_stack(rb, cycles=2, want=None):
     """Seat the magazine with the positive-feed paddle.
 
     The last piece in has nothing above it to push it down.  It arrives centred
@@ -326,7 +333,13 @@ def settle_stack(rb, cycles=2):
     two makes it certain.  The fore-aft jog between sweeps frees anything lightly
     wedged against the bore wall.
     """
-    for _ in range(cycles):
+    for i in range(cycles):
+        # Stop early once the bore can SEE everything the robot is carrying.  A
+        # perched piece is invisible to the bore ray (it sits off-axis and the
+        # beam passes it), so a full count is proof the stack is seated flat --
+        # which is the only thing the second cycle was ever for.  Worth 2.7 s.
+        if i and want is not None and rb.mag_count() >= want:
+            break
         rb.feed(True)
         yield from wait(rb, 0.8)
         rb.feed(False)
@@ -395,7 +408,12 @@ def dock_and_post(rb, hole_x, hole_y, chute_offset, stroke=0.60, aboard=0,
     log("      docked: chute(%.1f,%.1f) vs hole(%.1f,%.1f) err %.1f mm"
         % (cx, cy, hole_x, hole_y, np.hypot(cx-hole_x, cy-hole_y)))
     lap("docked")
-    yield from reseat(rb)             # seat the stack before metering
+    # Re-seat before metering ONLY if the bore disagrees with what should be
+    # aboard.  When it already reads the full count the stack is demonstrably
+    # flat and the stroke is 1.2 s of a 120 s match for nothing -- 3.6 s over
+    # three slots, which is most of a fourth dock.
+    if not aboard or rb.mag_count() < aboard:
+        yield from reseat(rb)
     # Escapement, sequenced (F19).  The retainer takes the column at the joint
     # above the bottom piece so the shelf releases exactly one; with only one
     # piece left there is no joint to enter and the retainer stays parked -- the
@@ -437,12 +455,15 @@ def dock_and_post(rb, hole_x, hole_y, chute_offset, stroke=0.60, aboard=0,
     rb.gate(True)
     yield from wait(rb, stroke)
     _stack("gate out")
-    rb.gate(False)
-    yield from wait(rb, 0.5)
-    _stack("gate back")
-    rb.blade(False)
-    yield from wait(rb, 0.9)
-    _stack("blade out")
+    # ...AND LEAVE IT OPEN UNTIL THE ROBOT HAS LEFT THE SLOT (F55).  Closing it
+    # here is what bolts the robot to the laboratory: a disc that perches on the
+    # slot's countersink instead of dropping through ends up pinched between
+    # that countersink and the returning shelf, 4 N on the shelf and 3 N on the
+    # cone, and the robot cannot then drive off in ANY direction -- rocking does
+    # not free it.  It still scores, and everything after it is lost.
+    # With the retainer in, the column is already supported without the shelf,
+    # so there is no reason to close it until the chute is clear of the slot.
+    # (On the last disc there is nothing left in the bore to hold up at all.)
     # depart nose-out: the robot already faces away from the hole, so driving
     # forward retraces the approach line straight back to the pivot station
     lap("posted")
@@ -460,6 +481,33 @@ def dock_and_post(rb, hole_x, hole_y, chute_offset, stroke=0.60, aboard=0,
     px, py, th = rb.pose
     d_out = depart if depart is not None else max(40.0, py - PIVOT_Y)
     yield from guard(drive_straight(rb, d_out, speed=220.0), 8.0)
+    # F55.  THE ROBOT CAN BE BOLTED TO THE LABORATORY BY ITS OWN SAMPLE.  A disc
+    # that perches on a slot's countersink instead of dropping through ends up
+    # pinched between that countersink and the escapement shelf directly above
+    # it -- measured at 4 N on the shelf and 3 N on the cone -- and the robot
+    # then cannot drive off in any direction.  It still SCORES (it is inside
+    # the slot), but everything downstream is dead: one observed match lost the
+    # entire beam phase to it, and the symptom looked like a failed pivot 20 s
+    # later and half a field away.
+    #
+    # Rocking frees it.  Reversing slides the shelf off the piece the other
+    # way, and the second attempt then leaves cleanly.  Three tries, and the
+    # last of them re-aims, because if it is still stuck after that the robot
+    # is not stuck on a disc.
+    for _ in range(3):
+        if rb.pose[1] <= PIVOT_Y + 35.0:
+            break
+        log("      departure blocked at Y %.0f -- rocking free" % rb.pose[1])
+        yield from guard(drive_straight(rb, -45.0, speed=140.0), 4.0)
+        yield from guard(drive_straight(rb, rb.pose[1] - PIVOT_Y + 45.0,
+                                        speed=200.0), 7.0)
+    # Clear of the slot -- now it is safe to put the shelf back under the column.
+    rb.gate(False)
+    yield from wait(rb, 0.4)
+    _stack("gate back")
+    rb.blade(False)
+    yield from wait(rb, 0.5)
+    _stack("blade out")
     lap("departed")
 
 
@@ -471,14 +519,14 @@ def mission_agent_a(rb, holes, hole_y, chute_offset, log=print, clock=None):
     yield from guard(drive_straight(rb, 300.0, speed=220.0), 10.0)
     log(t() + "sweep pass 1, mouth on Y 130")
     yield from guard(pursue(rb, 430.0, 130.0, speed=220.0, tol=40.0), 20.0)
-    yield from guard(sweep_line(rb, 130.0, 158.0), 45.0)
+    yield from guard(sweep_line(rb, 130.0, 158.0, want=3), 45.0)
     log(t() + "sweep pass 2, mouth on Y 215")
     yield from guard(back_to(rb, 470.0, 235.0), 22.0)
     yield from guard(turn_to(rb, 180.0), 12.0)
     yield from guard(pursue(rb, 430.0, 215.0, speed=200.0, tol=40.0), 20.0)
-    yield from guard(sweep_line(rb, 215.0, 158.0), 45.0)
+    yield from guard(sweep_line(rb, 215.0, 158.0, want=3), 45.0)
     log(t() + "settling the magazine")
-    yield from guard(settle_stack(rb), 30.0)
+    yield from guard(settle_stack(rb, want=len(holes)), 30.0)
 
     # ORDER: SAMPLES, THEN BEAMS -- and the samples get whatever the beams do
     # not need, not the other way round.
@@ -797,11 +845,25 @@ def seal_quarantine(rb, log=print, clk=None):
     # takes 2.6 s.  The waypoint is Y 230 rather than 300 so the run stays
     # south of the laboratory -- at 300 the north wheel tracks its edge.
     WP = (200.0, 230.0)
+    # GET OFF THE LABORATORY FIRST.  A dock that fails to depart leaves the
+    # robot at Y 293 with a drive wheel against the plate edge, where it can
+    # neither turn nor drive -- and the beam phase then spends 24 s discovering
+    # that.  The robot is always facing away from the slot at this point, so
+    # driving forward is driving south; no pivot needed, which is the only
+    # thing that works from there.
+    px, py, pth = rb.pose
+    if py > 240.0 and abs(_wrap(pth - 270.0)) < 70.0:
+        log("      still on the laboratory at Y %.0f -- driving clear" % py)
+        yield from guard(drive_straight(rb, py - PIVOT_Y, speed=200.0), 8.0)
+        yield from guard(drive_straight(rb, py - PIVOT_Y, speed=200.0), 6.0)
     px, py, _ = rb.pose
+    log("      transit: from (%.0f, %.0f, %.0f) to the lane" % rb.pose)
     yield from guard(turn_to(rb, np.degrees(np.arctan2(WP[1]-py, WP[0]-px)),
                              tol=3.0), 9.0)
+    log("      turned:  (%.0f, %.0f, %.0f)" % rb.pose)
     yield from guard(drive_straight(rb, np.hypot(WP[0]-px, WP[1]-py),
                                     speed=220.0), 12.0)
+    log("      ran in:  (%.0f, %.0f, %.0f)" % rb.pose)
     yield from guard(turn_to(rb, AgentA.BEAM2_STATION[2], tol=2.0), 9.0)
     # Then shuffle the last 20-140 mm onto the lane.  How far off the pivot
     # leaves the robot depends on how far it came -- from the third slot it

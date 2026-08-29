@@ -558,13 +558,8 @@ def mission_agent_a(rb, holes, hole_y, chute_offset, log=print, clock=None):
     # after one pass, one actually aboard, the other two still on the field, and
     # the match scored +7.  The count is good enough to decide whether to spend
     # a bonus pass; it is not good enough to skip a pass the robot needs.
-    for tag, lane, ret in (("1", 130.0, None), ("2", 215.0, 235.0),
-                           ("3", 265.0, 280.0)):
-        if tag == "3" and rb.mag_count() >= 3:
-            break
+    def _pass(lane, ret):
         if ret is not None:
-            log(t() + "%d aboard -- sweep pass %s, mouth on Y %.0f"
-                % (rb.mag_count(), tag, lane))
             # Back out ALONG the field, then let sweep_line find its own lane.
             # Do NOT pursue() it: the target is under 100 mm away and the loaded
             # turn radius at sweep speed is 190, so pursue circles the point
@@ -572,11 +567,31 @@ def mission_agent_a(rb, holes, hole_y, chute_offset, log=print, clock=None):
             yield from guard(back_to(rb, 470.0, ret), 22.0)
             yield from guard(turn_to(rb, 180.0), 12.0)
         else:
-            log(t() + "sweep pass %s, mouth on Y %.0f" % (tag, lane))
             yield from guard(pursue(rb, 430.0, lane, speed=220.0, tol=40.0), 20.0)
         yield from guard(sweep_line(rb, lane, 158.0, want=3), 45.0)
+
+    log(t() + "sweep pass 1, mouth on Y 130")
+    yield from _pass(130.0, None)
+    log(t() + "sweep pass 2, mouth on Y 215")
+    yield from _pass(215.0, 235.0)
     log(t() + "settling the magazine")
     yield from guard(settle_stack(rb, want=len(holes)), 30.0)
+    # THERE IS NO THIRD LANE, AND IT WAS TRIED.  A pass at Y 265 covers the strip
+    # a Y 130 pass shoves into, so it looked like the way to get the strays back.
+    # It is not, twice over:
+    #
+    #  * Gated on the bore count BEFORE settling it fires when nothing is
+    #    missing -- a perched piece does not read (F60) -- and it then shoves
+    #    whatever IS still in the quarantine north and out of it.  Seeds 1, 2
+    #    and 3 all swept a lane they did not need and all three finished with
+    #    fewer samples than they started the pass with.
+    #  * Gated after settling, so the count is honest, it fires on the right
+    #    matches and still does not pay: on seed 3 it spent 41 s and recovered
+    #    nothing, and the match went from +50 to +32.
+    #
+    # A sample that has been shoved out of the quarantine is 20 points; 41 s of a
+    # 120 s match is the beam task.  The recovery has to be cheaper than this or
+    # it does not belong in the route -- see F59 and next steps.
 
     # ORDER: SAMPLES, THEN BEAMS -- and the samples get whatever the beams do
     # not need, not the other way round.

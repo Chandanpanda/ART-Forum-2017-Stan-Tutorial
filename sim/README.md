@@ -75,49 +75,58 @@ number from here.
 
 ## 2. Status — where this actually stands
 
-**The quarantine is sealed in 10 of 12 randomised matches, inside the 120 s
-clock**, and the mean score at the buzzer is **+69** — against +44 for the
-sample task alone, and +27 for the run that started this round of work.
+**Nine of twelve randomised matches score the maximum +120 inside the 120 s
+clock** — all three samples posted, both beams standing, the quarantine sealed —
+and the mean at the buzzer is **+110.3**.
+
+Read that against a stricter yardstick than the earlier numbers used: the T-joint
+is now scored as the gap between the two beams' footprints, face to face, with
+3 mm of tolerance (F56). The old test allowed a whole beam width of slack and was
+passing joints with 7 mm of air in them.
 
 | | |
 |---|---|
 | Model generation from one parameter file | **works** |
 | 23 geometry assertions | **all pass** |
 | Conveyor carry on the incline | **works** — 59.2 mm/s against a 60 mm/s belt |
-| **Pick: samples off the floor into the magazine** | **works — 24 of 24**, all three seated |
+| **Pick: samples off the floor into the magazine** | **9 of 12 matches take all three** |
 | **Magazine escapement: one piece per stroke** | **works** — in the mission, not just on the bench |
-| **Dock a slot in a 6 mm laboratory** | **works — 0.7–2.1 mm**, ~15 s each |
-| **Seal the quarantine with both beams** | **works — 10 of 12**, +70 |
-| **Full match inside 120 s** | **11 of 12** |
+| **Dock a slot in a 6 mm laboratory** | **works — 0.8–2.4 mm**, ~15 s each |
+| **Post all three samples** | **9 of 12** |
+| **Seal the quarantine with both beams** | **11 of 12**, +70 |
+| **Full match inside 120 s** | **11 of 12** (the twelfth finishes at 121.6 and still scores +97 at the buzzer) |
 
 ```
-seed            1    2    3    4    5    6    7    8    9   10   11   12
-samples        +9   +9   -9   +9  +27   +9   +9   +9   +9   +9   +9   +9
-beams         +70  +70   +0  +70  +70  +25  +70  +70  +70  +70  +70  +70
-AT BUZZER     +79  +79   -9  +79  +97  +34  +79  +79  +79  +79  +79  +79
-finish (s)    108  110    -   98  113   97  106  100  102  100  115  102
-mean at the buzzer  +69.4      sealed 10/12      over the clock  1/12
+ seed        1     2     3     4     5     6     7     8     9    10    11    12
+ samples   +50   +50   +25   +50   +27   +50   +50   +50   +50   +50   +50   +27
+ beams     +70   +70   +25   +70   +70   +70   +70   +70   +70   +70   +70   +70
+ BUZZER   +120  +120   +50  +120   +97  +120  +120  +120  +120  +120  +120   +97
+ finish    106   115   106   112   103   112   114   119   114   112   112   122
+ T-joint   0.8   1.2     -   1.9   1.6   3.0   3.0   1.4   1.0   0.1   2.1   2.9   mm
+ mean at the buzzer  +110.3     sealed 11/12     over the clock 1/12
 ```
+
+Where the clock goes, averaged over the twelve: **sweep 27 s, laboratory 47 s,
+beams 38 s**. The beam budget is 39 s and the laboratory runs to a deadline
+derived from it, so a slow sweep costs a slot rather than the seal.
 
 Where this came from, same twelve seeds:
 
-| | mean at buzzer | sealed | over 120 s |
-|---|---|---|---|
-| samples only, before this round | +44 | — | 5/12 |
-| samples only, after the clock work | +37 | — | 2/12 |
-| **samples + beams** | **+69** | **10/12** | **1/12** |
+| | mean at buzzer | sealed | all 3 samples | over 120 s |
+|---|---|---|---|---|
+| samples only, before any of this | +44 | — | — | 5/12 |
+| samples + beams, first working version | +69 | 10/12 | 1/12 | 1/12 |
+| …after the clock work (lenient T-joint) | +101 | 10/12 | 8/12 | 2/12 |
+| **now, with the T-joint scored honestly** | **+110.3** | **11/12** | **9/12** | **1/12** |
 
-One more measurement worth having: dropping the beam budget to 44 s buys the
-laboratory a **second** slot, worth +18 — and costs far more than it earns.
-The seal then starts 15 s later and misses: over the same twelve seeds the mean
-fell from +69 to about +50, with four matches running past the buzzer with no
-beams down at all. The 70-point task has no slack, so it takes the clock first.
-
-**Read the sample column honestly: it is one slot, not three.** The two tasks do
-not both fit in 120 s, so the laboratory runs on a budget and stops when the
-beams need the clock (F51). One posted sample and a sealed corner is +79; three
-samples and no seal is +50. Seed 3 is the one match that still fails outright —
-it loses the magazine early and then has nothing to post.
+**The three matches that fall short all fail the same way, and it is not the
+beams.** Each sweep pass carries 62 mm of bulldozer beyond what its mouth can
+collect, so a sample can be shoved out of the quarantine before the second lane
+reaches it (F59). On seeds 5 and 12 that costs one slot. On seed 3 it costs the
+slot *and* beam 1, because the sample it strands ends up inside the beam's
+footprint and the beam comes down on top of it — one defect, both tasks. The fix
+is at the intake, not in the route: a recovery pass was tried, measured, and
+removed for spending 41 s to recover nothing.
 
 ## 3. Findings — things the simulator discovered about the design
 
@@ -144,9 +153,11 @@ open field, ≥ 185 mm from any wall. The route now does this.
 
 **F3. A sweep "mouth centred Y ≈ 70" is geometrically impossible.**
 The chassis is 235 wide, so at heading 180 its south edge would be 47.5 mm
-*inside* the south wall. Passes must run at Y ≥ 130. With the 165 capture band,
-two passes at Y 130 and Y 215 cover Y 47.5–297.5, which is enough — but spec §9's
-figures need correcting.
+*inside* the south wall. Passes must run at Y ≥ 130. Two passes at Y 130 and
+Y 215 cover the quarantine — but not with the 165 mm band claimed here
+originally: **F59 measures the band a pass actually collects at about 110 mm**,
+and the 62 mm either side of it is a bulldozer, which is where the remaining
+sample losses come from. Spec §9's figures need correcting.
 
 **F4. The wheel contact patch dominates turn-in-place scrub, and the spec's
 scrub calculation omits it.** Spec §4.3 computes 0.03 N·m from the ball
@@ -731,8 +742,17 @@ shoved *north* leaves the zone, and on seed 3 it landed at (37, 273) — inside 
 One defect, two tasks. Moving the lanes does not fix it, it moves it: at Y 178 a
 sample 45 mm off the lane meets the guide's leading edge instead of its inner
 face, jams the nose and yaws the chassis 25°, and the pass then ploughs the other
-two — 1 of 3 collected against 3 of 3 at Y 130. The lanes stay at 130 and 215;
-a third lane at Y 265 goes after whatever the first one shoved out.
+two — 1 of 3 collected against 3 of 3 at Y 130. The lanes stay at 130 and 215.
+A third lane at Y 265 covers the strip the first one shoves into and was the
+obvious recovery; it is not in the route, because it does not pay. Gated on the
+bore *before* the stack is settled it fires when nothing is missing (F60) and
+shoves whatever is still in the quarantine out of it — seeds 1, 2 and 3 each
+finished such a pass with fewer samples than they began it. Gated after
+settling, so the count is honest, it fires on the right matches and still loses:
+on seed 3 it spent **41 s** and recovered nothing, taking the match from +50 to
++32. A shoved-out sample is 20 points and 41 s is the whole beam task. **This is
+the one open defect in the sample phase**, and the fix is at the intake, not in
+the route: a mouth as wide as the chassis has no bulldozer to recover from.
 
 **F60. The bore rangefinder cannot be trusted to skip work.** It reads the top of
 the stack, so a piece that arrives perched — which is the entire reason
@@ -824,25 +844,35 @@ point of listing them here is that none is optional.
 | **The pocket end stops start at Za 16, not at the floor** | Below Za 6 they plough the laboratory on every reverse dock (F52) | none |
 | **The cradle wedges the beam against the pocket wall** | A loose beam's inertia arrives late and destroys the dock (F50) | shape of the lip |
 | Sweeper finger pivots may need 5–8 mm aft | Only if you keep the beam's forward face flush with the chassis nose | none |
+| **The mouth wants to be as wide as the chassis** — or the pass wants a lead-in that deflects rather than pushes | A pass collects a ~110 mm band inside a 235 mm body, so 62 mm either side is a bulldozer, and a sample shoved north leaves the quarantine and lands in beam 1's footprint (F59). Three matches in twelve. | fingers/guides only |
 
 Bench-test before committing: the intake at a ≤5 mm powered edge (F25), and
 turn efficiency for `Chassis.WHEEL_COLLISION_W`.
 
 ## 8. Next steps, in the order I would do them
 
-1. **Seed 3, and the sample column.** One match in twelve loses the magazine
-   early and scores −9; the rest post one slot out of three because the seal
-   takes the clock. Both are the same problem — the sample phase is 70 s and
-   should be 45. The sweep dwell and the three-pass dock are where it is.
+1. **Widen the mouth, or stop the pass at what the mouth can take.** This is the
+   only defect left in the scoring path: three matches in twelve lose a sample
+   to the 62 mm of bulldozer either side of the intake (F59), and on one of them
+   the stranded sample lands where beam 1 goes and costs that too. Recovering it
+   in the route was tried and measured — 41 s for nothing — so the answer is
+   mechanical. Either the mouth reaches as wide as the chassis, or the chassis
+   stops being wider than what it can collect.
 2. **Odometry instead of ground truth** (F38), and the slot-probe datum on top
    of it. Until the robot can be wrong about where it is, the datum has nothing
    to correct — and that is the difference between these numbers and the real
    robot's. It matters more for the beams than for the samples: every beam lane
-   here is dead reckoning between two wall stalls.
-3. **Bench-test the intake before ordering the belt** (F25). A knife edge at
+   here is dead reckoning between two wall stalls, and F58 shows the margins are
+   single-digit millimetres.
+3. **A bore that counts rather than measures.** F60 is a real limitation, not a
+   modelling artefact: a rangefinder down the magazine reads the top of the
+   stack, so a perched piece reads as a full load. Anything that decides work
+   from that count — skipping a pass, ending the sweep — is deciding on a
+   number that can be wrong in both directions.
+4. **Bench-test the intake before ordering the belt** (F25). A knife edge at
    ≤5 mm picks up; a Ø16 roller never does.
-4. **Measure turn efficiency on the real robot** and set
+5. **Measure turn efficiency on the real robot** and set
    `Chassis.WHEEL_COLLISION_W` from it.
-5. **Bench-test the beam cradle**: 200 g at 108 mm off the pocket wall, 34 mm
+6. **Bench-test the beam cradle**: 200 g at 108 mm off the pocket wall, 34 mm
    of lift, and the release has to leave the beam standing within 5 mm.
-6. Then Agent B.
+7. Then Agent B.

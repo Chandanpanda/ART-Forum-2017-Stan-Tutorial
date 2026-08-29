@@ -48,3 +48,6 @@ print("\n%d of 3 seated in %.1f s of match time  (chute axis is x=%.1f)" % (n, d
 print("the bore rangefinder reads %d -- that is what the escapement acts on\n"
       "(it over-reads while a piece is perched, which is the case the feed fixes)"
       % rb.mag_count())
+print("\nThis is ONE sweep pass over a fixed layout, so it is the marginal case:\n"
+      "the mission runs two passes and captures 24 of 24 over 8 randomised\n"
+      "matches.  If a sample is missed here, that is the second pass's job.")

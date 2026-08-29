@@ -35,6 +35,9 @@ def main():
     # A_chase), Esc returns to the free camera, Tab toggles the side panel.
     ap.add_argument("--timeout", type=float, default=240.0)
     ap.add_argument("--step-loss", type=float, default=0.0)
+    ap.add_argument("--xray", action="store_true",
+                    help="start with the chassis plates transparent; press X in "
+                         "the viewer to toggle")
     ap.add_argument("--speed", type=float, default=0.0,
                     help="playback rate vs real time: 1.0 = real time, 0.25 = quarter "
                          "speed, 0 = as fast as the machine manages (default)")
@@ -54,7 +57,8 @@ def main():
     rb.fingers(True); rb.gate(False)
 
     dbid = [mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "disc%d" % i) for i in range(3)]
-    mission = mission_agent_a(rb, Field.LAB_HOLE_X, mjcf.LAB_HOLE_Y, CHUTE_OFFSET)
+    mission = mission_agent_a(rb, Field.LAB_HOLE_X, mjcf.LAB_HOLE_Y, CHUTE_OFFSET,
+                              clock=lambda: d.time)
 
     frames, renderer = [], None
     if a.video:
@@ -63,17 +67,35 @@ def main():
         except Exception as e:
             print("  (offscreen render unavailable: %s -- continuing without video)" % e)
 
+    shown = {"xray": a.xray}
+    mjcf.set_xray(m, a.xray)
+
+    def on_key(keycode):
+        # X toggles the chassis plates in and out of view.  Rendering only --
+        # geom_rgba does not touch contact, so the run is unaffected.
+        if keycode in (ord("X"), ord("x")):
+            shown["xray"] = not shown["xray"]
+            mjcf.set_xray(m, shown["xray"])
+            print("  [X] chassis %s" % ("transparent" if shown["xray"] else "solid"))
+
     viewer = None
     if a.gui:
         import mujoco.viewer as _mjv          # 'import mujoco.viewer' would shadow the global
-        viewer = _mjv.launch_passive(m, d)
+        viewer = _mjv.launch_passive(m, d, key_callback=on_key)
+        print("  viewer: X toggles the chassis transparent, [ and ] cycle cameras,"
+              " right-drag pans, scroll zooms")
 
     if a.gui and a.speed == 0.0:
         a.speed = 1.0            # unthrottled is unwatchable; pace the viewer
     t0, done, k = time.time(), False, 0
     wall0 = time.perf_counter()
     settle = 2500      # let the last release settle before the referee judges
+    MATCH = 120.0      # rules g.1 -- what is not posted by then does not count
+    at_buzzer = None
     while d.time < a.timeout:
+        if at_buzzer is None and d.time >= MATCH:
+            at_buzzer = [(d.xpos[b][0]*1000, d.xpos[b][1]*1000, d.xpos[b][2]*1000)
+                         for b in dbid]
         if k % CTRL_DECIM == 0 and not done:
             try: next(mission)
             except StopIteration:
@@ -109,6 +131,17 @@ def main():
         print("  %-22s %+4d" % (("disc %d: %s" % (i, what)) if i >= 0 else what, p))
     print("  %-22s %+4d   (sim %.1f s in %.1f s wall clock)"
           % ("TOTAL", pts, d.time, time.time()-t0))
+    # The match is 120 s (rules g.1).  Anything not posted by then does not count,
+    # so state the verdict rather than leaving it implicit in the timings.
+    print("  %-22s %s   (%.1f s of 120 s)"
+          % ("match budget", "WITHIN" if d.time <= MATCH else
+             "OVER by %.0f s" % (d.time - MATCH), d.time))
+    # The score that would actually be awarded.  A run finishing at T+160 does not
+    # score what it finished with -- it scores what was on the field at 2 minutes.
+    bpts = pts if at_buzzer is None else referee.score_discs(at_buzzer)[0]
+    print("  %-22s %+4d   <-- THE SCORE THAT COUNTS%s"
+          % ("AT THE BUZZER", bpts,
+             "" if at_buzzer is not None else "  (finished inside the match)"))
     if frames:
         out = os.path.join(os.path.dirname(__file__), "..", "out")
         os.makedirs(out, exist_ok=True)

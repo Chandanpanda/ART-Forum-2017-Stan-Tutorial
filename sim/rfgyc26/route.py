@@ -13,6 +13,7 @@ Two hard constraints the simulator surfaced, both real:
 Every action is time-guarded so a mission can fail but never hang.
 """
 import numpy as np
+from .params import Chassis
 
 HZ = 50.0
 def _wrap(a): return (a + 180.0) % 360.0 - 180.0
@@ -118,7 +119,7 @@ def sweep_line(rb, y, x_to, speed=140.0):
     # so the magazine is loaded before the next manoeuvre.
     # 240 mm of belt run at ~60 mm/s = 4 s per piece, and pieces queue, so a full
     # sweep needs the belt to clear before the next manoeuvre disturbs the stack.
-    yield from wait(rb, 22.0)
+    yield from wait(rb, Chassis.SWEEP_DWELL)
 
 
 def align_reverse(rb, chute_offset, tx, ty, heading, tol=2.5, max_ticks=900):
@@ -145,6 +146,10 @@ def align_reverse(rb, chute_offset, tx, ty, heading, tol=2.5, max_ticks=900):
         # 1.9 mm sideways -- far more lateral authority than the heading term needs.
         # Fighting both at once settles into an equilibrium ~15 mm off (hole 3), so
         # once we are close, null the lateral error and let the heading float.
+        # DO NOT raise these to save time.  Tried: threshold 18, w +/-22, endgame
+        # 55 mm/s and 15 deg/s.  Dock error went 1.9 -> 3.8 mm against a 2 mm
+        # posting budget, and hole 3 stopped converging at all (240 s timeout).
+        # The endgame is slow because it has to be.
         if abs(fore) > 25.0:
             w = np.clip(1.4*herr - 1.2*left, -18, 18)
             cap = 140.0 if abs(fore) > 60.0 else 60.0
@@ -208,7 +213,8 @@ def settle_stack(rb, cycles=2):
     yield from wait(rb, 0.6)
 
 
-def dock_and_post(rb, hole_x, hole_y, chute_offset, stroke=0.28, aboard=0, log=print):
+def dock_and_post(rb, hole_x, hole_y, chute_offset, stroke=0.28, aboard=0,
+                  depart=130.0, log=print, clk=None):
     """Reverse the chute onto a lab hole along a straight line, then meter one disc.
 
     F10: with a 185 mm swept radius there is NO legal pivot between the south wall
@@ -221,29 +227,41 @@ def dock_and_post(rb, hole_x, hole_y, chute_offset, stroke=0.28, aboard=0, log=p
     suit.  So it pivots once, west of the plate, to face directly AWAY from the
     hole -- and then simply reverses in a straight line until the chute is on it.
     """
+    lap = (lambda w: None) if clk is None else (lambda w: log("        %-14s T+%5.1f" % (w, clk())))
     pv = nearest_pivot(hole_x, hole_y)
+    lap("start")
     # get onto the correct pivot station first (turning only where it is legal)
     if np.hypot(rb.pose[0]-pv[0], rb.pose[1]-pv[1]) > 60.0:
         px, py, _ = rb.pose
         yield from guard(turn_to(rb, np.degrees(np.arctan2(pv[1]-py, pv[0]-px))), 22.0)
         yield from guard(pursue(rb, pv[0], pv[1], speed=220.0, tol=30.0), 35.0)
+    lap("at pivot")
     # Two passes.  A single straight reverse leaves a few mm of lateral error that
     # align_reverse cannot null (correcting it means rotating, and rotating swings
     # the chute).  Pulling forward and re-aiming from closer in fixes that -- which
     # is the job the spec's 45 deg chamfer would otherwise do (it absorbs +/-10).
-    for attempt in range(2):
+    # THREE SHORT PASSES, not two long ones.  A pass that is going to work
+    # converges in 7-14 s; one that is not will happily spend its whole guard
+    # hunting -- measured, a single approach burned all 55 s and then succeeded
+    # in 14 s on the retry, which is 40 s of a 120 s match thrown away.  Capping
+    # each pass at 20 s and allowing a third bounds the worst case AND lowers the
+    # typical case, because pulling forward and re-aiming is what actually fixes
+    # a bad approach.
+    for attempt in range(3):
         px, py, _ = rb.pose
         th = np.degrees(np.arctan2(py - hole_y, px - hole_x))   # face away from hole
         yield from guard(turn_to(rb, th, tol=1.2), 22.0)
         yield from guard(align_reverse(rb, chute_offset, hole_x, hole_y, th,
-                                       tol=2.0, max_ticks=2600), 55.0)
+                                       tol=2.0, max_ticks=2600), 20.0)
         cx, cy = rb.chute_xy(chute_offset)
-        if np.hypot(cx-hole_x, cy-hole_y) < 4.0 or attempt == 1:
+        lap("pass %d done" % attempt)
+        if np.hypot(cx-hole_x, cy-hole_y) < 4.0 or attempt == 2:
             break
         yield from guard(drive_straight(rb, 90.0, speed=140.0), 10.0)
     cx, cy = rb.chute_xy(chute_offset)
     log("      docked: chute(%.1f,%.1f) vs hole(%.1f,%.1f) err %.1f mm"
         % (cx, cy, hole_x, hole_y, np.hypot(cx-hole_x, cy-hole_y)))
+    lap("docked")
     yield from reseat(rb)             # seat the stack before metering
     # Escapement, sequenced (F19).  The retainer takes the column at the joint
     # above the bottom piece so the shelf releases exactly one; with only one
@@ -269,28 +287,40 @@ def dock_and_post(rb, hole_x, hole_y, chute_offset, stroke=0.28, aboard=0, log=p
     yield from wait(rb, 0.9)
     # depart nose-out: the robot already faces away from the hole, so driving
     # forward retraces the approach line straight back to the pivot station
-    yield from guard(pursue(rb, pv[0], pv[1], speed=220.0, tol=35.0), 35.0)
+    lap("posted")
+    # Depart by driving FORWARD off the plate, not by returning to the pivot
+    # station this hole was approached from.  Going back west after hole 2 only
+    # to set off east for hole 3 cost 35 s -- the whole guard, because the pursue
+    # never even arrived.  The next hole's approach picks its own station, so all
+    # that is needed here is to get the tail clear of the plate.  Forward travel
+    # is capped by the south wall: docked, the axle sits at Y ~293 and the nose
+    # is 142.5 ahead of it.
+    yield from guard(drive_straight(rb, depart, speed=220.0), 8.0)
+    lap("departed")
 
 
-def mission_agent_a(rb, holes, hole_y, chute_offset, log=print):
-    log("  leaving the deployment box nose-first (no pivot: swept R 185 > 140 to the wall)")
+def mission_agent_a(rb, holes, hole_y, chute_offset, log=print, clock=None):
+    # THE MATCH IS 120 s (rules g.1).  Every phase is stamped so the budget
+    # is visible in the log, not discovered at the end.
+    t = (lambda: "") if clock is None else (lambda: "T+%5.1f  " % clock())
+    log(t() + "leaving the deployment box nose-first (no pivot: swept R 185 > 140 to the wall)")
     yield from guard(drive_straight(rb, 300.0, speed=220.0), 10.0)
-    log("  sweep pass 1, mouth on Y 130")
+    log(t() + "sweep pass 1, mouth on Y 130")
     yield from guard(pursue(rb, 430.0, 130.0, speed=220.0, tol=40.0), 20.0)
     yield from guard(sweep_line(rb, 130.0, 158.0), 45.0)
-    log("  sweep pass 2, mouth on Y 215")
+    log(t() + "sweep pass 2, mouth on Y 215")
     yield from guard(back_to(rb, 470.0, 235.0), 22.0)
     yield from guard(turn_to(rb, 180.0), 12.0)
     yield from guard(pursue(rb, 430.0, 215.0, speed=200.0, tol=40.0), 20.0)
     yield from guard(sweep_line(rb, 215.0, 158.0), 45.0)
-    log("  settling the magazine")
+    log(t() + "settling the magazine")
     yield from guard(settle_stack(rb), 30.0)
-    log("  reverse-docking the laboratory")
+    log(t() + "reverse-docking the laboratory")
     yield from guard(back_to(rb, PIVOT_W[0], PIVOT_W[1]), 25.0)
     for i, hx in enumerate(holes):
-        log("    hole %d (x=%.1f)" % (i+1, hx))
+        log(t() + "  hole %d (x=%.1f)" % (i+1, hx))
         yield from dock_and_post(rb, hx, hole_y, chute_offset,
-                                 aboard=len(holes) - i, log=log)
-    log("  parking clear of the lab")
+                                 aboard=len(holes) - i, log=log, clk=clock)
+    log(t() + "parking clear of the lab")
     yield from guard(pursue(rb, 900.0, 200.0, speed=220.0, tol=40.0), 20.0)
     rb.stop()

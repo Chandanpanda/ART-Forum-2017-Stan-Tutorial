@@ -23,12 +23,18 @@ class Field:
 
     QUARANTINE      = (0.0,   0.0,   280.0,  280.0)     # x0,y0,x1,y1
     LAB_PLATE       = (351.5, 360.0, 791.5,  510.0)
-    # F11: Agent A cannot REVERSE up a square 3 mm plate edge -- the O20 ball
-    # transfers stall on the step and the dock halts 80-320 mm short of the hole.
-    # That is the spec's [VERIFY 10.2] question, answered in the negative for the
-    # REVERSE direction (forwards over it is fine).  The real plate needs a ramped
-    # or taped edge; modelled here as a 1 mm decal so the robot can dock at all.
     LAB_PLATE_T     = 1.0
+    # F24 (retires F11).  The plate now collides with the ROBOT, not just with
+    # game pieces.  F11 said Agent A could not reverse up a square 3 mm edge and
+    # put the plate on its own collision bit to get past it; re-tested after the
+    # ball transfers were given compliant mounts and the tape was made an optical
+    # marker, it climbs a square 3 mm edge unaided -- 6 of 6 matches, peak 16-21 N
+    # on the rear balls.  Set False only to reproduce the old behaviour.
+    LAB_SOLID       = True
+    # No approach ramp.  One was modelled on the plate's south edge, but the
+    # laboratory is a supplied part (F21) so assuming a ramp on it was never
+    # legitimate.  The robot climbs the square edge without it.
+    LAB_EDGE_RAMP   = 0.0
     LAB_HOLE_X      = (431.5, 571.5, 711.5)             # [VERIFY] pitch 140
     LAB_HOLE_Y      = 372.0
     LAB_HOLE_D      = 60.0
@@ -38,7 +44,17 @@ class Field:
     # therefore an assumption about someone else's part, and the team cannot cut
     # it -- the laboratory is supplied.  Set this to 0.0 to see what the posting
     # tolerance really is with a plain bored slot.
-    LAB_CHAMFER     = 4.0              # radial width of the assumed 45 deg lead-in
+    # A chamfer is cut INTO the plate, so on a 1 mm plate it is at most 1 mm deep
+    # and lies entirely below the top surface.  It was modelled as a 4 mm cone
+    # rising ABOVE the plate -- a raised collar, not a chamfer -- and once the
+    # plate became solid that collar became a 4 mm obstacle: the rear ball
+    # transfers drive into it and wedge, 6.7 N against a cone, wheels turning at
+    # the commanded speed and the robot going nowhere.  That is the "shaking
+    # without moving" seen in the viewer, and it is why a dock could burn its
+    # whole 55 s guard.  Deleting the chamfer outright was worse (near-misses
+    # then scatter across the plate); modelling it correctly, as a countersink
+    # within the plate thickness, obstructs nothing.
+    LAB_CHAMFER     = 1.0              # = plate thickness; a bevel cannot exceed it
 
     HOSPITAL        = (471.5, 901.0, 671.5, 1181.0)
     PCC_L           = (0.0,   981.0, 200.0, 1181.0)
@@ -69,6 +85,18 @@ class Chassis:
     BELT_INCLINE    = 11.0             # R1: incline pinned, tail height derived
     BELT_SPEED      = 60.0             # mm/s
     ROLLER_D        = 16.0
+    # HEIGHT OF THE POWERED SURFACE AT THE INTAKE.  This is the single biggest
+    # modelling assumption in the whole simulator (F1).  At -0.3 the belt reaches
+    # the floor and picks pieces up directly -- which a O16 roller cannot do: its
+    # own radius puts the belt face at ~9.5 at best, and spec 3.1 quotes 17.5.
+    # Sweep it (scripts/risk_intake.py) to see what the intake really tolerates.
+    # 3.0 = a knife-edge nose bar, which is buildable.  Measured cliff, capture
+    # over 8 randomised matches (24 samples): Za -0.3, 3, 4, 5 -> 24/24;
+    # Za 6, 9.5, 13, 17.5 -> 0/24.  ONE MILLIMETRE wide, and the reason is
+    # geometric: the powered edge has to get under the piece's half-thickness
+    # (2.5 mm for a 5 mm disc) or it just shunts it along the floor.
+    # A O16 roller puts the belt face at ~18 -- it cannot work, at all.
+    BELT_NOSE_Z     = 3.0
     BELT_TOP_NOSE   = 17.5             # = roller_r + roller_r + belt_t(1.5)
 
     TRACK           = 150.0
@@ -86,6 +114,12 @@ class Chassis:
     STEPS_PER_REV   = 200 * 2          # NEMA17 200 x GT2 2:1
     MM_PER_STEP     = 3.14159265358979 * WHEEL_D / STEPS_PER_REV   # 0.471
 
+    # Dwell at the end of a sweep pass, letting the belt clear before the robot
+    # manoeuvres.  THE MATCH IS 120 s (rules g.1) and two passes here spend 44 of
+    # them standing still, so it is the first place to look for time.  Measured
+    # capture over 8 matches: 22 s -> 24/24, 14 s -> 23/24, 10 s -> 23/24,
+    # 7 s -> 19/24.  Buying time here costs samples.
+    SWEEP_DWELL     = 10.0             # s
     MU_PIECE        = 0.6              # wood on whiteboard
     MU_BALL         = 0.05
 
@@ -282,4 +316,12 @@ CHECKS = [
      abs(BEAM_TIP_OVER - 18.4) < 0.05),
     ("belt nose height is roller-determined",
      abs(Chassis.BELT_TOP_NOSE - (Chassis.ROLLER_D + 1.5)) < 1e-9),
+    # The one that actually decides whether the intake works.  Measured cliff:
+    # a powered edge at or below Za 5 captures 24/24, at Za 6 it captures 0/24,
+    # because it has to get under the piece's half-thickness instead of shunting
+    # it.  This assertion is what stops the design drifting back to a roller.
+    ("intake edge gets under the piece (Za <= half its thickness + 2.5)",
+     Chassis.BELT_NOSE_Z <= Piece.DISC_T / 2.0 + 2.5),
+    ("a roller nose could NOT satisfy that -- the design needs a knife edge",
+     Chassis.ROLLER_D + 1.5 > Piece.DISC_T / 2.0 + 2.5),
 ]

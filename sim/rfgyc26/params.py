@@ -265,7 +265,16 @@ class AgentA:
     ESC_T           = 1.5              # shelf half-thickness
     ESC_BLADE_T     = 0.5              # retainer half-thickness
     ESC_BLADE_Z     = 17.3             # underside 16.8, over a disc topping at 16
-    ESC_BLADE_Y     = 40.0             # retainer half-length; covers the bore
+    # F47.  The retainer used to be 80 mm long on a 74 mm stroke, so PARKED it
+    # reached Ya 114 -- 16.5 mm inside the beam pocket, at exactly the height a
+    # carried beam rides.  It rubbed the beam for the whole match and dragged
+    # the placed one off station.  A blade cannot be parked clear of a O66 bore
+    # AND stay inboard of Ya 95.5 unless it is shorter: near edge on the bore
+    # rim (33) plus half-length must come to <= 95.  62 mm long on a 64 mm
+    # stroke does it, and a O56 disc only needs +/-28 of support, so nothing
+    # about the escapement's job changes.
+    ESC_BLADE_Y     = 31.0             # retainer half-length; covers the bore
+    ESC_BLADE_PARK  = 64.0             # its own stroke -- NOT the gate's 74
     # ...and its leading edge is a rolled lip, not a square end.  Square, it met
     # the second disc's rim head-on and drove it sideways out of the bore (dy -30,
     # Za 32).  A round edge that starts BELOW the joint cams the column up
@@ -344,9 +353,102 @@ class AgentA:
     PROBE_DY        = 20.0             # +/- lateral; chord over a O60 slot is 45
     PROBE_Z         = 20.0             # site height, below the belt underside
 
-    POCKET_L_Y      = (211.0, 235.0)   # beam 1, open at the FRONT
-    POCKET_R_Y      = (0.0,   24.0)    # beam 2, open at the REAR
-    POCKET_H        = 60.0
+    # ---------------------------------------------------------------- BEAMS
+    # F44.  The pockets are NOT boxes with an outboard wall.  They cannot be:
+    # the quarantine corner is 280x280, the two beams enclose 280x250 of it,
+    # and Agent A is 285 long -- so once either beam is down, the robot no
+    # longer fits beside the other one.  Every arrangement with an outboard
+    # wall left the chassis 5-25 mm inside a placed beam.  What does fit is a
+    # channel whose OUTBOARD face is the beam itself: an inner wall at
+    # |Ya-117.5| = 95.5, an open bottom, an end stop that does the pushing,
+    # and two hooks that drop outboard of the beam to retain it and lift clear
+    # to release.  The loaded envelope is then exactly 235 (spec 4.2's number),
+    # and the robot's own structure stops 20 mm inboard of the beam it carries.
+    POCKET_IN_Y     = 95.5             # inner wall, |local y|; 1.5 thick
+    POCKET_Y        = 107.5            # beam centreline, |local y|; 2*(107.5+10)=235
+    POCKET_H        = 60.0             # = Piece.BEAM_H
+    HOOK_Y          = 118.25           # |local y| of the retaining lip
+    HOOK_T          = 0.75             # half-thickness (a bent tab)
+    HOOK_W          = 14.0             # half-length along Xa
+    # A short UPSTAND on the shelf's outboard edge, not a tall hook.  A tall
+    # hook cannot be got out of the way by lowering -- it still stands beside
+    # the placed beam and tows it -- and swinging it outboard while the shelf is
+    # still under the piece drags the beam 12 mm sideways and yaws it 9 deg
+    # (both measured).  A 20 mm lip retains a beam whose centre of mass is 30 mm
+    # up, and one straight 34 mm drop takes the whole cradle below the field.
+    HOOK_H          = 10.0             # half-height: lip is CARRY_Z .. +20
+    HOOK_LIFT       = 64.0             # clears a 60 beam
+    # Hook stations, local x.  Chosen so that on the approach to beam 2 no
+    # hook ever crosses beam 1's footprint (F45): beam 1 lies across
+    # x 0..280, y 250..270, and the pocket-L hooks pass 275 mm out from the
+    # axle on that approach.
+    HOOK1_X         = (-100.0, -30.0)  # pocket L, carries beam 1
+    HOOK2_X         = ( -60.0,   40.0) # pocket R, carries beam 2
+    # F46.  The beams are CARRIED CLEAR OF THE FLOOR and set down to place.
+    # Rev C says they "stand on the field and are never lifted", and that is
+    # what makes the task unsolvable: a beam dragging on the floor cannot cross
+    # the 6 mm laboratory, so with a beam aboard the robot may not turn
+    # anywhere the swept circle touches the plate -- and the swept circle is
+    # 189 mm, the corridor south of the plate is 360 mm, and 2 x 189 > 360.
+    # Combined with the walls that leaves NO legal pivot anywhere in the
+    # southern half of the field with a beam aboard, which is fatal: the two
+    # stations are 90 deg apart.
+    # Carrying them 12 mm up costs one servo per pocket -- the same servo the
+    # hooks already need -- and it buys back every pivot F36 measured, because
+    # 12 mm clears the 6 mm plate exactly as the chassis does.
+    CARRY_Z         = 12.0
+    # ...and the shelves drop CLEAR OF THE FLOOR, not level with it.  Level
+    # with it the placed beam still rests half on the shelf, and the robot
+    # drove away dragging it 6.7 mm off station by friction alone.
+    CRADLE_DROP     = 2*HOOK_H + 2.0   # takes the lip below the field too
+    CRADLE_OUT      = 0.0              # F48: retracting outboard drags the beam
+    # End stops.  Beam 1 is pushed WEST by a stop behind it (the robot drives
+    # forward at heading 180); beam 2 is pushed SOUTH by a stop ahead of it
+    # (the robot reverses at heading 90).  Both release by backing the stop
+    # off the beam -- a few tens of millimetres, not a beam length, because
+    # nothing else in the pocket touches the piece once the hooks are up.
+    # Flush with the chassis ends: the beam's leading face and the shell's
+    # own end reach the wall together, so nothing has to be trimmed off the
+    # intake to give the beam a lead.  (At -147.5 the shell stalled 11.5 mm
+    # early and beam 1 finished 12 mm off the wall.)
+    STOP1_X         = -137.5           # pocket L, REAR: pushes beam 1 west
+    STOP2_X         =  107.5           # pocket R, FRONT: pushes beam 2 south
+    STOP_T          = 2.0
+    # F52.  The end stops must start ABOVE the laboratory.  At Za 2 they hang
+    # 4 mm into a 6 mm plate, and the robot ploughs it on every reverse dock:
+    # hole 1 went from 1.4 mm in 15 s to 57 mm in 87 s, and it took a
+    # three-way load comparison to see that the beams were not the cause --
+    # their pocket hardware was.  A carried beam sits at Za 12..72, so a stop
+    # spanning 16..52 engages it and still clears the plate.
+    STOP_Z0         = 16.0
+    STOP_H          = 18.0             # half-height: 16..52
+    # Where each beam rides.  Beam 1's rear face sits on STOP1_X, beam 2's
+    # forward face on STOP2_X.
+    BEAM1_LOCAL     = (STOP1_X + Piece.BEAM1_L/2.0,  POCKET_Y)   # pocket L
+    BEAM2_LOCAL     = (STOP2_X - Piece.BEAM2_L/2.0, -POCKET_Y)   # pocket R
+
+    # Beam stations: (axle_x, axle_y, heading) at the moment of the wall stall,
+    # and how far to back the stop off afterwards.  Both are derived, not
+    # guessed -- check_geometry.py re-derives them from the pocket numbers.
+    #   beam 1: heading 180, drives WEST, rear stop pushes, releases eastward
+    #   beam 2: heading  90, reverses SOUTH, front stop pushes, releases north
+    #
+    # F49.  BEAM 2 GOES FIRST, AND THE ROBOT WORKS BEAM 1 FROM THE NORTH SIDE.
+    # This is the only assignment of the four that closes, and the reason is
+    # turning room.  With a beam aboard the swept radius is 185 mm; a placed
+    # beam is an obstacle 60 mm tall; and the robot cannot pivot within 185 mm
+    # of one.  Beam 2's station sits 118 mm from beam 1's east end, so if beam 1
+    # goes down first, beam 2's station can never be entered -- there is no
+    # heading change available anywhere on its approach lane.  Reversed, and
+    # with beam 1 approached from the NORTH (body on Y 270-465, clear of beam 2
+    # by 20 mm), every leg is a straight run and every pivot has its 185 mm.
+    # The station Y is 369.5 rather than 367.5 because the cradle lip has to
+    # clear beam 2's north end face as it goes past; that leaves a 2 mm gap at
+    # the T-joint, which is inside the referee tolerance and is the "<= 1 mm at
+    # the contact lever" question spec section 10 already flags.
+    BEAM1_STATION   = (142.5, 369.5, 180.0)
+    BEAM2_STATION   = (177.5, 142.5,  90.0)   # 5 inboard, per spec 7
+    BEAM_BACKOFF    = 45.0
 
     START_POSE      = (974.5, 140.0, 180.0)   # field x, y, heading deg
 
@@ -397,4 +499,29 @@ CHECKS = [
      Chassis.BELT_NOSE_Z <= Piece.DISC_T / 2.0 + 2.5),
     ("a roller nose could NOT satisfy that -- the design needs a knife edge",
      Chassis.ROLLER_D + 1.5 > Piece.DISC_T / 2.0 + 2.5),
+    # --- beams ---------------------------------------------------------
+    ("beam 1 lands on the west wall, spanning X 0-280",
+     abs((AgentA.BEAM1_STATION[0] - (AgentA.STOP1_X + Piece.BEAM1_L))) < 1e-9),
+    ("beam 1 lands within 5 mm of the Y 250-270 band (R6)",
+     abs((AgentA.BEAM1_STATION[1] - AgentA.POCKET_Y) - Field.BEAM1_CENTRE[1]) <= 5.0),
+    ("beam 2 lands on the south wall, spanning Y 0-250",
+     abs(AgentA.BEAM2_STATION[1] - (Piece.BEAM2_L - AgentA.STOP2_X)) < 1e-9),
+    ("the cradle lip clears beam 2's end face on beam 1's run-in",
+     AgentA.BEAM1_STATION[1] - AgentA.HOOK_Y - AgentA.HOOK_T >= Piece.BEAM2_L),
+    # Spec 7's "beam 2 biased 5 inboard", and it is not cosmetic: beam 1 ends
+    # at X 280 and beam 2's nominal X 280-300 touches it along a line of zero
+    # width, so any placement error at all opens the T-joint.  5 mm of overlap
+    # is what makes the closure bonus robust.
+    ("beam 2 lands 5 mm inboard of X 280-300, overlapping beam 1's end",
+     abs((AgentA.BEAM2_STATION[0] + AgentA.POCKET_Y) - 285.0) < 1e-9),
+    ("the carried beam clears the laboratory it has to cross",
+     AgentA.CARRY_Z > Field.LAB_PLATE_T),
+    ("the loaded envelope is still 235 wide (spec 4.2)",
+     abs(2*(AgentA.POCKET_Y + Piece.BEAM_W/2) - AgentA.W) < 1e-9),
+    ("the hooks lift clear of a 60 beam",
+     AgentA.HOOK_LIFT >= Piece.BEAM_H + 2.0),
+    ("the parked escapement retainer stays out of the beam pocket (F47)",
+     AgentA.ESC_BLADE_PARK + AgentA.ESC_BLADE_Y <= AgentA.POCKET_IN_Y),
+    ("...and parked it is still clear of the bore",
+     AgentA.ESC_BLADE_PARK - AgentA.ESC_BLADE_Y >= AgentA.CHUTE_D/2.0),
 ]

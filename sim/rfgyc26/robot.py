@@ -26,6 +26,10 @@ class AgentARobot:
         self.a_gate= gid(mujoco.mjtObj.mjOBJ_ACTUATOR, "a_gate")
         self.a_feed= gid(mujoco.mjtObj.mjOBJ_ACTUATOR, "a_feed")
         self.a_blade = gid(mujoco.mjtObj.mjOBJ_ACTUATOR, "a_blade")
+        self.a_cr = [gid(mujoco.mjtObj.mjOBJ_ACTUATOR, "a_cradle1"),
+                     gid(mujoco.mjtObj.mjOBJ_ACTUATOR, "a_cradle2")]
+        self.eq_beam = [gid(mujoco.mjtObj.mjOBJ_EQUALITY, "beam%d_hold" % i)
+                        for i in (1, 2)]
         self.s_tof = gid(mujoco.mjtObj.mjOBJ_SENSOR, "a_tof")
         self.s_gyro= gid(mujoco.mjtObj.mjOBJ_SENSOR, "a_gyro")
         self.s_mag = gid(mujoco.mjtObj.mjOBJ_SENSOR, "a_mag")
@@ -96,7 +100,30 @@ class AgentARobot:
         """Escapement retainer: a 1 mm knife that takes the column at the joint
         above the bottom disc, so the shelf can slide out from under just that
         one.  Parked it is clear of the bore."""
-        self.d.ctrl[self.a_blade] = -mm(AgentA.ESC_Y) if inserted else 0.0
+        self.d.ctrl[self.a_blade] = -mm(AgentA.ESC_BLADE_PARK) if inserted else 0.0
+
+    def cradle(self, which, carry):
+        """Beam cradle 1 (pocket R, beam 1) or 2 (pocket L, beam 2).
+
+        carry=True lifts the beam CARRY_Z off the field -- which is how it
+        crosses the laboratory and how the robot is allowed to pivot at all
+        (F46).  carry=False sets it down on the field; the shelves then sit in
+        the floor plane and the robot can simply back away from the piece.
+        """
+        a = self.a_cr[which - 1]
+        if a >= 0:
+            self.d.ctrl[a] = 0.0 if carry else mm(AgentA.CARRY_Z + AgentA.CRADLE_DROP)
+        # The clamp goes with it: carried means wedged against the pocket wall,
+        # released means standing on the field on its own (F50).
+        e = self.eq_beam[which - 1]
+        if e >= 0:
+            self.d.eq_active[e] = 1 if carry else 0
+
+    def cradle_down(self, which, tol=0.6):
+        """Has the cradle finished its stroke?  A limit switch reads this."""
+        j = mujoco.mj_name2id(self.m, mujoco.mjtObj.mjOBJ_JOINT, "A_cr%d_j" % which)
+        full = AgentA.CARRY_Z + AgentA.CRADLE_DROP
+        return self.d.qpos[self.m.jnt_qposadr[j]]*1000.0 > full - tol
 
     def probe_mm(self):
         """Raw slot-probe ranges, mm.  -1 means no return at all."""

@@ -17,6 +17,13 @@ from .params import Field, Piece, Chassis, AgentA, mm, BELT_TOP_TAIL_A
 # inside the 150-deep plate.  [VERIFY on the field mock-up]
 LAB_HOLE_Y = 400.0
 
+def local_to_world(px, py, heading_deg, lx_mm, ly_mm):
+    """Robot-frame (mm) -> field-frame (mm).  Used to spawn the carried beams
+    exactly where their pockets are, so nothing is hand-placed."""
+    t = radians(heading_deg)
+    return (px + lx_mm*cos(t) - ly_mm*sin(t), py + lx_mm*sin(t) + ly_mm*cos(t))
+
+
 AX, AY = AgentA.AXLE_X, AgentA.W / 2.0        # 142.5, 117.5
 def lx(Xa): return mm(Xa - AX)
 def ly(Ya): return mm(Ya - AY)
@@ -287,45 +294,69 @@ def agent_a_body(name="agentA", pose=None, with_beams=False):
     zc = mm(Chassis.GROUND_CLEAR)
 
     # ---- structure -------------------------------------------------------
-    o.append(box("A_deck", 0, 0, mm(96.5), mm(AgentA.L/2), mm(AgentA.W/2), mm(1.5), C_BODY, "robot"))
+    o.append(box("A_deck", 0, 0, mm(96.5), mm(AgentA.L/2),
+                 mm(AgentA.POCKET_IN_Y), mm(1.5), C_BODY, "robot"))
     # Aft of Chassis.TAIL_X the shell is stepped up to TAIL_CLEAR: that stretch
     # overhangs the laboratory while the robot posts, and GROUND_CLEAR does not
     # clear a wooden structure (F31/F32).
     tz0, gz0, top = Chassis.TAIL_CLEAR, Chassis.GROUND_CLEAR, 94.0
     o.append(box("A_rear", lx(0)-mm(1.5), 0, mm((tz0+top)/2),
-                 mm(1.5), mm(AgentA.W/2), mm((top-tz0)/2), C_BODY, "robot"))
+                 mm(1.5), mm(AgentA.POCKET_IN_Y), mm((top-tz0)/2), C_BODY, "robot"))
     # (the rear wall is aft of TAIL_X by definition, so it always takes the step)
     # Split into an aft (stepped-up) and a forward section ONLY when there is
     # actually a step.  With TAIL_CLEAR == GROUND_CLEAR the split would be two
     # geoms describing one plate, and even that reshuffles the contact ordering
     # enough to move a chaotic mission's score -- so emit one geom.
     stepped = Chassis.TAIL_CLEAR > Chassis.GROUND_CLEAR
+    # F44: the shell's flanks stop at the pocket line, not at the 235 envelope.
+    # The outer 20 mm of each side IS the beam.  Leaving the old side plates on
+    # AgentA.W/2 put them exactly where the carried beam rides, and the robot
+    # stalled on its own cargo 56 mm short of the wall.
+    sw = AgentA.POCKET_IN_Y - 2.0
     for s, tag in ((1, "l"), (-1, "r")):
         if stepped:
-            o.append(box(f"A_side_{tag}", (lx(0)+lx(Chassis.TAIL_X))/2, s*mm(AgentA.W/2),
+            o.append(box(f"A_side_{tag}", (lx(0)+lx(Chassis.TAIL_X))/2, s*mm(sw),
                          mm((tz0+top)/2), (lx(Chassis.TAIL_X)-lx(0))/2, mm(1.5),
                          mm((top-tz0)/2), C_BODY, "robot"))
             o.append(box(f"A_sidef_{tag}", (lx(Chassis.TAIL_X)+lx(AgentA.L))/2,
-                         s*mm(AgentA.W/2), mm((gz0+top)/2),
+                         s*mm(sw), mm((gz0+top)/2),
                          (lx(AgentA.L)-lx(Chassis.TAIL_X))/2, mm(1.5),
                          mm((top-gz0)/2), C_BODY, "robot"))
         else:
             o.append(box(f"A_side_{tag}", 0, s*mm(AgentA.W/2), mm((gz0+top)/2),
                          mm(AgentA.L/2), mm(1.5), mm((top-gz0)/2), C_BODY, "robot"))
-        # beam-pocket inner wall, open-bottomed, full length
-        # open-bottomed pocket: walls start at the ground-clearance line
+        # BEAM POCKET INNER WALL (F44).  This is the ONLY fixed structure in the
+        # pocket: outboard of it there is a 22 mm channel whose outer face is
+        # the beam itself, so the loaded envelope is exactly 235 and the robot
+        # stops 20 mm inboard of the beam it carries.  A boxed pocket with an
+        # outboard wall does not fit the field -- see the note in params.
+        pw = AgentA.POCKET_IN_Y
         if stepped:
-            o.append(box(f"A_pocket_{tag}", (lx(0)+lx(Chassis.TAIL_X))/2, s*mm(93.5),
+            o.append(box(f"A_pocket_{tag}", (lx(0)+lx(Chassis.TAIL_X))/2, s*mm(pw),
                          mm((tz0+AgentA.POCKET_H)/2), (lx(Chassis.TAIL_X)-lx(0))/2,
                          mm(1.5), mm((AgentA.POCKET_H-tz0)/2), C_BODY, "robot"))
             o.append(box(f"A_pocketf_{tag}", (lx(Chassis.TAIL_X)+lx(AgentA.L))/2,
-                         s*mm(93.5), mm((gz0+AgentA.POCKET_H)/2),
+                         s*mm(pw), mm((gz0+AgentA.POCKET_H)/2),
                          (lx(AgentA.L)-lx(Chassis.TAIL_X))/2, mm(1.5),
                          mm((AgentA.POCKET_H-gz0)/2), C_BODY, "robot"))
         else:
-            o.append(box(f"A_pocket_{tag}", 0, s*mm(93.5),
+            o.append(box(f"A_pocket_{tag}", 0, s*mm(pw),
                          mm((gz0+AgentA.POCKET_H)/2), mm(AgentA.L/2), mm(1.5),
                          mm((AgentA.POCKET_H-gz0)/2), C_BODY, "robot"))
+    # END STOPS.  These are what actually push a beam into its wall: a plate
+    # across the channel, behind beam 1 (so driving forward at heading 180
+    # presses it west) and ahead of beam 2 (so reversing at heading 90 presses
+    # it south).  Release is simply backing the stop off -- once the cradles
+    # are down, nothing else in the pocket touches the piece.
+    for sy, tag, sx in ((1, "1", AgentA.STOP1_X), (-1, "2", AgentA.STOP2_X)):
+        # The stop's FACE lands on STOPn_X, which is the beam's own end face --
+        # so the plate body sits one half-thickness outboard of it.  Centred on
+        # STOPn_X instead, it overlaps the beam it is welded to by 2 mm and the
+        # solver fights that at 1630 N for the whole match.
+        sx = sx + (AgentA.STOP_T if sx > 0 else -AgentA.STOP_T)
+        o.append(box(f"A_stop{tag}", lx(AgentA.AXLE_X + sx), sy*mm(AgentA.POCKET_Y),
+                     mm(AgentA.STOP_Z0 + AgentA.STOP_H), mm(AgentA.STOP_T), mm(11.5),
+                     mm(AgentA.STOP_H), "0.85 0.35 0.20 1", "robot"))
 
     # ---- belt ------------------------------------------------------------
     # MODELLING DECISION: one continuous conveyor from the scoop tip (top surface
@@ -517,6 +548,7 @@ def agent_a_body(name="agentA", pose=None, with_beams=False):
     # ---- chute base gate: slides to the left flank to release one disc ----
 
     esc = mm(AgentA.ESC_Y)
+    bpk = mm(AgentA.ESC_BLADE_PARK)
     half = mm(AgentA.CHUTE_D/2 + 4)
     body += [
         f'  <body name="A_gate" pos="{cx:.5f} 0 {mm(AgentA.CHUTE_Z0-1.5):.5f}">',
@@ -528,10 +560,10 @@ def agent_a_body(name="agentA", pose=None, with_beams=False):
         '  </body>',
         # retainer: parked clear of the bore at +ESC_Y, driven to 0 to hold the
         # column while the shelf is out from under it
-        f'  <body name="A_blade" pos="{cx:.5f} {esc:.5f} '
+        f'  <body name="A_blade" pos="{cx:.5f} {bpk:.5f} '
         f'{mm(AgentA.ESC_BLADE_Z):.5f}">',
         f'    <joint name="A_blade_j" type="slide" axis="0 1 0" '
-        f'range="{-esc:.5f} 0" damping="0.05"/>',
+        f'range="{-bpk:.5f} 0" damping="0.05"/>',
         f'    <geom name="A_blade_g" class="robot" type="box" '
         f'size="{half:.5f} {mm(AgentA.ESC_BLADE_Y):.5f} '
         f'{mm(AgentA.ESC_BLADE_T):.5f}" mass="0.005" rgba="0.9 0.55 0.2 1"/>',
@@ -541,6 +573,37 @@ def agent_a_body(name="agentA", pose=None, with_beams=False):
         f'size="{mm(AgentA.ESC_LIP_R):.5f} {half:.5f}" mass="0.001" '
         f'rgba="0.9 0.55 0.2 1"/>',
         '  </body>']
+
+    # ---- beam cradles (F44/F46) -------------------------------------------
+    # One per pocket: two L-hooks on a common vertical slide.  Up (ctrl 0) the
+    # shelves carry the beam CARRY_Z off the floor, which is what lets it cross
+    # the laboratory and lets the robot pivot at all; down (ctrl -CARRY_Z) the
+    # beam stands on the field and the shelves sit in the floor plane, out of
+    # the way.  The shelves are on the belt's collision bit, not the floor's,
+    # exactly as the scoop is -- otherwise "down" would mean "jacked up on the
+    # floor" and the beam would never touch the ground.
+    cz = mm(AgentA.CARRY_Z + AgentA.CRADLE_DROP)
+    for sy, tag, hooks in ((1, "1", AgentA.HOOK1_X), (-1, "2", AgentA.HOOK2_X)):
+        body.append(f'  <body name="A_cradle{tag}" pos="0 {sy*mm(AgentA.POCKET_Y):.5f} '
+                    f'{mm(AgentA.CARRY_Z):.5f}">')
+        body.append(f'    <joint name="A_cr{tag}_j" type="slide" axis="0 0 -1" '
+                    f'range="0 {mm(AgentA.CARRY_Z + AgentA.CRADLE_DROP):.5f}" '
+                    f'damping="0.05"/>')
+        for i, hx in enumerate(hooks):
+            body.append(
+                f'    <geom name="A_shelf{tag}_{i}" type="box" contype="2" conaffinity="2" '
+                f'condim="3" friction="0.35 0.005 0.0001" '
+                f'pos="{mm(hx):.5f} {sy*mm(5.0):.5f} {-mm(0.75):.5f}" '
+                f'size="{mm(AgentA.HOOK_W):.5f} {mm(5.0):.5f} {mm(0.75):.5f}" '
+                f'mass="0.006" rgba="0.95 0.62 0.15 1"/>')
+            body.append(
+                f'    <geom name="A_hook{tag}_{i}" type="box" contype="2" '
+                f'conaffinity="2" condim="3" friction="0.35 0.005 0.0001" '
+                f'pos="{mm(hx):.5f} {sy*mm(AgentA.HOOK_Y-AgentA.POCKET_Y):.5f} '
+                f'{mm(AgentA.HOOK_H):.5f}" '
+                f'size="{mm(AgentA.HOOK_W):.5f} {mm(AgentA.HOOK_T):.5f} '
+                f'{mm(AgentA.HOOK_H):.5f}" mass="0.006" rgba="0.95 0.62 0.15 1"/>')
+        body.append('  </body>')
 
     body += [f'  <site name="A_probe_l" '
              f'pos="{lx(AgentA.CHUTE_X + AgentA.PROBE_DX):.5f} '
@@ -555,7 +618,8 @@ def agent_a_body(name="agentA", pose=None, with_beams=False):
              '</body>']
 
     fs = -mm(AgentA.FEED_STROKE)
-    nesc = -esc
+    nesc = -bpk
+    crn = mm(AgentA.CARRY_Z + AgentA.CRADLE_DROP)
     act = f"""
     <velocity name="a_drive_l" joint="A_w_l" kv="5.0" ctrlrange="-30 30" forcerange="-0.5 0.5"/>
     <velocity name="a_drive_r" joint="A_w_r" kv="5.0" ctrlrange="-30 30" forcerange="-0.5 0.5"/>
@@ -563,7 +627,9 @@ def agent_a_body(name="agentA", pose=None, with_beams=False):
     <position name="a_finger_r" joint="A_f_r" kp="4" ctrlrange="-0.55 0.55"/>   <!-- RADIANS -->
     <position name="a_gate" joint="A_gate_j" kp="900" kv="12" ctrlrange="0 {esc:.5f}" forcerange="-25 25"/>
     <position name="a_blade" joint="A_blade_j" kp="600" kv="10" ctrlrange="{nesc:.5f} 0" forcerange="-12 12"/>
-    <position name="a_feed" joint="A_feed_j" kp="120" kv="5" ctrlrange="{fs:.5f} 0" forcerange="-4.0 4.0"/>"""
+    <position name="a_feed" joint="A_feed_j" kp="120" kv="5" ctrlrange="{fs:.5f} 0" forcerange="-4.0 4.0"/>
+    <position name="a_cradle1" joint="A_cr1_j" kp="600" kv="20" ctrlrange="0 {crn:.5f}" forcerange="-16 16"/>
+    <position name="a_cradle2" joint="A_cr2_j" kp="600" kv="20" ctrlrange="0 {crn:.5f}" forcerange="-16 16"/>"""
 
     sen = """
     <framepos    name="a_pos"  objtype="body" objname="agentA"/>
@@ -610,8 +676,8 @@ def cyl_body(i, x, y, colour):
             f'size="{mm(Piece.CYL_D/2):.5f} {mm(Piece.CYL_H/2):.5f}" '
             f'mass="{Piece.CYL_M/1000.0:.4f}" rgba="{rgba}"/></body>')
 
-def beam_body(i, x, y, length, heading_deg, mass):
-    return (f'<body name="beam{i}" pos="{mm(x):.5f} {mm(y):.5f} {mm(Piece.BEAM_H/2+0.5):.5f}" '
+def beam_body(i, x, y, length, heading_deg, mass, z0=0.5):
+    return (f'<body name="beam{i}" pos="{mm(x):.5f} {mm(y):.5f} {mm(Piece.BEAM_H/2+z0):.5f}" '
             f'euler="0 0 {heading_deg}">'
             f'<freejoint name="beam{i}_f"/>'
             f'<geom name="beam{i}_g" class="piece" type="box" '
@@ -663,13 +729,15 @@ FIELD_CAMS = """
 """
 
 
-def scene(name, bodies, actuators="", sensors="", timestep=0.001, contacts=""):
+def scene(name, bodies, actuators="", sensors="", timestep=0.001, contacts="",
+          equality=""):
     return f"""<mujoco model="{name}">
 {preamble(timestep)}
   <worldbody>{FIELD_CAMS}
 {chr(10).join('    ' + b for b in bodies)}
   </worldbody>
 {contacts}
+{equality}
   <actuator>{actuators}
   </actuator>
   <sensor>{sensors}
@@ -684,10 +752,28 @@ def scene_pick_place(disc_positions, robot_pose=None, with_beams=False):
     for i, (x, y) in enumerate(disc_positions):
         parts.append(disc_body(i, x, y))
     if with_beams:
-        parts.append(beam_body(1, 0, 0, Piece.BEAM1_L, 0, Piece.BEAM1_M))
-        parts.append(beam_body(2, 0, 0, Piece.BEAM2_L, 0, Piece.BEAM2_M))
+        px, py, ph = robot_pose or AgentA.START_POSE
+        for i, (loc, L, M) in enumerate(((AgentA.BEAM1_LOCAL, Piece.BEAM1_L, Piece.BEAM1_M),
+                                         (AgentA.BEAM2_LOCAL, Piece.BEAM2_L, Piece.BEAM2_M)), 1):
+            wx, wy = local_to_world(px, py, ph, loc[0], loc[1])
+            parts.append(beam_body(i, wx, wy, L, ph, M, z0=AgentA.CARRY_Z + 0.2))
+    # A CARRIED BEAM IS CLAMPED, NOT LOOSE (F50).  Modelled as a free body
+    # resting in its channel, a 200 g beam 285 mm long slops around inside the
+    # 2 mm of pocket clearance, and its inertia arrives a moment after the
+    # chassis's on every start, stop and turn.  That is not a detail: with the
+    # beams aboard the laboratory dock went from 1.5 mm in 14 s to 38 mm in
+    # 87 s.  The real pocket does not work that way either -- the cradle lifts
+    # the beam and wedges it against the pocket's inner wall, which is a clamp.
+    # So: welded while carried, free the instant the cradle drops.
+    eq = ""
+    if with_beams:
+        eq = ("  <equality>\n"
+              + "".join('    <weld name="beam%d_hold" body1="agentA" body2="beam%d" '
+                        'solref="0.004 1" solimp="0.98 0.999 0.001"/>\n' % (i, i)
+                        for i in (1, 2))
+              + "  </equality>")
     return scene("rfgyc26_pick_place", parts, act, sen,
-                 contacts=contact_pairs(n_discs=len(disc_positions)))
+                 contacts=contact_pairs(n_discs=len(disc_positions)), equality=eq)
 
 
 def scene_belt_rig(n_pieces=4, incline=None, speed=None):

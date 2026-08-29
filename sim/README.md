@@ -108,6 +108,22 @@ The +50 count moved by one seed either way — that is chaos, not signal. What
 moved for real is the **floor**: every match now lands at least two samples, and
 nothing runs out of time.
 
+### The beam task, in one paragraph
+
+The 70-point task — seal the quarantine with two beams — now works: **+70,
+both beams standing free on their walls with the T-joint closed**, from
+`scripts/demo_beams.py`. Getting there needed six changes to the Rev C design,
+and every one of them came out of a geometric fact the drawings do not show
+(F44–F50 below). The short version: the pockets cannot have outboard walls,
+the beams cannot be dragged, the release cannot be a beam-length withdrawal,
+the escapement retainer was parked inside a pocket, and there is exactly one
+order and one pair of approach lanes that the field allows.
+
+**The two tasks do not both fit in 120 s.** The samples take about 70 s and the
+seal about 52 s from the laboratory. So the route runs the laboratory on a
+budget and stops docking when the beams need the clock — spec §9's own rule,
+that the 70-point task must never die downstream of the 50-point one.
+
 ## 3. Findings — things the simulator discovered about the design
 
 These came out of getting the model to run, and they are the real value here.
@@ -571,6 +587,81 @@ fixed heights, which leaves them centred and free. A stack the sweeper built sit
 a few millimetres off-axis, and off-axis is where the shelf can reach it.
 
 ---
+
+**F44. The beam pockets cannot have outboard walls, because the robot does not
+fit beside its own cargo.** The sealed corner is 280 × 250 and Agent A is 285
+long, so the moment either beam is down the robot no longer fits alongside the
+other one. Every arrangement with a conventional boxed pocket left the chassis
+5–25 mm inside a placed beam. What does fit is a channel whose outboard face
+**is the beam**: an inner wall at |Ya − 117.5| = 95.5, an open bottom, an end
+stop that does the pushing, and a lip that drops away to release. The loaded
+envelope is then exactly the 235 spec §4.2 asks for, and the robot's own
+structure stops 20 mm inboard of the beam it carries. The first build kept the
+old side plates on Ya 0/235 — exactly where the beam now rides — and the robot
+stalled on its own cargo 56 mm short of the wall.
+
+**F45. A beam dragging on the floor cannot cross the laboratory, and that alone
+makes the task unsolvable.** With a beam aboard the swept circle is 185 mm. The
+corridor south of the laboratory is 360 mm, so a pivot there needs 370. West of
+the plate the gap is 351.5. East of it, 351.5. North of it the robot would have
+to get there first. Result: **with a beam on the floor there is no legal pivot
+anywhere in the southern half of the field**, and the two beam stations are
+90° apart. The fix is to carry the beams 12 mm clear (F46) — then they pass
+over the 6 mm plate exactly as the chassis does, and every pivot F36 measured
+comes back.
+
+**F46. So the beams are carried on lifting cradles, and Rev C's "never lifted"
+has to go.** One servo per pocket, 34 mm of stroke. It also removes the beam
+sled drag the spec budgets 1.1 N for. Two attempts failed first: a cradle that
+only drops to floor level leaves the beam resting half on the shelf and the
+robot tows it 6 mm off station as it leaves, and a cradle that retracts
+outboard as it drops carries the beam 12 mm sideways and yaws it 9° before it
+lands. What works is a plain vertical drop deep enough to put a **20 mm
+retaining lip** below the field as well — 34 mm — because a tall hook cannot be
+got out of the way by lowering at all.
+
+**F47. The escapement retainer was parked inside a beam pocket.** 80 mm long on
+a 74 mm stroke, so parked it reached Ya 114 — 16.5 mm into the pocket, at
+exactly the height a carried beam rides. It rubbed the beam all match and
+dragged the placed one off station. A blade cannot be parked clear of a Ø66
+bore *and* stay inboard of Ya 95.5 unless it is shorter: 62 mm on a 64 mm
+stroke does both, and a Ø56 disc only needs ±28 mm of support, so the
+escapement's job is unchanged. **This one is a real packaging clash in the Rev C
+drawings**, not a simulation artefact.
+
+**F48. The release is 45 mm, not a beam length.** There is no 280 mm of straight
+line in the corner to withdraw down. There does not need to be: once the cradle
+is down, the only thing still touching the beam is the end stop behind it, so
+backing that off by a few tens of millimetres IS the release. What the robot
+then needs is 185 mm of separation before it may pivot — that is a different
+number, and the route has to buy it explicitly.
+
+**F49. There is exactly one order and one pair of lanes.** Beam 2 (south wall)
+first, beam 1 (west wall) second, and beam 1 approached from the NORTH side.
+The reason is turning room: beam 2's station sits 118 mm from beam 1's east
+end, so if beam 1 goes down first, beam 2's station can never be entered — no
+heading change is available anywhere on its approach lane. Reversed, and with
+beam 1's body on Y 270–465 (clear of beam 2 by 20 mm), every leg is a straight
+run and every pivot has its 185 mm. Two further limits set the lanes: the
+robot's forward shell sits at Za 6 and the plate top is at Za 6, so driving
+over the laboratory drags at 9 N — the beam-phase lane is X 185–254; and beam
+1's line cannot be driven onto, so the robot **shuffles** onto it (turn 30° off
+the line, run 75 mm, turn back, run back — a differential-drive parallel park).
+
+**F50. A carried beam has to be clamped, not carried loose.** Modelled as a free
+body resting in its channel, a 200 g beam slops around inside the pocket
+clearance and its inertia arrives a moment after the chassis's on every start,
+stop and turn. With the beams aboard the laboratory dock went from 1.5 mm in
+14 s to **38 mm in 87 s**, and the whole match collapsed. The real cradle wedges
+the beam against the inner wall, which is a clamp; modelled as a weld that
+releases when the cradle drops, the dock is unaffected.
+
+**F51. Both tasks do not fit in 120 s, and the samples are the ones to cut.**
+Samples ≈ 70 s, seal ≈ 52 s. At 50 points against 70, the laboratory is the
+phase that gives way — and the order is forced anyway: the beams seal the
+quarantine, so they cannot precede the sweep, and once beam 1 is down the robot
+is **boxed in** (north of a 60 mm obstacle, west of a laboratory it cannot
+climb, 87 mm of gap against a 235 mm body). The beams have to be last.
 
 ## 4. Modelling decisions you should know about
 

@@ -87,14 +87,18 @@ reaches over it instead of trying to climb it.
 | **Pick: samples off the floor into the magazine** | **works — 24 of 24**, all three seated |
 | **Magazine escapement: one piece per stroke** | **works — 3 of 3** |
 | **Dock and post all three slots, 6 mm laboratory** | **works — 3 of 3, +50**, 1.9–2.6 mm, 40 s |
-| **Full mission, best case** | **+50 at the buzzer**, 3 of 12 seeds |
+| **Full mission, best case** | **+50 at the buzzer**, 4 of 12 seeds |
 | Full mission, typical | **+9 to +27** — docking convergence is the variance |
 
 ```
-seed          1    2    3    4    5    6    7    8    9
-at buzzer   +50  +27   +9   +9   +9  +50   -9  +50   +9
-time (s)    127  159  240  231  173  136  240  128  240
+seed          1    2    3    4    5    6    7    8    9   10   11   12
+at buzzer   +50  +27   +9   +9   +9  +50   -9  +50   +9   -9  +50  +27
+time (s)    127  159  240  231  173  136  240  128  240  240  142  120
 ```
+
+**4 of 12 score +50 at the buzzer; 4 of 12 run to the 240 s cut-off.** It is a
+bimodal result, not a noisy one: a dock either converges in ~15 s or it never
+converges and spends every pass hunting. Mean at the buzzer is +23.
 
 Three changes got the posting to work at all against a real laboratory, and one
 of them retires a finding that had shaped the whole route:

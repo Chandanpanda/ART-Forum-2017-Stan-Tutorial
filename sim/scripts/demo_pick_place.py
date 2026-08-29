@@ -40,6 +40,7 @@ def main():
 
     xml = mjcf.scene_pick_place(discs)
     path = os.path.join(os.path.dirname(__file__), "..", "models", "scene_pick_place.xml")
+    os.makedirs(os.path.dirname(path), exist_ok=True)   # .gitignore'd, so absent on a fresh clone
     open(path, "w").write(xml)
     m = mujoco.MjModel.from_xml_string(xml)
     d = mujoco.MjData(m)

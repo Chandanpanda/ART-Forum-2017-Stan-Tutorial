@@ -44,7 +44,17 @@ class Field:
     # therefore an assumption about someone else's part, and the team cannot cut
     # it -- the laboratory is supplied.  Set this to 0.0 to see what the posting
     # tolerance really is with a plain bored slot.
-    LAB_CHAMFER     = 4.0              # radial width of the assumed 45 deg lead-in
+    # A chamfer is cut INTO the plate, so on a 1 mm plate it is at most 1 mm deep
+    # and lies entirely below the top surface.  It was modelled as a 4 mm cone
+    # rising ABOVE the plate -- a raised collar, not a chamfer -- and once the
+    # plate became solid that collar became a 4 mm obstacle: the rear ball
+    # transfers drive into it and wedge, 6.7 N against a cone, wheels turning at
+    # the commanded speed and the robot going nowhere.  That is the "shaking
+    # without moving" seen in the viewer, and it is why a dock could burn its
+    # whole 55 s guard.  Deleting the chamfer outright was worse (near-misses
+    # then scatter across the plate); modelling it correctly, as a countersink
+    # within the plate thickness, obstructs nothing.
+    LAB_CHAMFER     = 1.0              # = plate thickness; a bevel cannot exceed it
 
     HOSPITAL        = (471.5, 901.0, 671.5, 1181.0)
     PCC_L           = (0.0,   981.0, 200.0, 1181.0)
@@ -109,7 +119,7 @@ class Chassis:
     # them standing still, so it is the first place to look for time.  Measured
     # capture over 8 matches: 22 s -> 24/24, 14 s -> 23/24, 10 s -> 23/24,
     # 7 s -> 19/24.  Buying time here costs samples.
-    SWEEP_DWELL     = 22.0             # s
+    SWEEP_DWELL     = 10.0             # s
     MU_PIECE        = 0.6              # wood on whiteboard
     MU_BALL         = 0.05
 

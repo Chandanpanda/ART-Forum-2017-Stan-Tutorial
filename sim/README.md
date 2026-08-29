@@ -40,6 +40,7 @@ Optional, for video: `pip install "imageio[ffmpeg]"` then add `--video`.
 
 ```
 python scripts\demo_pick_place.py --gui              # paced to real time
+python scripts\demo_pick_place.py --gui --xray      # chassis transparent (X toggles)
 python scripts\demo_pick_place.py --gui --speed 0.25 # quarter speed
 python scripts\demo_pick_place.py --speed 0          # headless, as fast as it goes
 ```
@@ -49,7 +50,12 @@ script — so the viewer does no pacing of its own and, unthrottled, the run is
 about 3x real time. `--speed` sleeps to match a wall-clock rate; it is a ceiling,
 not a floor, and it does not touch the physics (same seed, same score).
 
-In the viewer: **left-drag orbits, right-drag pans, scroll zooms.** `[` and `]`
+In the viewer: **press `X` to make the chassis plates transparent** and watch the
+belt, hold-down, chute, collar, escapement and feed plunger work inside — press
+it again to bring them back. `--xray` starts that way. It is a rendering change
+only: `geom_rgba` does not touch contact, so an x-rayed run is bit-identical.
+
+**Left-drag orbits, right-drag pans, scroll zooms.** `[` and `]`
 cycle the fixed cameras — `field` (the whole 2000x1000 arena), `lab`, `quar`, and
 `A_chase` which follows the robot; `Esc` returns to the free camera and `Tab`
 toggles the side panel. The free camera opens framing the whole field, at which
@@ -66,55 +72,68 @@ solver really integrates — and then lists the seven places the model is a
 **stand-in** rather than a simulation. Read that second list before quoting any
 number from here.
 
-## 2. Status — what actually works
+## 2. Status — where this actually stands
 
-Two of the three big modelling stand-ins are now gone: the lab plate is solid
-(the robot really climbs it) and the intake runs at a height a knife-edge nose
-bar can reach. Removing them exposed the real problem, which is not physics.
+Read this section before the findings: **the score went down this round, on
+purpose.** Two of the three big modelling stand-ins are gone, and removing them
+showed that some of the earlier numbers were bought with things that do not
+exist on the real field.
 
 | | |
 |---|---|
 | Model generation from one parameter file | **works** |
 | 13 geometry assertions | **all pass** |
-| Drive: straight line / turn in place | **works** — 0.9 % slip; turn efficiency **calibrated, not predicted** |
+| Drive: straight line / turn in place | **works** — turn efficiency **calibrated, not predicted** |
 | Conveyor carry on the incline | **works** — 59.2 mm/s against a 60 mm/s belt |
 | Accumulation at a closed gate | **works** — 0.146 N mean, peaking at **0.47 N** (F23) |
-| **Pick: 3 samples off the floor into the magazine** | **works — 24 of 24**, all three seated |
-| **Magazine escapement: one piece per stroke** | **works — 3 of 3**; rangefinder reads 3 → 2 → 1 |
-| **Place: all three lab holes** | **works — 3 of 3**, dock error 0.0 mm |
+| **Pick: samples off the floor into the magazine** | **works — 24 of 24**, all three seated |
+| **Magazine escapement: one piece per stroke** | **works — 3 of 3** |
+| **Place: all three lab holes, from a good dock** | **works — 3 of 3**, dock error 0.0 mm |
 | **Reverse onto the laboratory plate, for real** | **works** — square 3 mm edge, unaided (F24) |
-| Closed-loop chute docking, in-mission | **works** — 1.5–2.1 mm at all three holes |
-| **Full mission, all three samples placed** | **7 of 8 matches** |
-| **…within the 120 s match** | **0 of 8 — this is the blocker** |
+| **Full mission inside the 120 s match** | **2 of 12 — this is the blocker** |
 
-```
-seed              1     2     3     4     5     6     7     8
-final score     +50   +50   +27   +50   +50   +50   +50   +50
-time (s)        161   184   166   176   162   163   157   161
-over 120 s by    41    64    46    56    42    43    37    41
-```
+### What the assumptions were worth
 
-**The mission does not fit the match.** The rules give 2 minutes (g.1); the route
-takes 157–184 s. On seed 1 that is +50 on paper and **+25 at the buzzer** — two
-samples posted, one still in the magazine when time runs out.
-`demo_pick_place.py` now prints both.
+Same code, same 12 seeds, only the laboratory model changed. "At the buzzer" is
+the score on the field when the 2 minutes run out — the only one that counts.
 
-Where the time goes, from the phase clock:
+| laboratory model | inside 120 s | mean score at the buzzer |
+|---|---|---|
+| 4 mm lead-in modelled as a raised collar (**not real**) | 5 / 12 | **+36** |
+| no lead-in at all | 2 / 12 | +19 |
+| **1 mm countersink inside the plate (correct)** | **2 / 12** | **+26** |
 
-```
-T+  0.0  sweep pass 1          T+ 64.9  hole 1
-T+ 27.4  sweep pass 2          T+ 79.8  hole 2
-T+ 57.1  settling              T+129.7  hole 3     <-- 50 s for one dock
-T+ 64.4  docking begins        T+158.0  parked
-```
+A chamfer is cut *into* a plate. On a 1 mm plate it is at most 1 mm deep and sits
+below the top face. It had been modelled as a 4 mm cone rising *above* the plate
+— a raised collar — and that collar was quietly doing two jobs: catching
+near-misses that would otherwise scatter, and (once the plate became solid)
+wedging the rear ball transfers hard enough to stop the robot dead. **The good
+scores were leaning on a field feature the rulebook does not promise and that
+cannot exist on a 1 mm plate.**
 
-Two places to attack, in order: the **50 s hole-3 dock** (the east approach
-re-tries against the plate step) and the **44 s of sweep dwell** (two passes ×
-22 s standing still while the belt clears). The dwell is measured: 22 s → 24/24
-captured, 14 s → 23/24, 10 s → 23/24, 7 s → 19/24. Buying time there costs
-samples, so the dock is the better target.
+So the honest state is: pick and place each work, the robot really climbs the
+plate, and **docking accuracy is not good enough to post reliably without help
+from the hole.** That is the next thing to fix, and it needs the physical datum
+(reverse until the chassis stalls against the laboratory, then step a known
+offset) rather than more tuning.
 
-## 3. Findings — things the simulator discovered## 3. Findings — things the simulator discovered about the design
+### Time
+
+The match is 120 s (rules g.1). Two changes this round took the typical run from
+158 s to about 105:
+
+* **Depart forward, not back to the pivot.** Returning to the station a hole was
+  approached from, only to set off for the next one, cost 35 s on one hole — its
+  entire guard, because the drive never even arrived.
+* **Sweep dwell 22 s → 10 s.** Measured cost: 22 s → 24/24 captured, 14 s →
+  23/24, 10 s → 23/24, 7 s → 19/24.
+* **Three 20 s docking passes instead of two 55 s ones.** A pass that will work
+  converges in 7–14 s; one that will not spends its whole guard hunting.
+
+Runs that still overrun are ones where docking never converges — the same root
+cause as the score, not a separate problem.
+
+## 3. Findings — things the simulator discovered about the design
 
 These came out of getting the model to run, and they are the real value here.
 
@@ -392,6 +411,44 @@ the route takes 157–184. Everything above about scores is what the robot achie
 risk, ahead of anything mechanical, and it is a route problem rather than a
 physics one: 50 s goes on the hole-3 dock alone and 44 s on sweep dwell.
 
+**F27. The "shaking without moving" during a dock was the lead-in cone.** Watching
+a run in the viewer, the robot would stall mid-dock and vibrate for tens of
+seconds. It is not a torque limit — instrumented, the drive sits at **0 % force
+saturation** and the wheel joints turn at exactly the commanded speed. The robot
+is held: `A_ball2 vs labcone2` at **6.7 N**. The rear ball transfers drive into
+the lab-hole lead-in and wedge against it, because the lead-in was modelled as a
+4 mm cone standing proud of a 1 mm plate. A chamfer is cut *into* a plate; on a
+1 mm plate it is at most 1 mm deep. Modelled correctly, as a countersink within
+the plate thickness, nothing catches — and a dock that used to burn its whole
+55 s guard now converges.
+
+If you see this in the viewer, that is what it is: the robot commanding a move it
+cannot make because something is holding it, not a controller being timid.
+
+**F28. Removing the fictions cost 10 points, and that is the useful part.** Same
+code, same 12 seeds, only the laboratory model changed:
+
+| laboratory model | inside 120 s | mean score at the buzzer |
+|---|---|---|
+| 4 mm lead-in as a raised collar (not real) | 5/12 | +36 |
+| no lead-in at all | 2/12 | +19 |
+| 1 mm countersink inside the plate (correct) | 2/12 | +26 |
+
+The raised collar was catching near-misses that otherwise scatter. It cannot
+exist, so the robot has to dock accurately enough not to need it. Posting
+tolerance is the 2 mm radial clearance (F21) and in-mission docking lands at
+1.5–2.1 — right on the edge, which is why the result is a coin-flip once the
+collar is gone. **The fix is a physical datum, not tuning:** the raised gains
+that would close the gap faster were tried and made it worse (dock error
+1.9 → 3.8 mm, and hole 3 stopped converging at all).
+
+**F29. Departing a hole by returning to its pivot station cost a third of the
+match.** After posting, `dock_and_post` drove back to the station it had
+approached from — then the next hole picked its own station, often on the other
+side of the field. On one hole that round trip spent the entire 35 s guard and
+never arrived. Departing forward off the plate instead, and letting the next hole
+choose its own approach, took the typical mission from 158 s to about 105.
+
 ---
 
 ## 4. Modelling decisions you should know about
@@ -449,17 +506,16 @@ drawings.
 
 ## 7. Next steps, in the order I would do them
 
-1. **Get the mission inside 120 s** (F26). Nothing else matters as much: the
-   robot currently scores +25 at the buzzer on a run that would be +50 given
-   time. Attack the 50 s hole-3 dock first — it re-tries against the plate step —
-   then the 44 s of sweep dwell, knowing 14 s costs about one sample in 24.
-2. **Bench-test the intake before ordering the belt** (F25). One belt, one nose
-   bar, a sloped board, a disc. The simulator says a knife edge at ≤5 mm picks up
-   and a Ø16 roller never does; that is a 20-minute test and it decides a part.
+1. **Dock on a physical datum.** This is now the whole game (F28). Posting
+   tolerance is 2 mm and dead-reckoned docking lands at 1.5–2.1, so the robot
+   only posts reliably when the hole helps it — and the field will not. Reverse
+   until the chassis stalls against the laboratory structure, take a known
+   offset from there, and use the TCRT array on the plate markings for X. That
+   turns the error into the repeatability of a mechanical stop.
+2. **Bench-test the intake before ordering the belt** (F25). A knife edge at
+   ≤5 mm picks up; a Ø16 roller never does. Twenty minutes, and it decides a part.
 3. **Measure turn efficiency on the real robot** and set
-   `Chassis.WHEEL_COLLISION_W` from it. Mark the floor, command 360°, see how far
-   round it gets. The sim cannot settle this one — it is calibrated, not
-   predicted.
+   `Chassis.WHEEL_COLLISION_W` from it — the sim cannot settle that one.
 4. **Model the sweeper finger stroke in contact**, now that the intake height is
-   pinned. The fingers are still static funnel walls here.
-5. Then Agent B: same chassis, plus the lane cassette, camera triage and gates.
+   pinned.
+5. Then Agent B.

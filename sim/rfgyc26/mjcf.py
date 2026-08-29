@@ -148,6 +148,28 @@ def preamble(timestep=0.001):
   </asset>"""
 
 
+# The outer shell.  Everything interesting -- belt, guides, hold-down, chute,
+# collar, escapement, feed plunger -- lives INSIDE these six plates, so from any
+# useful camera angle they hide the whole machine.  set_xray() fades them.
+SHELL_GEOMS = ["A_deck", "A_rear", "A_side_l", "A_side_r",
+               "A_pocket_l", "A_pocket_r"]
+XRAY_ALPHA = 0.10
+
+
+def set_xray(m, on, alpha=XRAY_ALPHA):
+    """Fade the chassis plates so the mechanism inside is visible.
+
+    Purely a rendering change -- geom_rgba has no effect on contact, so the
+    physics of an x-rayed run is bit-identical to a solid one.
+    """
+    import mujoco
+    for name in SHELL_GEOMS:
+        g = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_GEOM, name)
+        if g >= 0:
+            m.geom_rgba[g][3] = alpha if on else 1.0
+    return on
+
+
 # --------------------------------------------------------------------- field
 def _lab(g):
     """Plate geometry collides with game pieces, and with the robot only when
@@ -202,10 +224,13 @@ def field_body(with_zones=True):
         # the laboratory as a wooden part with plain 60 mm slots (F21).  Capped
         # at r+4 -> 4 mm tall, because the docked robot's gate sits at Za 8 and
         # its rear wall at Za 6 right above this ring.
-        if Field.LAB_CHAMFER > 0:
+        # Countersink, INSIDE the plate: it rises from the underside to the top
+        # face, never above it, so nothing can catch on it (see params).
+        ch = min(Field.LAB_CHAMFER, pt)
+        if ch > 0:
             o += [_lab(g) for g in cone(f"labcone{i}", mm(hx), mm(LAB_HOLE_Y),
-                                        mm(pt), mm(r), mm(r + Field.LAB_CHAMFER),
-                                        C_PLATE)]
+                                        mm(pt - ch), mm(r), mm(r + ch),
+                                        C_PLATE, height=mm(ch))]
 
     if with_zones:
         for nm, (a, b, c, d) in {"z_quar": Field.QUARANTINE, "z_dep": Field.DEPLOY_BOX}.items():

@@ -754,6 +754,37 @@ on seed 3 it spent **41 s** and recovered nothing, taking the match from +50 to
 the one open defect in the sample phase**, and the fix is at the intake, not in
 the route: a mouth as wide as the chassis has no bulldozer to recover from.
 
+**F62. Stroking the sweeper fingers was modelled, measured, and is NOT in the
+route — capture at the edge of the mouth is chaotic, and the stroke moves the
+losses rather than removing them.** F1 says the design needs an active ~110°
+finger sweep and that the Explainer's 15.6° is nowhere near enough, so the
+obvious answer to F59's bulldozer was to stroke the fingers through the pass and
+rake in the 62 mm either side of the mouth. Three variants were run on the seeds
+that fail and the seeds that do not:
+
+| seed | parked (in the route) | stroke, tips ±93 | stroke, tips ±88 | stroke, stock ±82.5 |
+|---|---|---|---|---|
+| 1 | **+120** | +97 | +57 | +50 |
+| 6 | **+120** | +97 | **+120** | **+120** |
+| 3 | +50 | +97 | +97 | **+120** |
+| 5 | +97 | **+120** | **+120** | **+120** |
+| 12 | +97 | +97 | — | +77 |
+
+Every variant fixes matches the parked fingers lose and loses matches the parked
+fingers win, and none is better than parked across the twelve. The mechanism is
+visible in the traces: a closing finger rakes a sample in, and an *opening* one
+flicks a sample that is leaning on it straight out of the quarantine. Which of
+the two happens depends on where the piece is in the stroke when the chassis
+reaches it — a single contact event, and the outcome swings 70 points on it.
+
+**That is the finding, and it is not a simulation artefact.** A 235 mm chassis
+collecting a 110 mm band means samples arrive at the finger tips, and a piece at
+a finger tip is decided by one contact. Widening the mouth removes the band that
+behaves this way; stroking the fingers only stirs it. **Bench-test the intake
+against samples 60–90 mm off the lane before committing to the geometry** — this
+model cannot answer it, and the twelve-match spread says nothing else in the
+robot is this sensitive.
+
 **F60. The bore rangefinder cannot be trusted to skip work.** It reads the top of
 the stack, so a piece that arrives perched — which is the entire reason
 `settle_stack` exists — reads as a full magazine. Measured on seed 1: three
@@ -851,13 +882,16 @@ turn efficiency for `Chassis.WHEEL_COLLISION_W`.
 
 ## 8. Next steps, in the order I would do them
 
-1. **Widen the mouth, or stop the pass at what the mouth can take.** This is the
-   only defect left in the scoring path: three matches in twelve lose a sample
-   to the 62 mm of bulldozer either side of the intake (F59), and on one of them
-   the stranded sample lands where beam 1 goes and costs that too. Recovering it
-   in the route was tried and measured — 41 s for nothing — so the answer is
-   mechanical. Either the mouth reaches as wide as the chassis, or the chassis
-   stops being wider than what it can collect.
+1. **Bench-test the intake against samples 60–90 mm off the lane, then widen the
+   mouth.** This is the only defect left in the scoring path: three matches in
+   twelve lose a sample to the 62 mm of bulldozer either side of the intake
+   (F59), and on one of them the stranded sample lands where beam 1 goes and
+   costs that too. Two routes out of it were tried and measured, and neither
+   works: a recovery pass spends 41 s to recover nothing, and stroking the
+   fingers (F62) fixes some matches and breaks others, because a sample at a
+   finger tip is decided by one contact and swings 70 points on it. The answer
+   is the mouth reaching as wide as the chassis — but measure it on the bench
+   first, because that 70-point swing is exactly what a simulator is worst at.
 2. **Odometry instead of ground truth** (F38), and the slot-probe datum on top
    of it. Until the robot can be wrong about where it is, the datum has nothing
    to correct — and that is the difference between these numbers and the real

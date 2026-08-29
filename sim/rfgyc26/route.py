@@ -23,7 +23,8 @@ HOLE_BUDGET = 17.0       # measured cost of one reverse dock plus its post
 # over twelve seeds the mean went from +69 to about +50, with four matches
 # running past the buzzer with no beams down at all.  The seal is 70 points
 # and it is the phase with no slack, so it gets the clock it needs first.
-BEAM_BUDGET = 44.0       # measured cost of the two-beam seal from the lab
+BEAM_BUDGET = 42.0       # measured cost of the two-beam seal from the lab
+MIN_DOCK    = 9.0        # no point starting an approach with less than this
 def _wrap(a): return (a + 180.0) % 360.0 - 180.0
 
 
@@ -354,7 +355,7 @@ import os
 
 
 def dock_and_post(rb, hole_x, hole_y, chute_offset, stroke=0.60, aboard=0,
-                  depart=None, log=print, clk=None):
+                  depart=None, log=print, clk=None, deadline=None):
     """Reverse the chute onto a lab hole along a straight line, then meter one disc.
 
     F10: with a 185 mm swept radius there is NO legal pivot between the south wall
@@ -387,7 +388,15 @@ def dock_and_post(rb, hole_x, hole_y, chute_offset, stroke=0.60, aboard=0,
     # each pass at 20 s and allowing a third bounds the worst case AND lowers the
     # typical case, because pulling forward and re-aiming is what actually fixes
     # a bad approach.
+    over = (lambda: clk is not None and deadline is not None and clk() > deadline)
     for attempt in range(3):
+        # A dock that is still hunting when the clock runs out has to stop
+        # hunting: the beam phase behind it is worth 70 points and the slot in
+        # front is worth 18.  Give up the approach, keep the departure -- the
+        # robot must still get off the plate whatever happens.
+        if over() and attempt:
+            log("      hole abandoned mid-approach at the beam deadline")
+            break
         px, py, _ = rb.pose
         th = np.degrees(np.arctan2(py - hole_y, px - hole_x))   # face away from hole
         yield from guard(turn_to(rb, th, tol=1.2), 9.0)
@@ -545,15 +554,22 @@ def mission_agent_a(rb, holes, hole_y, chute_offset, log=print, clock=None):
     #    on a budget and stops when the beams need the clock.
     log(t() + "reverse-docking the laboratory")
     yield from guard(back_to(rb, PIVOT_W[0], PIVOT_W[1]), 25.0)
+    # THE LABORATORY RUNS TO A DEADLINE, NOT A BUDGET.  A per-slot budget has to
+    # be pessimistic enough for the worst dock, and then it throws away slots
+    # the robot had time for: one measured match abandoned its third slot with
+    # 56 s left and then sealed the quarantine in 39.  A deadline lets the robot
+    # spend every second it actually has and stop the moment the beams need it,
+    # including part-way through an approach.
+    dl = MATCH - BEAM_BUDGET
     for i, hx in enumerate(holes):
-        left = MATCH - (clock() if clock else 0.0)
-        if clock is not None and left < BEAM_BUDGET + HOLE_BUDGET:
-            log(t() + "  hole %d abandoned: %.0f s left, the beams need %.0f"
-                % (i+1, left, BEAM_BUDGET))
+        if clock is not None and clock() > dl - MIN_DOCK:
+            log(t() + "  hole %d not started: T+%.0f, the beams take over at %.0f"
+                % (i+1, clock(), dl))
             break
         log(t() + "  hole %d (x=%.1f)" % (i+1, hx))
         yield from dock_and_post(rb, hx, hole_y, chute_offset,
-                                 aboard=len(holes) - i, log=log, clk=clock)
+                                 aboard=len(holes) - i, log=log, clk=clock,
+                                 deadline=dl)
     yield from seal_quarantine(rb, log=log, clk=clock)
     rb.stop()
 
@@ -843,8 +859,11 @@ def seal_quarantine(rb, log=print, clk=None):
     # 76 mm out and 37 deg off, which then cost another 20 s of shuffling.  A
     # heading hold over a measured distance lands within a few millimetres and
     # takes 2.6 s.  The waypoint is Y 230 rather than 300 so the run stays
-    # south of the laboratory -- at 300 the north wheel tracks its edge.
-    WP = (200.0, 230.0)
+    # south of the laboratory -- at 300 the north wheel tracks its edge -- and
+    # X 192 rather than 200 because everything left over is shuffled off by
+    # hand afterwards at about 3 s per leg.  192 is as far west as the pivot
+    # can go: the loaded swept circle is 187 mm and the wall is at zero.
+    WP = (192.0, 230.0)
     # GET OFF THE LABORATORY FIRST.  A dock that fails to depart leaves the
     # robot at Y 293 with a drive wheel against the plate edge, where it can
     # neither turn nor drive -- and the beam phase then spends 24 s discovering
@@ -885,8 +904,8 @@ def seal_quarantine(rb, log=print, clk=None):
     # Derived rather than padded.  Turning at (177.5, y) with beam 1 still
     # aboard, the binding radius is the carried beam's far corner, 184.7 mm at
     # 99.4 mm of x-offset from beam 2's north-west corner, so y >= 406.  The
-    # release leaves the axle at 187.5, hence 230.  It was 290, and those 60 mm
-    # of caution cost 9 s of shuffling.
+    # release leaves the axle at 187.5, hence 222 with 4 mm to spare.  It was
+    # and loses the T-joint: the pivot then clears beam 2 by 4 mm, not 12.
     yield from place_beam(rb, 2, log=log, clk=clk, withdraw=230.0, back=220.0)
     log(t() + "beam 1 (west wall)")
     # DERIVE BEAM 1's LINE FROM WHERE BEAM 2 ACTUALLY LANDED (F54).

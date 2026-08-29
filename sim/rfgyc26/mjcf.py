@@ -355,7 +355,7 @@ def agent_a_body(name="agentA", pose=None, with_beams=False):
         # solver fights that at 1630 N for the whole match.
         sx = sx + (AgentA.STOP_T if sx > 0 else -AgentA.STOP_T)
         o.append(box(f"A_stop{tag}", lx(AgentA.AXLE_X + sx), sy*mm(AgentA.POCKET_Y),
-                     mm(AgentA.STOP_Z0 + AgentA.STOP_H), mm(AgentA.STOP_T), mm(11.5),
+                     mm(AgentA.STOP_Z0 + AgentA.STOP_H), mm(AgentA.STOP_T), mm(AgentA.STOP_W),
                      mm(AgentA.STOP_H), "0.85 0.35 0.20 1", "robot"))
 
     # ---- belt ------------------------------------------------------------

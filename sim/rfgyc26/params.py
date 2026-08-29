@@ -382,7 +382,13 @@ class AgentA:
     # hook ever crosses beam 1's footprint (F45): beam 1 lies across
     # x 0..280, y 250..270, and the pocket-L hooks pass 275 mm out from the
     # axle on that approach.
-    HOOK1_X         = (-100.0, -30.0)  # pocket L, carries beam 1
+    # F53.  The pocket-L lips live on the FORWARD half of the beam, and that is
+    # not arbitrary.  Beam 1's run-in and its shuffle both take the robot along
+    # the north side of beam 2, and a lip at Xa 42 swings out to X 262-328 as
+    # the chassis crabs -- straight through beam 2's east half, which it shoved
+    # 30 mm and yawed 14 deg.  At Xa 172/242 the lips never enter beam 2's
+    # X band at all, at any heading the approach uses.
+    HOOK1_X         = ( 30.0, 100.0)  # pocket L, carries beam 1
     HOOK2_X         = ( -60.0,   40.0) # pocket R, carries beam 2
     # F46.  The beams are CARRIED CLEAR OF THE FLOOR and set down to place.
     # Rev C says they "stand on the field and are never lifted", and that is
@@ -414,6 +420,10 @@ class AgentA:
     STOP1_X         = -137.5           # pocket L, REAR: pushes beam 1 west
     STOP2_X         =  107.5           # pocket R, FRONT: pushes beam 2 south
     STOP_T          = 2.0
+    # ...and the stop is exactly as wide as the beam, not wider.  1.5 mm of
+    # overhang is 1.5 mm of the stop sitting south of beam 1's own south face,
+    # which is the face that has to touch beam 2.
+    STOP_W          = Piece.BEAM_W / 2.0
     # F52.  The end stops must start ABOVE the laboratory.  At Za 2 they hang
     # 4 mm into a 6 mm plate, and the robot ploughs it on every reverse dock:
     # hole 1 went from 1.4 mm in 15 s to 57 mm in 87 s, and it took a

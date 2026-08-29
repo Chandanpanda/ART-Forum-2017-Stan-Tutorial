@@ -577,8 +577,14 @@ def stall_drive(rb, v, hold_heading, max_mm=400.0, thresh=0.30, settle=0.35,
             # 22 deg the beam leads the chassis by 3 mm, so the stall triggers
             # on a corner touch with the cross-track error still uncorrected.
             # Measured, that put beam 2 down 58 mm east of its line.
+            # ...and taper it to zero over the last 70 mm.  Whatever crab is
+            # still on when the beam meets the wall is the angle the beam is
+            # laid down at, and the referee wants it within 10 deg of its line.
+            # A 12 mm residual is 12 deg, which is a fail on yaw alone.
+            rem = abs((line[0] - x)*np.cos(t) + (line[1] - y)*np.sin(t))
+            taper = float(np.clip(rem / 70.0, 0.0, 1.0))
             aim = hold_heading - np.clip(1.0*lat, -crab_max, crab_max) * \
-                  (1.0 if v > 0 else -1.0)
+                  taper * (1.0 if v > 0 else -1.0)
         # 3.5, not 2.2: the crab angle has to be REACHED, not approached.  At
         # 2.2 the robot spent the first 80 mm of a 150 mm run-in still turning
         # onto its crab, corrected 16 of the 33 mm it needed, and put beam 1
@@ -660,11 +666,12 @@ def dress_onto_line(rb, head, line, net_mm=0.0, tol=10.0, phi=12.0, leg=75.0,
 
 
 def place_beam(rb, which, log=print, clk=None, withdraw=0.0,
-               withdraw_line=None, back=170.0):
+               withdraw_line=None, back=170.0, station=None):
     """Set one beam down against its wall and back away from it."""
     lap = (lambda w: None) if clk is None else \
           (lambda w: log("        %-16s T+%5.1f" % (w, clk())))
-    st  = AgentA.BEAM1_STATION if which == 1 else AgentA.BEAM2_STATION
+    st  = station or (AgentA.BEAM1_STATION if which == 1
+                      else AgentA.BEAM2_STATION)
     ax, ay, head = st
     # Stage on the approach axis, one robot length back, then run it in.
     #   beam 1 approaches westward  (forward, rear stop presses)
@@ -694,18 +701,41 @@ def place_beam(rb, which, log=print, clk=None, withdraw=0.0,
     ok = yield from guard(stall_drive(rb, 120.0 if fwd else -120.0, head,
                                       max_mm=back + 120.0, line=(ax, ay)), 16.0)
     lap("wall stall")
+    # STRAIGHTEN AND RESEAT.  The run-in crabs to kill its cross-track, and
+    # whatever crab is left when the beam meets the wall is the angle the beam
+    # is laid down at -- 5 deg of it swings a 250 beam's far end 12 mm sideways,
+    # which is enough to miss the T-joint even with both beams inside their
+    # own tolerances.  So back off, square up, and come in again with the crab
+    # switched off.  Three seconds, and the beam lands parallel to its wall.
+    if abs(_wrap(head - rb.pose[2])) > 1.5:
+        yield from guard(drive_straight(rb, -30.0 if fwd else 30.0, speed=120.0), 3.0)
+        yield from guard(turn_to(rb, head, tol=1.0), 6.0)
+        yield from guard(stall_drive(rb, 90.0 if fwd else -90.0, head,
+                                     max_mm=70.0), 6.0)
+        lap("squared")
     # SET IT DOWN WHILE STILL PRESSING.  Stopping first lets the chassis rebound
     # off the wall it is leaning on -- 25 N of contact, and the beam is still on
     # the shelves, so it comes back east with the robot and lands 5 mm out.
     # Holding a light push through the drop pins the beam against the wall until
     # it is standing on the field.
+    # Square up first, then release with ZERO yaw command.  The beam inherits
+    # the chassis's angular velocity at the instant the clamp lets go, and a
+    # heading-correction term running through the release hands it 3-4 deg/s --
+    # which it keeps until floor friction stops it, several degrees later.  A
+    # 250 beam yawed 4 deg has its far end 9 mm out of place, and that is the
+    # T-joint.  Straight push, no steering.
+    yield from guard(turn_to(rb, head, tol=0.8), 5.0)
     rb.cradle(which, False)
     push = 35.0 if fwd else -35.0
     for _ in range(int(1.0*HZ)):
-        rb.drive(push, np.clip(1.5*_wrap(head - rb.pose[2]), -6, 6)); yield
+        rb.drive(push, 0.0); yield
     rb.stop()
     yield from wait(rb, 0.4)
     lap("set down")
+    # Read the datum HERE, not at the first touch: the seating push moves the
+    # beam a further 2-3 mm, and 3 mm is the whole T-joint tolerance.
+    rb.beam_stall = getattr(rb, "beam_stall", {})
+    rb.beam_stall[which] = rb.pose
     yield from guard(drive_straight(rb, -AgentA.BEAM_BACKOFF if fwd
                                     else AgentA.BEAM_BACKOFF, speed=90.0), 4.0)
     # The cradle STAYS DOWN.  Its shelves run the length of the beam, so
@@ -759,24 +789,57 @@ def seal_quarantine(rb, log=print, clk=None):
     # cross-track; a pivot 40 mm off the lane spends all of that and still puts
     # the beam down 67 mm east.  X 200 is the westmost pivot the loaded swept
     # circle allows (188.6 mm from the wall), and it is 22 mm off the lane.
+    # TURN, THEN RUN STRAIGHT.  pursue() steers continuously toward a point and
+    # from the far side of the field it circles it instead of arriving: from
+    # the third laboratory slot it spent its whole 18 s guard and finished
+    # 76 mm out and 37 deg off, which then cost another 20 s of shuffling.  A
+    # heading hold over a measured distance lands within a few millimetres and
+    # takes 2.6 s.  The waypoint is Y 230 rather than 300 so the run stays
+    # south of the laboratory -- at 300 the north wheel tracks its edge.
+    WP = (200.0, 230.0)
     px, py, _ = rb.pose
-    yield from guard(turn_to(rb, np.degrees(np.arctan2(300.0-py, 200.0-px)),
-                             tol=4.0), 9.0)
-    yield from guard(pursue(rb, 200.0, 300.0, speed=220.0, tol=25.0), 18.0)
+    yield from guard(turn_to(rb, np.degrees(np.arctan2(WP[1]-py, WP[0]-px)),
+                             tol=3.0), 9.0)
+    yield from guard(drive_straight(rb, np.hypot(WP[0]-px, WP[1]-py),
+                                    speed=220.0), 12.0)
     yield from guard(turn_to(rb, AgentA.BEAM2_STATION[2], tol=2.0), 9.0)
     # Then shuffle the last 20-140 mm onto the lane.  How far off the pivot
     # leaves the robot depends on how far it came -- from the third slot it
     # arrives 140 mm out -- and beam 2's 220 mm run-in cannot absorb that.
     # The same park that gets the robot onto beam 1's line gets it onto this
     # one, and here there is nothing placed yet to swing into.
+    # tol 5, not 10.  The run-in crabs to kill whatever cross-track is left,
+    # and it ends by driving the beam into a wall -- so whatever crab is still
+    # on at the stall is the angle the beam gets laid down at.  10 mm of
+    # residual is 10 deg of yaw, and the referee wants the beam within 10.
     yield from guard(dress_onto_line(rb, AgentA.BEAM2_STATION[2],
-                                     AgentA.BEAM2_STATION[:2]), 18.0)
-    # 290, not 250: the pivot after it has to clear beam 2 by the loaded swept
-    # radius, 188.6 mm, and the withdrawal is diagonal (it crabs 77 mm east onto
-    # the lane as it goes), so 250 of travel is only 238 of northing -- 12 mm
-    # short, and the turn dragged the carried beam 1 straight through beam 2.
-    yield from place_beam(rb, 2, log=log, clk=clk, withdraw=290.0, back=220.0)
+                                     AgentA.BEAM2_STATION[:2],
+                                     tol=5.0, passes=6), 16.0)
+    # HOW FAR TO WITHDRAW IS THE WHOLE COST OF THE NEXT PHASE.  The pivot after
+    # this one has to clear beam 2, and every millimetre of over-retreat is a
+    # millimetre beam 1's approach has to be parked back down again -- at about
+    # 6 s per 40 mm, because the park is a shuffle and not a drive.
+    #
+    # Derived rather than padded.  Turning at (177.5, y) with beam 1 still
+    # aboard, the binding radius is the carried beam's far corner, 184.7 mm at
+    # 99.4 mm of x-offset from beam 2's north-west corner, so y >= 406.  The
+    # release leaves the axle at 187.5, hence 230.  It was 290, and those 60 mm
+    # of caution cost 9 s of shuffling.
+    yield from place_beam(rb, 2, log=log, clk=clk, withdraw=230.0, back=220.0)
     log(t() + "beam 1 (west wall)")
+    # DERIVE BEAM 1's LINE FROM WHERE BEAM 2 ACTUALLY LANDED (F54).
+    # Beam 2's north end face is at its stall axle + STOP2_X, and beam 1 has to
+    # butt that face.  A fixed line cannot do it: the wall stall leaves the beam
+    # 0-3 mm off the wall depending on how hard it arrived, and 3 mm is the
+    # whole T-joint tolerance.  Worse, the pocket-L end stop rides on beam 1's
+    # own south face, so a line 2 mm too far south does not merely open the
+    # joint -- it drives the stop through the beam already on the field.
+    # The robot knows the number: it stalled there.
+    st2 = getattr(rb, "beam_stall", {}).get(2)
+    n_end = (st2[1] + AgentA.STOP2_X) if st2 else Piece.BEAM2_L
+    line1 = (AgentA.BEAM1_STATION[0], n_end + AgentA.POCKET_Y + Piece.BEAM_W/2.0 + 1.0)
+    log("      beam 2's north face read at Y %.1f -> beam 1 line Y %.1f"
+        % (n_end, line1[1]))
     # WITHDRAW STRAIGHT, THEN SIDESTEP.  The withdrawal used to crab onto the
     # dress lane as it went, which walks the pocket's inner wall 78 mm east --
     # straight through the beam that has just been set down, shoving it 80 mm
@@ -794,11 +857,12 @@ def seal_quarantine(rb, log=print, clk=None):
     # beam 1's line is Y 369.5 and the laboratory edge caps the staging at
     # X 292.  That is a 67 mm lateral shift with 77 mm of room, so shuffle onto
     # the line instead of trying to drive onto it.
-    yield from guard(dress_onto_line(rb, 180.0, AgentA.BEAM1_STATION[:2]), 22.0)
+    yield from guard(dress_onto_line(rb, 180.0, line1), 22.0)
     # Stage 150 mm out, not 75.  The shuffle only has to get the robot roughly
     # onto the line -- inside 10 mm -- because place_beam then reverses 77 mm
     # to the staging point and runs 150 mm in, both crabbing, and 227 mm of
     # crab is worth 75 mm of cross-track.  Xa 292 is as far east as the staging
     # can go: the rear ball transfers sit at axle + 27.5 and the laboratory
     # edge, which a O20 ball cannot climb, is at 351.5.
-    yield from place_beam(rb, 1, log=log, clk=clk, withdraw=60.0, back=150.0)
+    yield from place_beam(rb, 1, log=log, clk=clk, withdraw=60.0, back=150.0,
+                          station=(line1[0], line1[1], 180.0))

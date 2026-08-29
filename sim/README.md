@@ -68,39 +68,51 @@ number from here.
 
 ## 2. Status — what actually works
 
+Two of the three big modelling stand-ins are now gone: the lab plate is solid
+(the robot really climbs it) and the intake runs at a height a knife-edge nose
+bar can reach. Removing them exposed the real problem, which is not physics.
+
 | | |
 |---|---|
 | Model generation from one parameter file | **works** |
-| 11 geometry assertions | **all pass** |
-| Drive: straight line / turn in place | **works** — 0.9 % slip; 70 % turn efficiency |
+| 13 geometry assertions | **all pass** |
+| Drive: straight line / turn in place | **works** — 0.9 % slip; turn efficiency **calibrated, not predicted** |
 | Conveyor carry on the incline | **works** — 59.2 mm/s against a 60 mm/s belt |
-| Passive accumulation at a closed gate | **works** — 0.146 N mean vs 0.118 N predicted, but peaking at **0.47 N** (F23) |
-| **Pick: 3 samples off the floor into the magazine** | **works — 24 of 24** over 8 randomised matches, all three *seated* every time |
-| **Magazine escapement: one piece per stroke** | **works — 3 of 3**; the bore rangefinder reads 3 → 2 → 1 |
-| **Place: all three lab holes** | **works — 3 of 3, +45**, dock error **0.0 mm** |
-| Closed-loop chute docking, in-mission | **works** — **1.5–2.1 mm at all three holes** |
-| Referee scoring (Senior sample rules) | **works** |
-| **Full mission end to end** | **+50 — all three samples placed — in 11 of 12 randomised matches** |
+| Accumulation at a closed gate | **works** — 0.146 N mean, peaking at **0.47 N** (F23) |
+| **Pick: 3 samples off the floor into the magazine** | **works — 24 of 24**, all three seated |
+| **Magazine escapement: one piece per stroke** | **works — 3 of 3**; rangefinder reads 3 → 2 → 1 |
+| **Place: all three lab holes** | **works — 3 of 3**, dock error 0.0 mm |
+| **Reverse onto the laboratory plate, for real** | **works** — square 3 mm edge, unaided (F24) |
+| Closed-loop chute docking, in-mission | **works** — 1.5–2.1 mm at all three holes |
+| **Full mission, all three samples placed** | **7 of 8 matches** |
+| **…within the 120 s match** | **0 of 8 — this is the blocker** |
 
 ```
-seed      1    2    3    4    5    6    7    8    9   10   11   12
-score   +50  +50  +50  +50  +50  +27  +50  +50  +50  +50  +50  +50
-time    114  110  109  128  114  168  110  109  119  112  107  152  s
+seed              1     2     3     4     5     6     7     8
+final score     +50   +50   +27   +50   +50   +50   +50   +50
+time (s)        161   184   166   176   162   163   157   161
+over 120 s by    41    64    46    56    42    43    37    41
 ```
 
-**A given seed is not portable, and that matters more than the tally.** The same
-commit that scores +50 on seed 1 here scores +27 on a Windows machine, and seed 6
-fails here but not there. Multi-contact rigid-body physics is chaotic: a
-different BLAS or a different rounding order moves a piece a fraction of a
-millimetre, and 100 s later that is the difference between a seated stack and one
-piece perched on the collar. Read the *rate* — roughly one match in ten loses a
-sample — not any individual seed. The failure is always the same one: a piece
-perches after the escapement hands the column back down, the bore ray then misses
-it (a perched piece is off-axis), and it never meters.
+**The mission does not fit the match.** The rules give 2 minutes (g.1); the route
+takes 157–184 s. On seed 1 that is +50 on paper and **+25 at the buzzer** — two
+samples posted, one still in the magazine when time runs out.
+`demo_pick_place.py` now prints both.
 
-An obvious-looking fix — deepen the plunger stroke and re-seat after every
-release — made it **worse**, 3 of 12. Do not re-apply it without measuring:
-pressing a full column at 4 N disturbs more than it settles.
+Where the time goes, from the phase clock:
+
+```
+T+  0.0  sweep pass 1          T+ 64.9  hole 1
+T+ 27.4  sweep pass 2          T+ 79.8  hole 2
+T+ 57.1  settling              T+129.7  hole 3     <-- 50 s for one dock
+T+ 64.4  docking begins        T+158.0  parked
+```
+
+Two places to attack, in order: the **50 s hole-3 dock** (the east approach
+re-tries against the plate step) and the **44 s of sweep dwell** (two passes ×
+22 s standing still while the belt clears). The dwell is measured: 22 s → 24/24
+captured, 14 s → 23/24, 10 s → 23/24, 7 s → 19/24. Buying time there costs
+samples, so the dock is the better target.
 
 ## 3. Findings — things the simulator discovered## 3. Findings — things the simulator discovered about the design
 
@@ -342,6 +354,44 @@ claim stands. **Size the gate servo for the peak, not the mean** — 0.47 N agai
 a 37 mm shelf is ~0.017 N·m of holding torque, still nothing for an MG90S, but it
 is 4× what the spec's figure implies and it arrives as an impact, not a load.
 
+**F24. Agent A CAN reverse up the laboratory plate — F11 was wrong, or has been
+overtaken.** F11 said the Ø20 ball transfers stalled on a square 3 mm edge, and
+put the plate on its own collision bit so the chassis would ignore it. That cheat
+has been in every result since. Re-tested with the plate solid and no approach
+ramp — a square edge, which is what the rulebook actually describes — the robot
+climbs it in reverse unaided at 16–21 N peak on the rear balls, and the full
+mission still places all three samples in 6 of 6 matches. The bitmask is gone and
+`Field.LAB_SOLID` is True by default. What changed since F11: the ball transfers
+got compliant mounts, the boundary tape became an optical marker (F13), and the
+plate thinned from 3 mm to 1 (F11's own conclusion). Any one of those may be the
+reason; the point is the assumption stopped being true and nothing re-tested it.
+
+**F25. The intake has a one-millimetre cliff, and the spec's roller is on the
+wrong side of it.** The powered surface at the intake was modelled reaching the
+floor (Za −0.3) — convenient, and not buildable. Sweeping that height, capture
+over 8 randomised matches (24 samples):
+
+| powered edge, Za | −0.3 | 3 | 4 | 5 | 6 | 9.5 | 13 | 17.5 |
+|---|---|---|---|---|---|---|---|---|
+| samples captured | 24/24 | 24/24 | 24/24 | 24/24 | **0/24** | 0/24 | 0/24 | 0/24 |
+
+It is not a gradual falloff — it is a step between 5 and 6 mm, and the reason is
+geometric: the powered edge has to get **under the piece's half-thickness**
+(2.5 mm for a 5 mm disc) or it merely shunts it along the floor. Spec §3.1 puts
+the belt nose at Za 17.5, set by the Ø16 roller. **That cannot pick anything up.**
+
+The fix is a standard conveyor detail: a **knife-edge (nose-bar) transfer**
+instead of a roller. A Ø2–3 mm nose bar with a ≤1.5 mm belt, its underside
+0.5 mm off the floor, puts the belt face at 3.5–5 mm — just inside the cliff.
+`Chassis.BELT_NOSE_Z` is now 3.0, and two assertions in `params.py` fail loudly
+if the design drifts back toward a roller.
+
+**F26. The mission is 40–60 s over the match limit.** The rules give 120 s (g.1);
+the route takes 157–184. Everything above about scores is what the robot achieves
+*eventually* — at the buzzer, seed 1 scores +25, not +50. This is now the top
+risk, ahead of anything mechanical, and it is a route problem rather than a
+physics one: 50 s goes on the hole-3 dock alone and 44 s on sweep dwell.
+
 ---
 
 ## 4. Modelling decisions you should know about
@@ -399,14 +449,17 @@ drawings.
 
 ## 7. Next steps, in the order I would do them
 
-1. **Close the docking loop on a physical feature.** This is now the single
-   biggest lever: the posting budget is 2 mm (F21) and dead-reckoned docking
-   lands at 1.5–2.1. The spec's own answer — reverse until the chassis stalls
-   against the laboratory structure, then step a known offset — turns the Y error
-   into the repeatability of a mechanical stop. Use the TCRT line array on the
-   plate markings for X.
-2. **Model the sweeper finger stroke in contact** and re-test F1 — still the one
-   finding that could change the physical design.
-3. Run the whole mission with `Field.LAB_CHAMFER = 0.0` as the default, since
-   that is what the rulebook actually promises.
-4. Then Agent B: same chassis, plus the lane cassette, camera triage and gates.
+1. **Get the mission inside 120 s** (F26). Nothing else matters as much: the
+   robot currently scores +25 at the buzzer on a run that would be +50 given
+   time. Attack the 50 s hole-3 dock first — it re-tries against the plate step —
+   then the 44 s of sweep dwell, knowing 14 s costs about one sample in 24.
+2. **Bench-test the intake before ordering the belt** (F25). One belt, one nose
+   bar, a sloped board, a disc. The simulator says a knife edge at ≤5 mm picks up
+   and a Ø16 roller never does; that is a 20-minute test and it decides a part.
+3. **Measure turn efficiency on the real robot** and set
+   `Chassis.WHEEL_COLLISION_W` from it. Mark the floor, command 360°, see how far
+   round it gets. The sim cannot settle this one — it is calibrated, not
+   predicted.
+4. **Model the sweeper finger stroke in contact**, now that the intake height is
+   pinned. The fingers are still static funnel walls here.
+5. Then Agent B: same chassis, plus the lane cassette, camera triage and gates.

@@ -55,28 +55,34 @@ WHERE THE MODEL IS A STAND-IN  (read this before quoting any result)
 These are deliberate and documented, not oversights.  Each one is a place the
 simulator is NOT proving what it looks like it is proving.
 
-1. THE SWEEPER STROKE IS NOT SIMULATED.  This is the big one (F1).  The scoop
-   shim carries the belt's surfacevel, which stands in for the fingers' ~110 deg
-   powered stroke.  A passive shim provably cannot convey a piece across that
-   gap, so the fingers are load-bearing -- but they are modelled as static
-   funnel walls plus a moving surface, not as a stroke in contact.  If one
-   result here should be re-derived before you cut metal, it is this one.
+1. THE INTAKE IS MODELLED AS A STRAIGHT POWERED BOX reaching Za 3, not as a belt
+   wrapping a nose bar over a 0.5 mm shim, and the sweeper fingers are static
+   funnel walls rather than a powered stroke.  What the model DOES now prove is
+   the requirement: sweeping the powered edge height gives 24/24 captures at
+   Za -0.3, 3, 4 and 5, and 0/24 at Za 6 and above.  A one-millimetre cliff,
+   because the edge has to get under the piece's half-thickness.  That rules out
+   the spec's O16 roller (belt face ~18) and calls for a knife-edge nose bar.
+   Bench-test the intake alone before committing: one belt, one nose bar, a
+   sloped board, and a disc.
 
-2. THE BELT IS A surfacevel BOX, not a loop over two rollers.  MuJoCo's native
-   conveyor primitive.  Validated against the spec's own numbers in demo_belt.py
-   (59.2 mm/s carry against a 60 mm/s belt), so the carry claim is real -- but
-   there is no belt tension, tracking, or roller compliance in here.
+2. THE LAB PLATE IS NOW SOLID -- this stand-in is retired.  It used to sit on its
+   own collision bit so the chassis ignored it.  Re-tested honestly, the robot
+   climbs a square 3 mm edge in reverse unaided (6 of 6 matches, 16-21 N peak on
+   the rear ball transfers), so the cheat is gone and Field.LAB_SOLID is True.
 
 3. THE WHEELS COLLIDE ON A 6 mm PROXY, 22 mm wide visually (F4).  A rigid
    cylinder's line contact over-predicts scrub, which put turn-in-place at 21%
-   efficiency against a plausible ~70%.  Chassis.WHEEL_COLLISION_W is the knob;
-   the turn numbers move with it, so treat turn efficiency as calibrated, not
-   predicted.
+   efficiency against a plausible ~70%.  Chassis.WHEEL_COLLISION_W is the knob.
+   THIS ONE CANNOT BE SETTLED IN SIMULATION.  Measure it: mark the floor, command
+   a 360 deg turn in place, and see how far round the robot actually gets.
+   Efficiency = achieved / commanded.  Measured values by proxy width --
+   22 mm: 0.21,  12 mm: 0.44,  8 mm: 0.60,  6 mm: 0.70 -- so set the parameter
+   from the bench number and re-run, rather than trusting 0.70.
 
-4. THE LAB PLATE DOES NOT TOUCH THE ROBOT (F11/F13).  It is on its own collision
-   bit: it interacts with game pieces but not the chassis.  Without that, the
-   ball transfers cannot reverse up even a 1 mm step and no docking succeeds.
-   That is a real unsolved hardware question, hidden here by a bitmask.
+4. THE MISSION DOES NOT FIT THE MATCH.  Not a modelling stand-in but the biggest
+   practical risk: the match is 120 s (rules g.1) and the route takes 157-184.
+   demo_pick_place.py now prints both the final score and the score AT THE
+   BUZZER, which is the one that counts.
 
 5. THE STEPPERS ARE VELOCITY SOURCES with step quantisation and optional step
    loss -- not a torque/speed curve, and StallGuard is a torque-saturation

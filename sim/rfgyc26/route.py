@@ -13,6 +13,7 @@ Two hard constraints the simulator surfaced, both real:
 Every action is time-guarded so a mission can fail but never hang.
 """
 import numpy as np
+from .params import Chassis
 
 HZ = 50.0
 def _wrap(a): return (a + 180.0) % 360.0 - 180.0
@@ -118,7 +119,7 @@ def sweep_line(rb, y, x_to, speed=140.0):
     # so the magazine is loaded before the next manoeuvre.
     # 240 mm of belt run at ~60 mm/s = 4 s per piece, and pieces queue, so a full
     # sweep needs the belt to clear before the next manoeuvre disturbs the stack.
-    yield from wait(rb, 22.0)
+    yield from wait(rb, Chassis.SWEEP_DWELL)
 
 
 def align_reverse(rb, chute_offset, tx, ty, heading, tol=2.5, max_ticks=900):
@@ -272,25 +273,28 @@ def dock_and_post(rb, hole_x, hole_y, chute_offset, stroke=0.28, aboard=0, log=p
     yield from guard(pursue(rb, pv[0], pv[1], speed=220.0, tol=35.0), 35.0)
 
 
-def mission_agent_a(rb, holes, hole_y, chute_offset, log=print):
-    log("  leaving the deployment box nose-first (no pivot: swept R 185 > 140 to the wall)")
+def mission_agent_a(rb, holes, hole_y, chute_offset, log=print, clock=None):
+    # THE MATCH IS 120 s (rules g.1).  Every phase is stamped so the budget
+    # is visible in the log, not discovered at the end.
+    t = (lambda: "") if clock is None else (lambda: "T+%5.1f  " % clock())
+    log(t() + "leaving the deployment box nose-first (no pivot: swept R 185 > 140 to the wall)")
     yield from guard(drive_straight(rb, 300.0, speed=220.0), 10.0)
-    log("  sweep pass 1, mouth on Y 130")
+    log(t() + "sweep pass 1, mouth on Y 130")
     yield from guard(pursue(rb, 430.0, 130.0, speed=220.0, tol=40.0), 20.0)
     yield from guard(sweep_line(rb, 130.0, 158.0), 45.0)
-    log("  sweep pass 2, mouth on Y 215")
+    log(t() + "sweep pass 2, mouth on Y 215")
     yield from guard(back_to(rb, 470.0, 235.0), 22.0)
     yield from guard(turn_to(rb, 180.0), 12.0)
     yield from guard(pursue(rb, 430.0, 215.0, speed=200.0, tol=40.0), 20.0)
     yield from guard(sweep_line(rb, 215.0, 158.0), 45.0)
-    log("  settling the magazine")
+    log(t() + "settling the magazine")
     yield from guard(settle_stack(rb), 30.0)
-    log("  reverse-docking the laboratory")
+    log(t() + "reverse-docking the laboratory")
     yield from guard(back_to(rb, PIVOT_W[0], PIVOT_W[1]), 25.0)
     for i, hx in enumerate(holes):
-        log("    hole %d (x=%.1f)" % (i+1, hx))
+        log(t() + "  hole %d (x=%.1f)" % (i+1, hx))
         yield from dock_and_post(rb, hx, hole_y, chute_offset,
                                  aboard=len(holes) - i, log=log)
-    log("  parking clear of the lab")
+    log(t() + "parking clear of the lab")
     yield from guard(pursue(rb, 900.0, 200.0, speed=220.0, tol=40.0), 20.0)
     rb.stop()

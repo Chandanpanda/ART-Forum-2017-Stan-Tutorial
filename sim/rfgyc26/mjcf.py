@@ -149,12 +149,12 @@ def preamble(timestep=0.001):
 
 
 # --------------------------------------------------------------------- field
-LAB_BITS = ' contype="4" conaffinity="4"'
-
-
 def _lab(g):
-    """Plate geometry collides with game pieces but not with the robot."""
-    return g.replace('/>', LAB_BITS + '/>')
+    """Plate geometry collides with game pieces, and with the robot only when
+    Field.LAB_SOLID is set (see the note in params)."""
+    bits = ' contype="5" conaffinity="5"' if Field.LAB_SOLID \
+      else ' contype="4" conaffinity="4"'
+    return g.replace('/>', bits + '/>')
 
 
 def field_body(with_zones=True):
@@ -191,10 +191,11 @@ def field_body(with_zones=True):
     # transfers stall on the step and the dock halts 80-320 mm short.  This is the
     # spec's own [VERIFY 10.2] question, answered: the plate needs a ramped or
     # taped edge.  Modelled as a 12 mm ramp on the approach (south) edge.
-    ramp_l = 12.0
-    o.append(_lab(box("lab_ramp", mm((x0+x1)/2), mm(y0 - ramp_l/2), mm(pt/2),
-                 mm((x1-x0)/2), mm(ramp_l/2), mm(pt/2), C_PLATE,
-                 euler=(-14.0, 0, 0))))
+    ramp_l = Field.LAB_EDGE_RAMP
+    if ramp_l > 0:
+        o.append(_lab(box("lab_ramp", mm((x0+x1)/2), mm(y0 - ramp_l/2), mm(pt/2),
+                     mm((x1-x0)/2), mm(ramp_l/2), mm(pt/2), C_PLATE,
+                     euler=(-14.0, 0, 0))))
     for i, hx in enumerate(Field.LAB_HOLE_X):
         o += [_lab(g) for g in ring(f"labring{i}", mm(hx), mm(LAB_HOLE_Y), 0.0, mm(pt), mm(r), mm(6), C_PLATE)]
         # 45 deg lead-in chamfer.  ASSUMED, not specified: the rulebook supplies
@@ -280,7 +281,7 @@ def agent_a_body(name="agentA", pose=None, with_beams=False):
     # Findings section of the README).  Treating the shim as an extension of the
     # belt is the simplest faithful stand-in for the sweeper fingers' active stroke.
     nose_x, tail_x = lx(AgentA.SCOOP_FROM), lx(AgentA.BELT_TAIL_X)
-    NOSE_Z, TAIL_Z = -0.3, BELT_TOP_TAIL_A
+    NOSE_Z, TAIL_Z = Chassis.BELT_NOSE_Z, BELT_TOP_TAIL_A
     inc = degrees_atan(TAIL_Z - NOSE_Z, (nose_x - tail_x) * 1000.0)
     bl  = ((nose_x - tail_x)**2 + mm(TAIL_Z - NOSE_Z)**2) ** 0.5
     bcx = (nose_x + tail_x) / 2.0

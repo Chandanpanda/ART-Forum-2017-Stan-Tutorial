@@ -54,7 +54,8 @@ def main():
     rb.fingers(True); rb.gate(False)
 
     dbid = [mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "disc%d" % i) for i in range(3)]
-    mission = mission_agent_a(rb, Field.LAB_HOLE_X, mjcf.LAB_HOLE_Y, CHUTE_OFFSET)
+    mission = mission_agent_a(rb, Field.LAB_HOLE_X, mjcf.LAB_HOLE_Y, CHUTE_OFFSET,
+                              clock=lambda: d.time)
 
     frames, renderer = [], None
     if a.video:
@@ -73,7 +74,12 @@ def main():
     t0, done, k = time.time(), False, 0
     wall0 = time.perf_counter()
     settle = 2500      # let the last release settle before the referee judges
+    MATCH = 120.0      # rules g.1 -- what is not posted by then does not count
+    at_buzzer = None
     while d.time < a.timeout:
+        if at_buzzer is None and d.time >= MATCH:
+            at_buzzer = [(d.xpos[b][0]*1000, d.xpos[b][1]*1000, d.xpos[b][2]*1000)
+                         for b in dbid]
         if k % CTRL_DECIM == 0 and not done:
             try: next(mission)
             except StopIteration:
@@ -109,6 +115,17 @@ def main():
         print("  %-22s %+4d" % (("disc %d: %s" % (i, what)) if i >= 0 else what, p))
     print("  %-22s %+4d   (sim %.1f s in %.1f s wall clock)"
           % ("TOTAL", pts, d.time, time.time()-t0))
+    # The match is 120 s (rules g.1).  Anything not posted by then does not count,
+    # so state the verdict rather than leaving it implicit in the timings.
+    print("  %-22s %s   (%.1f s of 120 s)"
+          % ("match budget", "WITHIN" if d.time <= MATCH else
+             "OVER by %.0f s" % (d.time - MATCH), d.time))
+    if at_buzzer is not None:
+        # The score that would actually be awarded.  A run that finishes at
+        # T+160 does not score what it finished with -- it scores whatever was
+        # on the field when the 2 minutes ran out.
+        bpts, _ = referee.score_discs(at_buzzer)
+        print("  %-22s %+4d   <-- THE SCORE THAT COUNTS" % ("AT THE BUZZER", bpts))
     if frames:
         out = os.path.join(os.path.dirname(__file__), "..", "out")
         os.makedirs(out, exist_ok=True)

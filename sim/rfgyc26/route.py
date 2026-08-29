@@ -178,6 +178,15 @@ def nearest_pivot(hole_x, hole_y):
     # oblique).  Only the far hole is clearly better served from the east.
     return PIVOT_E if hole_x > 650.0 else PIVOT_W
 
+def reseat(rb, cycles=1):
+    """One stroke of the positive-feed plunger and back."""
+    for _ in range(cycles):
+        rb.feed(True)
+        yield from wait(rb, 0.7)
+        rb.feed(False)
+        yield from wait(rb, 0.5)
+
+
 def settle_stack(rb, cycles=2):
     """Seat the magazine with the positive-feed paddle.
 
@@ -199,7 +208,7 @@ def settle_stack(rb, cycles=2):
     yield from wait(rb, 0.6)
 
 
-def dock_and_post(rb, hole_x, hole_y, chute_offset, stroke=0.28, log=print):
+def dock_and_post(rb, hole_x, hole_y, chute_offset, stroke=0.28, aboard=0, log=print):
     """Reverse the chute onto a lab hole along a straight line, then meter one disc.
 
     F10: with a 185 mm swept radius there is NO legal pivot between the south wall
@@ -235,15 +244,20 @@ def dock_and_post(rb, hole_x, hole_y, chute_offset, stroke=0.28, log=print):
     cx, cy = rb.chute_xy(chute_offset)
     log("      docked: chute(%.1f,%.1f) vs hole(%.1f,%.1f) err %.1f mm"
         % (cx, cy, hole_x, hole_y, np.hypot(cx-hole_x, cy-hole_y)))
-    rb.feed(True)                     # seat the stack before metering
-    yield from wait(rb, 0.7)
-    rb.feed(False)
-    yield from wait(rb, 0.5)
+    yield from reseat(rb)             # seat the stack before metering
     # Escapement, sequenced (F19).  The retainer takes the column at the joint
     # above the bottom piece so the shelf releases exactly one; with only one
     # piece left there is no joint to enter and the retainer stays parked -- the
     # bore rangefinder is what tells the robot which case it is in.
     n = rb.mag_count()
+    if n == 0 and aboard:
+        # A perched piece is INVISIBLE to the bore ray: it sits off-axis and the
+        # beam passes it.  "Empty" while pieces are still aboard therefore means
+        # jammed, not empty -- ram it and look again rather than stroking the
+        # escapement at nothing.
+        log("      bore reads empty with %d still aboard -- re-seating" % aboard)
+        yield from reseat(rb, cycles=2)
+        n = rb.mag_count()
     log("      magazine holds %d" % n)
     rb.blade(n >= 2)
     yield from wait(rb, 0.5)
@@ -275,7 +289,8 @@ def mission_agent_a(rb, holes, hole_y, chute_offset, log=print):
     yield from guard(back_to(rb, PIVOT_W[0], PIVOT_W[1]), 25.0)
     for i, hx in enumerate(holes):
         log("    hole %d (x=%.1f)" % (i+1, hx))
-        yield from dock_and_post(rb, hx, hole_y, chute_offset, log=log)
+        yield from dock_and_post(rb, hx, hole_y, chute_offset,
+                                 aboard=len(holes) - i, log=log)
     log("  parking clear of the lab")
     yield from guard(pursue(rb, 900.0, 200.0, speed=220.0, tol=40.0), 20.0)
     rb.stop()

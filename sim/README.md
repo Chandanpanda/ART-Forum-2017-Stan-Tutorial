@@ -36,6 +36,36 @@ Optional, for video: `pip install "imageio[ffmpeg]"` then add `--video`.
 
 ---
 
+### Watching it in the viewer
+
+```
+python scripts\demo_pick_place.py --gui              # paced to real time
+python scripts\demo_pick_place.py --gui --speed 0.25 # quarter speed
+python scripts\demo_pick_place.py --speed 0          # headless, as fast as it goes
+```
+
+`--gui` uses MuJoCo's `launch_passive`, which hands the physics loop to the
+script — so the viewer does no pacing of its own and, unthrottled, the run is
+about 3x real time. `--speed` sleeps to match a wall-clock rate; it is a ceiling,
+not a floor, and it does not touch the physics (same seed, same score).
+
+In the viewer: **left-drag orbits, right-drag pans, scroll zooms.** `[` and `]`
+cycle the fixed cameras — `field` (the whole 2000x1000 arena), `lab`, `quar`, and
+`A_chase` which follows the robot; `Esc` returns to the free camera and `Tab`
+toggles the side panel. The free camera opens framing the whole field, at which
+distance the robot reads as a single box — zoom in or press `]`.
+
+### Auditing what is actually simulated
+
+```
+python scripts\model_report.py
+```
+
+Prints the compiled model — every joint, actuator, sensor and collision geom the
+solver really integrates — and then lists the seven places the model is a
+**stand-in** rather than a simulation. Read that second list before quoting any
+number from here.
+
 ## 2. Status — what actually works
 
 | | |
@@ -50,19 +80,29 @@ Optional, for video: `pip install "imageio[ffmpeg]"` then add `--video`.
 | **Place: all three lab holes** | **works — 3 of 3, +45**, dock error **0.0 mm** |
 | Closed-loop chute docking, in-mission | **works** — **1.5–2.1 mm at all three holes** |
 | Referee scoring (Senior sample rules) | **works** |
-| **Full mission end to end** | **+50 — all three samples placed — in 7 of 8 randomised matches** |
+| **Full mission end to end** | **+50 — all three samples placed — in 11 of 12 randomised matches** |
 
 ```
-seed      1    2    3    4    5    6    7    8
-score   +50  +50  +50  +50  +50  +27  +50  +50      (+50 = all three placed)
-time    114  110  109  128  114  168  110  109  s     (match budget is generous)
+seed      1    2    3    4    5    6    7    8    9   10   11   12
+score   +50  +50  +50  +50  +50  +27  +50  +50  +50  +50  +50  +50
+time    114  110  109  128  114  168  110  109  119  112  107  152  s
 ```
 
-Seed 6 posts two of three: the piece released at hole 1 misses the slot and is
-then swept off the plate as the robot departs. Docking was 1.5 mm there, so this
-is release scatter, not aim — and F21 explains why 2 mm is the entire budget.
+**A given seed is not portable, and that matters more than the tally.** The same
+commit that scores +50 on seed 1 here scores +27 on a Windows machine, and seed 6
+fails here but not there. Multi-contact rigid-body physics is chaotic: a
+different BLAS or a different rounding order moves a piece a fraction of a
+millimetre, and 100 s later that is the difference between a seated stack and one
+piece perched on the collar. Read the *rate* — roughly one match in ten loses a
+sample — not any individual seed. The failure is always the same one: a piece
+perches after the escapement hands the column back down, the bore ray then misses
+it (a perched piece is off-axis), and it never meters.
 
-## 3. Findings — things the simulator discovered about the design
+An obvious-looking fix — deepen the plunger stroke and re-seat after every
+release — made it **worse**, 3 of 12. Do not re-apply it without measuring:
+pressing a full column at 4 N disturbs more than it settles.
+
+## 3. Findings — things the simulator discovered## 3. Findings — things the simulator discovered about the design
 
 These came out of getting the model to run, and they are the real value here.
 

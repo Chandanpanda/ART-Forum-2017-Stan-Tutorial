@@ -570,10 +570,20 @@ def contact_pairs(agent="A", n_discs=3):
     return "\n".join(out)
 
 
+# Fixed viewpoints.  The free camera opens looking at the whole 2000x1000 field,
+# which from a distance makes the robot read as a single box -- press [ or ] in
+# the viewer to cycle onto these instead.
+FIELD_CAMS = """
+    <camera name="field"  pos="1.00 -0.55 1.75" xyaxes="1 0 0 0 1 0.75"/>
+    <camera name="lab"    pos="0.57 -0.10 0.55" xyaxes="1 0 0 0 0.7 0.7"/>
+    <camera name="quar"   pos="0.20 -0.25 0.45" xyaxes="1 0 0 0 0.6 0.8"/>
+"""
+
+
 def scene(name, bodies, actuators="", sensors="", timestep=0.001, contacts=""):
     return f"""<mujoco model="{name}">
 {preamble(timestep)}
-  <worldbody>
+  <worldbody>{FIELD_CAMS}
 {chr(10).join('    ' + b for b in bodies)}
   </worldbody>
 {contacts}

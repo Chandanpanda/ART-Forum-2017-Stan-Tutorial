@@ -52,14 +52,28 @@ print("          mu %.2f vs tan(%.0f) = %.3f  ->  %.1fx margin  [spec 3.2 claims
 # --- 2. accumulation against a closed gate ----------------------------------
 m = mujoco.MjModel.from_xml_string(rig(4)); d = mujoco.MjData(m)
 gate = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_GEOM, "gate")
-for _ in range(16000): mujoco.mj_step(m, d)     # 8 s
-f6, tot = np.zeros(6), 0.0
-for k in range(d.ncon):
-    c = d.contact[k]
-    if gate in (c.geom1, c.geom2):
-        mujoco.mj_contactForce(m, d, k, f6); tot += abs(f6[0])
+for _ in range(16000): mujoco.mj_step(m, d)     # 8 s to settle
+
+def gate_force():
+    f6, tot = np.zeros(6), 0.0
+    for k in range(d.ncon):
+        c = d.contact[k]
+        if gate in (c.geom1, c.geom2):
+            mujoco.mj_contactForce(m, d, k, f6); tot += abs(f6[0])
+    return tot
+
+# AVERAGE over 2 s, do not sample one instant.  A queue of four pieces on a
+# moving belt never goes fully static -- it creeps and re-seats -- so a single
+# reading lands anywhere between the settled value and roughly twice it, and it
+# lands differently on different machines.  Averaging makes the number mean
+# something and makes it reproducible.
+samples = []
+for _ in range(4000):
+    mujoco.mj_step(m, d)
+    samples.append(gate_force())
+samples = np.array(samples)
 pred = MU * MASS * 9.81 * 4
-print("accum   : %.4f N on the closed gate, %.4f N predicted by mu*m*g*4"
-      % (tot, pred))
+print("accum   : %.4f N on the closed gate (2 s mean; %.4f-%.4f), %.4f N predicted"
+      " by mu*m*g*4" % (samples.mean(), samples.min(), samples.max(), pred))
 print("          [spec 3.2 quotes ~0.12 N for four pieces]")
 print("          passive: no actuator and no sensor holds this queue")

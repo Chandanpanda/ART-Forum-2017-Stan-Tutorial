@@ -44,7 +44,7 @@ Optional, for video: `pip install "imageio[ffmpeg]"` then add `--video`.
 | 11 geometry assertions | **all pass** |
 | Drive: straight line / turn in place | **works** — 0.9 % slip; 70 % turn efficiency |
 | Conveyor carry on the incline | **works** — 59.2 mm/s against a 60 mm/s belt |
-| Passive accumulation at a closed gate | **works** — 0.134 N vs 0.118 N predicted |
+| Passive accumulation at a closed gate | **works** — 0.146 N mean vs 0.118 N predicted, but peaking at **0.47 N** (F23) |
 | **Pick: 3 samples off the floor into the magazine** | **works — 24 of 24** over 8 randomised matches, all three *seated* every time |
 | **Magazine escapement: one piece per stroke** | **works — 3 of 3**; the bore rangefinder reads 3 → 2 → 1 |
 | **Place: all three lab holes** | **works — 3 of 3, +45**, dock error **0.0 mm** |
@@ -287,6 +287,20 @@ capture went from 22/24 to **24/24**, with all three seated in every seed.
 One trap with this: the belt face is at Za 0.4 that far forward, so a wall foot
 1 mm below it lands *under the floor plane*. These are robot-class geoms, so they
 plough — every mission ran to the 240 s timeout until the foot was clamped.
+
+**F23. The queue against a closed gate never goes static, and the peak load is
+4× the mean.** The gate force was being read at a single instant after 8 s. Over
+the following 2 s it actually ranges **0.000 to 0.468 N**, mean 0.146 — the
+pieces creep on the moving belt, unload the gate completely, then re-seat against
+it. A one-instant reading therefore lands anywhere in that band and lands
+differently on different machines, which is exactly what happened: 0.134 N here
+and 0.219 N on the same commit under Windows. The demo now averages over 2 s and
+prints the range.
+
+The mean is close to the µ·m·g·4 = 0.118 N the spec quotes, so the accumulation
+claim stands. **Size the gate servo for the peak, not the mean** — 0.47 N against
+a 37 mm shelf is ~0.017 N·m of holding torque, still nothing for an MG90S, but it
+is 4× what the spec's figure implies and it arrives as an impact, not a load.
 
 ---
 

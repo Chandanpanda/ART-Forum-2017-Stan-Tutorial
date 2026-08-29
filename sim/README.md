@@ -75,9 +75,9 @@ number from here.
 
 ## 2. Status — where this actually stands
 
-**9 of 12 randomised matches place all three samples**, into a 6 mm laboratory
-that satisfies the rules, and **no match now scores below +27** — the timeouts
-and the dropped-sample runs are both gone.
+**The quarantine is sealed in 10 of 12 randomised matches, inside the 120 s
+clock**, and the mean score at the buzzer is **+69** — against +44 for the
+sample task alone, and +27 for the run that started this round of work.
 
 | | |
 |---|---|
@@ -86,44 +86,32 @@ and the dropped-sample runs are both gone.
 | Conveyor carry on the incline | **works** — 59.2 mm/s against a 60 mm/s belt |
 | **Pick: samples off the floor into the magazine** | **works — 24 of 24**, all three seated |
 | **Magazine escapement: one piece per stroke** | **works** — in the mission, not just on the bench |
-| **Dock all three slots, 6 mm laboratory** | **works — 0.3–2.1 mm**, 8–19 s each |
-| **All three samples placed at the buzzer** | **9 of 12** |
-| Full mission inside 120 s | **7 of 12** |
+| **Dock a slot in a 6 mm laboratory** | **works — 0.7–2.1 mm**, ~15 s each |
+| **Seal the quarantine with both beams** | **works — 10 of 12**, +70 |
+| **Full match inside 120 s** | **11 of 12** |
 
 ```
-seed          1    2    3    4    5    6    7    8    9   10   11   12
-at buzzer   +50  +50  +50  +27  +50  +50  +50  +27  +50  +50  +50  +27
-time (s)    111  140  112  120  126  114   91  171  109  111  124  123
-mean at the buzzer  +44        worst case  +27        timeouts  none
+seed            1    2    3    4    5    6    7    8    9   10   11   12
+samples        +9   +9   -9   +9  +27   +9   +9   +9   +9   +9   +9   +9
+beams         +70  +70   +0  +70  +70  +25  +70  +70  +70  +70  +70  +70
+AT BUZZER     +79  +79   -9  +79  +97  +34  +79  +79  +79  +79  +79  +79
+finish (s)    108  110    -   98  113   97  106  100  102  100  115  102
+mean at the buzzer  +69.4      sealed 10/12      over the clock  1/12
 ```
 
-Progress over the last three rounds, same twelve seeds:
+Where this came from, same twelve seeds:
 
-| | all three placed | mean | worst | timeouts |
-|---|---|---|---|---|
-| before the docking work | 4/12 | +23 | −9 | 4 |
-| after F39/F40 (docking) | 10/12 | +41 | +9 | 1 |
-| **after F41 (escapement)** | **9/12** | **+44** | **+27** | **0** |
+| | mean at buzzer | sealed | over 120 s |
+|---|---|---|---|
+| samples only, before this round | +44 | — | 5/12 |
+| samples only, after the clock work | +37 | — | 2/12 |
+| **samples + beams** | **+69** | **10/12** | **1/12** |
 
-The +50 count moved by one seed either way — that is chaos, not signal. What
-moved for real is the **floor**: every match now lands at least two samples, and
-nothing runs out of time.
-
-### The beam task, in one paragraph
-
-The 70-point task — seal the quarantine with two beams — now works: **+70,
-both beams standing free on their walls with the T-joint closed**, from
-`scripts/demo_beams.py`. Getting there needed six changes to the Rev C design,
-and every one of them came out of a geometric fact the drawings do not show
-(F44–F50 below). The short version: the pockets cannot have outboard walls,
-the beams cannot be dragged, the release cannot be a beam-length withdrawal,
-the escapement retainer was parked inside a pocket, and there is exactly one
-order and one pair of approach lanes that the field allows.
-
-**The two tasks do not both fit in 120 s.** The samples take about 70 s and the
-seal about 52 s from the laboratory. So the route runs the laboratory on a
-budget and stops docking when the beams need the clock — spec §9's own rule,
-that the 70-point task must never die downstream of the 50-point one.
+**Read the sample column honestly: it is one slot, not three.** The two tasks do
+not both fit in 120 s, so the laboratory runs on a budget and stops when the
+beams need the clock (F51). One posted sample and a sealed corner is +79; three
+samples and no seal is +50. Seed 3 is the one match that still fails outright —
+it loses the magazine early and then has nothing to post.
 
 ## 3. Findings — things the simulator discovered about the design
 

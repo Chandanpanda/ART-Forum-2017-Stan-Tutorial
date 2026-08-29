@@ -74,10 +74,9 @@ number from here.
 
 ## 2. Status — where this actually stands
 
-**The robot now posts into a laboratory the rules would accept.** That is new.
-Every earlier result was against a 1 mm decal in which a 5 mm sample cannot sit
-(F32); the laboratory is now 6 mm, the samples drop right inside it, and the tail
-reaches over it instead of trying to climb it.
+**10 of 12 randomised matches now place all three samples inside the 120 s
+match**, into a 6 mm laboratory that satisfies the rules. That is up from 4 of 12
+and a mean of +23 before the docking work.
 
 | | |
 |---|---|
@@ -85,43 +84,39 @@ reaches over it instead of trying to climb it.
 | 13 geometry assertions | **all pass** |
 | Conveyor carry on the incline | **works** — 59.2 mm/s against a 60 mm/s belt |
 | **Pick: samples off the floor into the magazine** | **works — 24 of 24**, all three seated |
-| **Magazine escapement: one piece per stroke** | **works — 3 of 3** |
-| **Dock and post all three slots, 6 mm laboratory** | **works — 3 of 3, +50**, 1.9–2.6 mm, 40 s |
-| **Full mission, best case** | **+50 at the buzzer**, 4 of 12 seeds |
-| Full mission, typical | **+9 to +27** — docking convergence is the variance |
+| **Magazine escapement: one piece per stroke** | **works — 3 of 3** on the bench |
+| **Dock all three slots, 6 mm laboratory** | **works — 1.4–2.0 mm**, 8–19 s each |
+| **Full mission, all three placed at the buzzer** | **10 of 12** |
+| Full mission inside 120 s | **8 of 12** |
 
 ```
 seed          1    2    3    4    5    6    7    8    9   10   11   12
-at buzzer   +50  +27   +9   +9   +9  +50   -9  +50   +9   -9  +50  +27
-time (s)    127  159  240  231  173  136  240  128  240  240  142  120
+at buzzer    +9  +50  +50  +50  +50  +50  +50   +9  +50  +50  +50  +27
+time (s)    240  141   93  110  110  114  113  109  115  112  126  129
+mean at the buzzer  +41
 ```
 
-**4 of 12 score +50 at the buzzer; 4 of 12 run to the 240 s cut-off.** It is a
-bimodal result, not a noisy one: a dock either converges in ~15 s or it never
-converges and spends every pass hunting. Mean at the buzzer is +23.
+Two changes did it, both about the drive being a pair of steppers rather than a
+servo:
 
-Three changes got the posting to work at all against a real laboratory, and one
-of them retires a finding that had shaped the whole route:
+* **Real clearance for the rear ball transfers** (F39). At Xa 90 the arithmetic
+  said 14 mm of margin; the *measured* ball surface sat at Y 360 — exactly the
+  laboratory edge. So a dock either grazed it or caught on it, and catching froze
+  the robot 5.5 mm short with the terminal commanding 11 mm/s into a 13 N contact
+  for as long as its guard allowed. That is the whole bimodal 15-s-or-never
+  result. Xa 115 buys the margin the arithmetic thought it had.
+* **Creep and settle in the last 8 mm** (F40). The terminal used to servo
+  continuously; commanding 5 mm/s still left the chassis coasting at 13, so it
+  hunted and never landed inside 2 mm. Steppers are position devices — move in
+  0.18 s bursts, stop, re-measure on a stationary robot. Applied across the whole
+  endgame it spends 60% of the time stopped and blows the clock; applied to the
+  last 8 mm only, it converges.
 
-* **The tail overhangs instead of climbing** (F31/F33). Rear ball transfers moved
-  from Xa 40 to Xa 90, shell stepped up to 14 mm aft of them. A Ø20 ball cannot
-  climb 6 mm — it needs 2.25× the supported weight as push — so the robot must
-  reach over the laboratory, and it now does.
-* **Pivot directly south of each slot** (F36, retires F10). The corridor south of
-  the laboratory *is* wide enough to turn in: measured clean at y ≥ 190. F10 said
-  it was not, computing the swept circle against the chassis — but the chassis
-  floor is at Za 6 and the laboratory is 6 mm tall, so the corners pass over it.
-  That makes every approach square instead of diagonal, which is what keeps the
-  ball transfers off the edge.
-* **Let the chassis settle before the terminal** (F37). One `wait(0.4)`. Docking
-  closes on the chute, 106 mm behind the axle, where a residual yaw rate is
-  1.9 mm of chute movement per degree. Starting the terminal while the robot was
-  still settling turned a 15 s dock into three failed 20 s passes: seed 1 went
-  from **227 s to 125 s** on that line alone.
-
-What is left is docking *convergence*, not accuracy: the good seeds dock at
-1.9–2.6 mm and finish inside the match, the bad ones never converge and burn
-every pass. See F38 for why the slot-probe datum does not fix this in simulation.
+The remaining two failures are not docking. At hole 2 the escapement can release
+**two** pieces onto the plate and then trap one under the gate at 3 N, dragging
+it — the departure stalls against its own sample. The magazine meters perfectly
+on the bench (3 of 3) but not while the robot is pitched over the laboratory.
+That is the next thing.
 
 ## 3. Findings — things the simulator discovered about the design
 
@@ -532,6 +527,34 @@ that drift is real and the datum has something to recover. That is the honest
 next step, and it is a bigger job than the datum itself: `route.py` reads true
 pose throughout.
 
+**F39. The rear ball transfers had zero margin, and that was the bimodal dock.**
+With them at Xa 90 the geometry said the ball would sit 14 mm south of the
+laboratory edge at the dock point. Measured, its surface sat at Y 360 — on the
+edge. So each dock was a coin flip: graze it and converge in 15 s, catch it and
+freeze. The frozen state is unmistakable once you look at it —
+
+```
+fore=-5.5  left=2.6  herr=-0.3   v=-11.0  w=-8.3   |vel|=0.09
+A_ball3/lab_s 13 N
+```
+
+— identical every tick, the controller commanding 11 mm/s into a 13 N contact
+until its guard expired, then doing it twice more. Moving the balls to Xa 115
+gives the margin the arithmetic assumed and the failure disappears. **Check
+clearances by measuring a geom's world position, not by adding up offsets.**
+
+**F40. Steppers are position devices; do not servo them continuously into a 2 mm
+budget.** The terminal commanded `v = 2·fore` and the chassis coasted straight
+past: at `fore = −2.8` it asked for 5.6 mm/s while the robot was still moving at
+13. It hunted around the target and never landed. Creeping instead — 0.18 s of
+motion, 0.26 s stopped, error re-measured on a stationary robot — converges, and
+the dock is only accepted when the chassis is actually stopped (`|v| < 3 mm/s`),
+so it cannot book an error it is about to move away from.
+
+Scope matters as much as the idea: applied across the whole endgame the duty
+cycle spends 60% of the time stopped, which fixed the hunting seeds and pushed
+the marginal ones over the match clock. Restricted to the last 8 mm it does both.
+
 ---
 
 ## 4. Modelling decisions you should know about
@@ -589,12 +612,12 @@ drawings.
 
 ## 7. Next steps, in the order I would do them
 
-1. **Make docking converge.** The good seeds dock at 1.9–2.6 mm in 15 s; the bad
-   ones never converge and burn three passes. That single behaviour is the whole
-   spread between +50 and +9. It is a controller problem, not a geometry one.
-2. **Then give the robot odometry instead of ground truth** (F38), and wire in the
-   slot-probe datum against it. Until the robot can be wrong about where it is,
-   the datum has nothing to correct and its value cannot be measured.
+1. **Meter reliably while pitched over the laboratory.** The escapement is 3 of 3
+   on the bench and still drops two pieces at hole 2 in the mission, then traps
+   one under the gate and drags it. That is the last two failing seeds.
+2. **Then odometry instead of ground truth** (F38), and the slot-probe datum on
+   top of it. Until the robot can be wrong about where it is, the datum has
+   nothing to correct.
 3. **Bench-test the intake before ordering the belt** (F25). A knife edge at
    ≤5 mm picks up; a Ø16 roller never does.
 4. **Measure turn efficiency on the real robot** and set

@@ -134,7 +134,13 @@ class Chassis:
     # sample everywhere -- it changes the support polygon the docking controller
     # was tuned against.  It is parameterised, documented and NOT adopted: the
     # move has to come with a docking controller that expects it.
-    BALL_REAR_X     = 90.0             # overhangs the lab instead of climbing it
+    # 115, not 90.  At 90 the arithmetic said 14 mm of margin but the MEASURED
+    # ball surface sits at Y 360 at the dock point -- exactly the laboratory edge
+    # -- so a dock either grazes it or catches on it, and catching stalls the
+    # robot 5.5 mm short with the terminal controller commanding 11 mm/s into a
+    # 13 N contact forever.  That is the bimodal dock: 15 s or never.  Every
+    # 1 mm here is 1 mm of margin.
+    BALL_REAR_X     = 115.0            # overhangs the lab instead of climbing it
     BALL_FRONT_X    = 245.0
     BALL_Y          = 80.0
     GROUND_CLEAR    = 6.0
@@ -152,7 +158,11 @@ class Chassis:
     # DIAGONAL -- and on a diagonal the balls cross the edge anyway and jam at
     # 20 N.  A O20 ball cannot climb 6 mm: cos a = (10-6)/10 needs 2.25x the
     # supported weight as push.  A 20 deg wedge needs 0.36x, which the drive has.
-    SKID_LEN        = 40.0             # Xa run, ahead of the rear balls
+    # SKID_LEN 0: the skid does not work and is not built.  A ramp only climbs a
+    # step if its leading edge is ABOVE the step; below it, the two vertical
+    # faces meet and jam, which is what a 6 mm laboratory does to it.  Kept as a
+    # parameter so the finding is not re-discovered.
+    SKID_LEN        = 0.0              # Xa run, ahead of the rear balls
     SKID_Z0         = 2.0              # leading edge, just clear of the floor
     SKID_W          = 26.0             # width, straddling each ball
     TAIL_X          = 90.0             # everything aft of this is stepped up

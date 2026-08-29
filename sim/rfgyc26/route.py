@@ -130,7 +130,11 @@ def align_reverse(rb, chute_offset, tx, ty, heading, tol=2.5, max_ticks=900):
     chassis and walks the chute several mm.  Disc-in-hole radial clearance is
     only 2 mm, so the terminal has to close on the chute's actual position.
     """
+    import os
+    _dbg = os.environ.get("DOCK_DEBUG")
+    _n = 0
     for _ in range(max_ticks):
+        _n += 1
         px, py, th = rb.pose
         cx, cy = rb.chute_xy(chute_offset)
         t = np.radians(th)
@@ -138,7 +142,10 @@ def align_reverse(rb, chute_offset, tx, ty, heading, tol=2.5, max_ticks=900):
         ex, ey = tx - cx, ty - cy
         fore =  ex*np.cos(t) + ey*np.sin(t)
         left = -ex*np.sin(t) + ey*np.cos(t)
-        if abs(fore) < tol and abs(left) < tol:
+        # Only accept the dock when the chassis is actually STOPPED.  Accepting
+        # mid-coast books an error the robot is about to move away from.
+        if abs(fore) < tol and abs(left) < tol and \
+                np.linalg.norm(rb.d.qvel[:2])*1000.0 < 3.0:
             rb.stop(); return True
         herr = _wrap(heading - th)
         # Two regimes.  Coarse: reverse fast holding the commanded heading.
@@ -155,8 +162,39 @@ def align_reverse(rb, chute_offset, tx, ty, heading, tol=2.5, max_ticks=900):
             cap = 140.0 if abs(fore) > 60.0 else 60.0
             v = np.clip(fore*2.5, -cap, cap)
         else:
+            # CREEP AND SETTLE, not continuous control.  The drive is a pair of
+            # steppers -- position devices -- and the chassis carries enough
+            # momentum that commanding 5 mm/s still leaves it coasting at 13,
+            # so a continuous terminal hunts around the target and never lands
+            # inside 2 mm.  Move in short bursts and let it stop between them:
+            # the error is then measured on a stationary robot, which is the
+            # only way a 2 mm budget is meetable.
             w = np.clip(-3.2*left, -10, 10)
             v = np.clip(fore*2.0, -35, 35) if abs(fore) > tol else 0.0
+            # Creep only in the LAST few millimetres.  Applied across the whole
+            # endgame the duty cycle spends 60% of the time stopped, which fixed
+            # the seeds that were hunting and pushed the marginal ones over the
+            # match clock instead.
+            if abs(fore) < 8.0 and abs(left) < 8.0 and _n % 16 >= 9:
+                v, w = 0.0, 0.0
+        if _dbg and _n % 25 == 0:
+            import mujoco as _mj, numpy as _np
+            hits, _f = {}, _np.zeros(6)
+            for _c in range(rb.d.ncon):
+                _co = rb.d.contact[_c]
+                n1 = _mj.mj_id2name(rb.m, _mj.mjtObj.mjOBJ_GEOM, _co.geom1) or ""
+                n2 = _mj.mj_id2name(rb.m, _mj.mjtObj.mjOBJ_GEOM, _co.geom2) or ""
+                for a, b in ((n1, n2), (n2, n1)):
+                    if a.startswith("A_") and not b.startswith("A_") and b != "floor":
+                        _mj.mj_contactForce(rb.m, rb.d, _c, _f)
+                        hits[(a, b)] = max(hits.get((a, b), 0.0), abs(_f[0]))
+            _b3 = _mj.mj_name2id(rb.m, _mj.mjtObj.mjOBJ_GEOM, "A_ball3")
+            _by = rb.d.geom_xpos[_b3][1]*1000 if _b3 >= 0 else 0.0
+            print("        [dock] fore=%7.1f left=%7.1f herr=%6.1f v=%6.1f w=%6.1f "
+                  "|vel|=%5.2f ball3_y=%6.1f  %s"
+                  % (fore, left, herr, v, w, _np.linalg.norm(rb.d.qvel[:2])*1000, _by,
+                     ", ".join("%s/%s %.0fN" % (a, b, f) for (a, b), f in
+                               sorted(hits.items(), key=lambda kv: -kv[1])[:3]) or "-"))
         rb.drive(v, w)
         yield
     rb.stop()
@@ -225,6 +263,9 @@ def settle_stack(rb, cycles=2):
         yield from guard(drive_straight(rb, -22.0, speed=160.0), 3.0)
     rb.feed(False)
     yield from wait(rb, 0.6)
+
+
+import os
 
 
 def dock_and_post(rb, hole_x, hole_y, chute_offset, stroke=0.28, aboard=0,

@@ -14,7 +14,8 @@ from rfgyc26 import mjcf
 JT = {0: "free", 1: "ball", 2: "slide", 3: "hinge"}
 GT = {0: "plane", 1: "hfield", 2: "sphere", 3: "capsule", 4: "ellipsoid",
       5: "cylinder", 6: "box", 7: "mesh"}
-m = mujoco.MjModel.from_xml_string(mjcf.scene_pick_place([(300, 130), (240, 133), (170, 128)]))
+m = mujoco.MjModel.from_xml_string(mjcf.scene_pick_place(
+    [(300, 130), (240, 133), (170, 128)], with_beams=True))
 nm = lambda t, i: mujoco.mj_id2name(m, t, i)
 
 print("RFGYC'26 Agent A -- compiled model inventory")
@@ -96,6 +97,19 @@ simulator is NOT proving what it looks like it is proving.
 
 7. NO VISION.  Agent A's mission does not need the camera, so none is simulated.
    Agent B's triage will.
+
+8. THE CARRIED BEAMS ARE WELDED TO THE CHASSIS, and released the instant their
+   cradle drops (F50).  That is a stand-in for a clamp: the real cradle lifts
+   the beam and wedges it against the pocket's inner wall.  Left as a free body
+   in its channel a 200 g beam slops about and its inertia arrives late, which
+   took the laboratory dock from 1.5 mm in 14 s to 38 mm in 87 s.  It still
+   COLLIDES with the field while welded, so a carried beam can still hit a
+   wall -- what the weld removes is the slop, not the obstacle.
+
+9. THE CRADLE SHELVES AND LIPS ARE ON THE BELT'S COLLISION BIT, not the
+   floor's, so they can sit below the field plane when lowered.  Same trick as
+   the scoop.  A cradle that stops level with the floor leaves the placed beam
+   resting half on its shelf, and the robot tows it away as it leaves.
 """)
 print("Everything else -- the conveyor, chute, collar, hold-down, escapement,")
 print("feed plunger, ball transfers, wheels, fingers -- is rigid-body contact")

@@ -23,7 +23,8 @@ python scripts\check_geometry.py     # 1. no physics: derived geometry + asserti
 python scripts\demo_belt.py          # 2. the conveyor, isolated (fast, ~10 s)
 python scripts\demo_capture.py       # 3. the "pick" half: 3 discs -> magazine
 python scripts\demo_post.py          # 4. the "place" half: gate -> 3 lab holes
-python scripts\demo_pick_place.py    # 5. the full Agent A mission (~60 s wall clock)
+python scripts\demo_beams.py         # 5. the beam phase alone: seal the quarantine
+python scripts\demo_pick_place.py    # 6. the full Agent A match (~2 min wall clock)
 
 python scripts\demo_pick_place.py --gui        # interactive viewer
 python scripts\demo_pick_place.py --seed 7     # different random disc placement
@@ -81,7 +82,7 @@ and the dropped-sample runs are both gone.
 | | |
 |---|---|
 | Model generation from one parameter file | **works** |
-| 13 geometry assertions | **all pass** |
+| 23 geometry assertions | **all pass** |
 | Conveyor carry on the incline | **works** — 59.2 mm/s against a 60 mm/s belt |
 | **Pick: samples off the floor into the magazine** | **works — 24 of 24**, all three seated |
 | **Magazine escapement: one piece per stroke** | **works** — in the mission, not just on the bench |
@@ -656,6 +657,17 @@ stop and turn. With the beams aboard the laboratory dock went from 1.5 mm in
 the beam against the inner wall, which is a clamp; modelled as a weld that
 releases when the cradle drops, the dock is unaffected.
 
+**F52. The beam end stops must start ABOVE the laboratory, and this one
+masqueraded as something else entirely.** Built at Za 2 they hang 4 mm into a
+6 mm plate, and the robot ploughs it on every reverse dock: hole 1 went from
+1.4 mm in 15 s to **57 mm in 87 s**. The obvious suspect was the beams' 380 g,
+so the test was a three-way comparison — no beams, beams present but massless,
+beams at full mass — and all three failed *identically*. That is what said the
+cargo was innocent and its pocket hardware was not. A carried beam sits at
+Za 12–72, so a stop spanning 16–52 engages it and still clears the plate.
+The same trap caught the cradle: its shelves and lips are on the belt's
+collision bit, not the floor's, so they can drop below the field plane.
+
 **F51. Both tasks do not fit in 120 s, and the samples are the ones to cut.**
 Samples ≈ 70 s, seal ≈ 52 s. At 50 points against 70, the laboratory is the
 phase that gives way — and the order is forced anyway: the beams seal the
@@ -706,7 +718,8 @@ sim/
     robot.py       Agent A: stepper drive with step-loss, servos, sensors
     route.py       the mission, written as generators; every action time-guarded
     referee.py     Senior scoring for the sample mission
-  scripts/         check_geometry, demo_belt, demo_post, demo_pick_place
+  scripts/         check_geometry, demo_belt, demo_capture, demo_post,
+                   demo_beams, demo_pick_place, model_report
   models/          generated MJCF (regenerated on every run)
 ```
 

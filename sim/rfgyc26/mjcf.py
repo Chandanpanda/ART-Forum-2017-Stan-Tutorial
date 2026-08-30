@@ -359,13 +359,22 @@ def agent_a_body(name="agentA", pose=None, with_beams=False):
                      mm(AgentA.STOP_H), "0.85 0.35 0.20 1", "robot"))
 
     # ---- belt ------------------------------------------------------------
-    # MODELLING DECISION: one continuous conveyor from the scoop tip (top surface
-    # 0.3 BELOW the floor plane, so it wedges under a 5 mm disc) all the way to the
-    # tail roller.  The real machine splits this into a 0.5 shim plus a belt whose
-    # nose sits at Z 17.5, because a O16 roller cannot reach the floor -- but a
-    # PASSIVE shim provably cannot convey the piece across that 65 mm gap (see the
-    # Findings section of the README).  Treating the shim as an extension of the
-    # belt is the simplest faithful stand-in for the sweeper fingers' active stroke.
+    # MODELLING DECISION: one continuous conveyor from the scoop tip to the tail
+    # roller, with its powered face at Chassis.BELT_NOSE_Z.
+    #
+    # THAT IS 3.0 mm, NOT BELOW THE FLOOR.  An earlier version of this model did
+    # run the surface 0.3 mm UNDER the floor plane so it could not miss, and this
+    # comment still said so long after the number changed -- which is worth a
+    # line, because a reader who trusts it concludes the intake is a cheat that
+    # still needs designing.  It is not: 3.0 is a knife-edge nose bar, it is
+    # buildable, and params.Chassis.BELT_NOSE_Z carries the sweep that fixed it
+    # (<=5 mm captures 24/24, >=6 mm captures 0/24 -- the powered edge has to get
+    # under the piece's 2.5 mm half-thickness or it just shunts it along).
+    #
+    # What is still a stand-in is the SHIM: the real machine splits this into a
+    # 0.5 mm shim plus a belt, and a PASSIVE shim provably cannot convey the
+    # piece across the gap (F1).  Treating the shim as an extension of the belt
+    # stands in for whatever actively drives the piece onto it.
     nose_x, tail_x = lx(AgentA.SCOOP_FROM), lx(AgentA.BELT_TAIL_X)
     NOSE_Z, TAIL_Z = Chassis.BELT_NOSE_Z, BELT_TOP_TAIL_A
     inc = degrees_atan(TAIL_Z - NOSE_Z, (nose_x - tail_x) * 1000.0)

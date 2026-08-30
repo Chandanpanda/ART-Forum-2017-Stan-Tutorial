@@ -46,7 +46,7 @@ def main():
     m = mujoco.MjModel.from_xml_string(xml)
     d = mujoco.MjData(m)
     rb = AgentARobot(m, d)
-    rb.fingers(True); rb.gate(False); rb.cradle(1, True); rb.cradle(2, True)
+    rb.fingers(True); rb.gate(False); rb.intake(False); rb.cradle(1, True); rb.cradle(2, True)
     mjcf.set_xray(m, a.xray)
 
     def script():

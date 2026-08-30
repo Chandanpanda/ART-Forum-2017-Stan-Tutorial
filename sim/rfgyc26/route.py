@@ -193,12 +193,17 @@ def sweep_line(rb, y, x_to, speed=140.0, want=None):
     """
     rb.fingers(True)
     yield from guard(turn_to(rb, 180.0), 8.0)
+    rb.intake(True)                     # knife down, brush up to speed (F64)
     while rb.pose[0] > x_to:
         th = rb.pose[2]
         lat = np.clip(1.6*(y - rb.pose[1]), -20, 20)     # hold the line
         rb.drive(speed, np.clip(2.0*_wrap(180.0-th) - lat, -22, 22)); yield
     rb.stop()
+    # Roller keeps spinning through the dwell -- a piece bitten in the last
+    # 100 mm is still on the shim when the wheels stop.  The knife lifts and
+    # the brush stops only once the bore count says delivery is over.
     yield from dwell_until_loaded(rb, want=want)
+    rb.intake(False)
 
 
 def align_reverse(rb, chute_offset, tx, ty, heading, tol=2.5, max_ticks=900):
@@ -1054,8 +1059,16 @@ def seal_quarantine(rb, log=print, clk=None):
     # own south face, so a line 2 mm too far south does not merely open the
     # joint -- it drives the stop through the beam already on the field.
     # The robot knows the number: it stalled there.
+    # ...minus a measured stall-release offset.  The raw estimate assumes the
+    # beam's north face is ON the stop face at the stall, and it is not quite:
+    # by the time the beam is standing free it has settled 2 mm south of that
+    # (measured +2.0 and +2.1 on seeds 1 and 8, F64 -- the heavier nose changed
+    # the stall micro-dynamics and every T-joint opened to 3-4 mm).  Beam 1's
+    # own placement lands within 0.5 mm of its line, so this bias was the whole
+    # T-joint regression.
+    STALL_RELEASE = 2.0
     st2 = getattr(rb, "beam_stall", {}).get(2)
-    n_end = (st2[1] + AgentA.STOP2_X) if st2 else Piece.BEAM2_L
+    n_end = (st2[1] + AgentA.STOP2_X - STALL_RELEASE) if st2 else Piece.BEAM2_L
     line1 = (AgentA.BEAM1_STATION[0], n_end + AgentA.POCKET_Y + Piece.BEAM_W/2.0 + 1.0)
     log("      beam 2's north face read at Y %.1f -> beam 1 line Y %.1f"
         % (n_end, line1[1]))

@@ -23,6 +23,8 @@ class AgentARobot:
         self.a_r   = gid(mujoco.mjtObj.mjOBJ_ACTUATOR, "a_drive_r")
         self.a_fl  = gid(mujoco.mjtObj.mjOBJ_ACTUATOR, "a_finger_l")
         self.a_fr  = gid(mujoco.mjtObj.mjOBJ_ACTUATOR, "a_finger_r")
+        self.a_shim  = gid(mujoco.mjtObj.mjOBJ_ACTUATOR, "a_shim")
+        self.a_roller= gid(mujoco.mjtObj.mjOBJ_ACTUATOR, "a_roller")
         self.a_gate= gid(mujoco.mjtObj.mjOBJ_ACTUATOR, "a_gate")
         self.a_feed= gid(mujoco.mjtObj.mjOBJ_ACTUATOR, "a_feed")
         self.a_blade = gid(mujoco.mjtObj.mjOBJ_ACTUATOR, "a_blade")
@@ -85,6 +87,25 @@ class AgentARobot:
         a = np.radians(AgentA.FINGER_OPEN if opened else AgentA.FINGER_RAKE)
         self.d.ctrl[self.a_fl] = a
         self.d.ctrl[self.a_fr] = -a
+
+    def intake(self, collecting, rpm=None):
+        """Knife down + brush roller spinning, or roller stopped + knife up.
+
+        The knife is servo-lifted SHIM_LIFT deg on every non-collecting leg: pressed
+        to the floor it bulldozes already-placed discs.  Ordering matters on
+        the real machine -- spinning fingers strike a LIFTED knife tip (they
+        clear a lowered one by ~2 mm) -- so the roller stops before the knife
+        lifts and the knife drops before the roller starts; here both commands
+        land the same tick and the model's masks make the order moot.
+        """
+        if self.a_shim < 0:
+            return
+        if collecting:
+            self.d.ctrl[self.a_shim]   = np.radians(AgentA.SHIM_DROOP)
+            self.d.ctrl[self.a_roller] = 2*np.pi*(rpm or AgentA.ROLL_RPM)/60.0
+        else:
+            self.d.ctrl[self.a_roller] = 0.0
+            self.d.ctrl[self.a_shim]   = -np.radians(AgentA.SHIM_LIFT)
 
     def feed(self, down):
         """Positive-feed plunger.  Parked its face is 33 mm above the highest a

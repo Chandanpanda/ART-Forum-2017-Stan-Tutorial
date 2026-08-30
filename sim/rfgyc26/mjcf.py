@@ -359,31 +359,33 @@ def agent_a_body(name="agentA", pose=None, with_beams=False):
                      mm(AgentA.STOP_H), "0.85 0.35 0.20 1", "robot"))
 
     # ---- belt ------------------------------------------------------------
-    # MODELLING DECISION: one continuous conveyor from the scoop tip to the tail
-    # roller, with its powered face at Chassis.BELT_NOSE_Z.
-    #
-    # THAT IS 3.0 mm, NOT BELOW THE FLOOR.  An earlier version of this model did
-    # run the surface 0.3 mm UNDER the floor plane so it could not miss, and this
-    # comment still said so long after the number changed -- which is worth a
-    # line, because a reader who trusts it concludes the intake is a cheat that
-    # still needs designing.  It is not: 3.0 is a knife-edge nose bar, it is
-    # buildable, and params.Chassis.BELT_NOSE_Z carries the sweep that fixed it
-    # (<=5 mm captures 24/24, >=6 mm captures 0/24 -- the powered edge has to get
-    # under the piece's 2.5 mm half-thickness or it just shunts it along).
-    #
-    # What is still a stand-in is the SHIM: the real machine splits this into a
-    # 0.5 mm shim plus a belt, and a PASSIVE shim provably cannot convey the
-    # piece across the gap (F1).  Treating the shim as an extension of the belt
-    # stands in for whatever actively drives the piece onto it.
-    nose_x, tail_x = lx(AgentA.SCOOP_FROM), lx(AgentA.BELT_TAIL_X)
-    NOSE_Z, TAIL_Z = Chassis.BELT_NOSE_Z, BELT_TOP_TAIL_A
+    # THE BELT NOW STARTS WHERE A BELT PHYSICALLY CAN (F64): at its nose
+    # roller, Xa BELT_NOSE_X with its top face at spec 3.1's 17.5.  The old
+    # model ran this box all the way to the scoop tip with its face 3 mm off
+    # the floor and surfacevel doing the conveying -- a powered surface no
+    # mechanism produced, and the simulator's single biggest stand-in (F1).
+    # Engagement and conveyance below the nose now belong to mechanisms that
+    # exist: the knife shim and the brush roller, built further down.
+    # surfacevel on THIS box is honest -- it is exactly what a driven belt's
+    # moving surface is.
+    nose_x, tail_x = lx(AgentA.BELT_NOSE_X), lx(AgentA.BELT_TAIL_X)
+    NOSE_Z, TAIL_Z = Chassis.BELT_TOP_NOSE, BELT_TOP_TAIL_A
     inc = degrees_atan(TAIL_Z - NOSE_Z, (nose_x - tail_x) * 1000.0)
     bl  = ((nose_x - tail_x)**2 + mm(TAIL_Z - NOSE_Z)**2) ** 0.5
     bcx = (nose_x + tail_x) / 2.0
     bcz = mm((NOSE_Z + TAIL_Z) / 2.0 - Chassis.BELT_T / 2.0)
     def belt_top(xa):
-        f = (AgentA.SCOOP_FROM - min(xa, AgentA.SCOOP_FROM)) / \
-            (AgentA.SCOOP_FROM - AgentA.BELT_TAIL_X)
+        """Top of the conveying surface at Xa: shim plane forward of the belt
+        nose, belt plane aft of it, flat aft of the tail (guides and the
+        hold-down strip are built off this)."""
+        if xa > AgentA.SHIM_TIP_X:
+            return AgentA.SHIM_T
+        if xa > AgentA.SHIM_HINGE_X:
+            f = (AgentA.SHIM_TIP_X - xa) / (AgentA.SHIM_TIP_X - AgentA.SHIM_HINGE_X)
+            return AgentA.SHIM_T + f * (AgentA.SHIM_HINGE_Z + AgentA.SHIM_T/2
+                                        - AgentA.SHIM_T)
+        f = (AgentA.BELT_NOSE_X - min(xa, AgentA.BELT_NOSE_X)) / \
+            (AgentA.BELT_NOSE_X - AgentA.BELT_TAIL_X)
         return NOSE_Z + min(f, 1.0) * (TAIL_Z - NOSE_Z)   # flat aft of the tail
     o.append(f'<geom name="A_belt" type="box" contype="2" conaffinity="2" condim="6" '
              f'friction="{Chassis.MU_PIECE} 0.004 0.0002" solref="0.003 1" '
@@ -494,41 +496,108 @@ def agent_a_body(name="agentA", pose=None, with_beams=False):
             f'mass="0" rgba="0.15 0.15 0.17 0.55"/>',
             '  </body>']
 
-    # ---- scoop ------------------------------------------------------------
-    # Height is set by the hinge's lower LIMIT (spring holds it there), not by
-    # floor contact, so it can never dig in.  It keeps the 25 deg up-trip that
-    # lets it skate over the 20 tape and the 3 lab plate in reverse.
-    sx0, sz0 = lx(AgentA.SCOOP_TO), mm(9.5)
-    TIP_Z  = -0.5                                    # top surface, below the floor
-    run    = AgentA.SCOOP_FROM - AgentA.SCOOP_TO
-    rise   = Chassis.BELT_TOP_NOSE - TIP_Z
-    ang    = degrees_atan(rise, run)
-    plate_l= (run**2 + rise**2) ** 0.5
-    midx   = (AgentA.SCOOP_TO + AgentA.SCOOP_FROM)/2.0
-    midz   = (Chassis.BELT_TOP_NOSE + TIP_Z)/2.0 - AgentA.SCOOP_T/2.0
+    # ---- knife shim (F64: engagement) --------------------------------------
+    # A 0.5 spring-steel plate hinged over the belt nose, tip floating on the
+    # field.  The step it presents to a disc is its own thickness plus a O1 tip
+    # lip -- under the 2.5 mm half-thickness bar by construction.  The hinge is
+    # SERVO-driven, not sprung: ctrl +SHIM_DROOP presses the tip onto the floor
+    # (the force cap on the actuator IS the preload), ctrl -SHIM_LIFT swings the
+    # tip 27 mm up for transit, because a floor-pressed knife bulldozes every
+    # already-placed disc it crosses.  Collision: the plate rides bit 2 only
+    # (pieces; never the floor, so the edge can stand under a disc's under-face
+    # -- two rigid bodies both bottoming at z=0 can never slide under each
+    # other); the tip lip alone also carries bit 0 so the FLOOR sets the
+    # working height, not the chassis.  Chassis contacts are excluded by pair.
+    s_run  = AgentA.SHIM_TIP_X - AgentA.SHIM_HINGE_X
+    s_drop = AgentA.SHIM_HINGE_Z - AgentA.SHIM_T          # plate mid: hinge->tip
+    s_len  = (s_run**2 + s_drop**2) ** 0.5
+    s_ang  = degrees_atan(s_drop, s_run)
+    SHIM_W = AgentA.SHIM_W                # narrower than the mouth -- see params
     body += [
-        f'  <body name="A_scoop" pos="{sx0:.5f} 0 {sz0:.5f}">',
-        '    <joint name="A_scoop_j" type="hinge" axis="0 1 0" range="-25 0"'
-        '           stiffness="0.30" springref="0" damping="0.004"/>',
-        # FINDING (sim): a PASSIVE shim cannot convey the disc.  After ~19 mm of
-        # engagement a 5 mm disc has left the floor entirely (5/tan15 deg), yet its
-        # rear edge is still ~46 mm short of the belt nose, and nothing then moves
-        # it -- it simply rides along with the robot.  Reaching a nose 17.5 mm up
-        # while staying floor-supported would need a <=4.4 deg ramp, which the O16
-        # roller forbids.  The sweeper fingers' active ~110 deg stroke (spec 5) is
-        # therefore load-bearing, not optional.  Modelled here as surfacevel on the
-        # shim (an extension of the belt); simulating the finger stroke in contact
-        # is the honest next step.  See README "Findings".
-        f'    <geom name="A_scoop_g" type="box" contype="0" conaffinity="0" condim="3" '
-        f'surfacevel="{-mm(Chassis.BELT_SPEED):.6f} 0 0 0 0 0" '
-        f'friction="0.40 0.002 0.0001" solref="0.004 1" solimp="0.95 0.99 0.001" '
-        f'pos="{mm(midx - AgentA.SCOOP_TO):.5f} 0 {mm(midz - 9.5):.5f}" '
-        f'size="{mm(plate_l/2):.5f} {mm(Chassis.BELT_W/2):.5f} {mm(AgentA.SCOOP_T/2):.5f}" '
-        f'euler="0 {ang:.4f} 0" mass="0.018" rgba="0.72 0.72 0.75 1"/>',
-        f'    <geom name="A_scoop_lip" type="cylinder" zaxis="0 1 0" contype="0" conaffinity="0" '
-        f'condim="3" friction="0.40 0.002 0.0001" solref="0.004 1" solimp="0.95 0.99 0.001" '
-        f'pos="{mm(run):.5f} 0 {mm(TIP_Z - 0.75 - 9.5):.5f}" '
-        f'size="{mm(0.75):.5f} {mm(Chassis.BELT_W/2):.5f}" mass="0.002" rgba="0.62 0.62 0.66 1"/>',
+        f'  <body name="A_shim" pos="{lx(AgentA.SHIM_HINGE_X):.5f} 0 '
+        f'{mm(AgentA.SHIM_HINGE_Z):.5f}">',
+        f'    <joint name="A_shim_j" type="hinge" axis="0 1 0" '
+        f'range="{-AgentA.SHIM_LIFT:.1f} {AgentA.SHIM_DROOP:.1f}" damping="0.005"/>',
+        f'    <geom name="A_shim_g" type="box" contype="4" conaffinity="4" condim="3" '
+        f'friction="0.30 0.002 0.0001" solref="0.004 1" solimp="0.95 0.99 0.001" '
+        f'pos="{mm(s_run/2):.5f} 0 {mm(-s_drop/2):.5f}" '
+        f'size="{mm(s_len/2):.5f} {mm(SHIM_W/2):.5f} {mm(AgentA.SHIM_T/2):.5f}" '
+        f'euler="0 {s_ang:.4f} 0" mass="0.028" rgba="0.72 0.72 0.75 1"/>',
+        # The cutting edge.  A first build gave the knife a O1 rolled lip
+        # standing ON the floor, and it BULLDOZED every disc: a bar at floor
+        # level meets the disc rim with a horizontal normal -- a wall, not a
+        # wedge.  A real knife is skived: its top plane runs down to an edge
+        # of effectively zero thickness BELOW the disc's under-face.  So the
+        # blade continues the plate top plane past the plate end to ~0.6 mm
+        # under the floor line.  It is floor-EXCLUDED (bit 2 only), which is
+        # the only honest way rigid bodies can model that; working height is
+        # set by the servo against its droop stop, as the proven scoop hinge
+        # always was, and the up-trip still rides over tape and the lab.
+        f'    <geom name="A_shim_blade" type="box" contype="4" conaffinity="4" '
+        f'condim="3" friction="0.30 0.002 0.0001" '
+        f'solref="0.004 1" solimp="0.95 0.99 0.001" '
+        f'pos="{mm(s_run/2 + (s_len/2 + 2.0)*cos(radians(s_ang)) + 0.15*sin(radians(s_ang))):.5f} 0 '
+        f'{mm(-s_drop/2 - (s_len/2 + 2.0)*sin(radians(s_ang)) - 0.15*cos(radians(s_ang))):.5f}" '
+        f'size="0.003 {mm(SHIM_W/2 - 1.0):.5f} 0.0001" '
+        f'euler="0 {s_ang:.4f} 0" mass="0.003" rgba="0.80 0.80 0.85 1"/>',
+        '  </body>']
+
+    # ---- brush roller (F64: conveyance) ------------------------------------
+    # Silicone fingers on a O20 hub, N20-driven, on a sprung swing arm.  It is
+    # what carries the piece across the dead zone where F1 measured a passive
+    # piece stranding: 19 mm engaged, off the floor, 46 mm short of the belt,
+    # becalmed.  A O56 disc bridges the drum's bite to the belt nose (asserted
+    # in params), so there is no un-powered stretch anywhere on the intake.
+    # Collision proxy: a rigid drum inscribed at working finger squish
+    # (R DRUM < R TIP), soft solref standing in for finger compliance; the big
+    # tolerance -- riding over whatever comes -- is the ARM's sprung swing.
+    # The drum touches PIECES ONLY (bit 2; floor and chassis masked out --
+    # fingers brushing the floor or the shim transmit no useful force).  Spin
+    # is a real hinge with a velocity actuator capped at N20 stall torque.
+    # BUILD NOTE: a LIFTED shim tip sits inside the finger circle, so the
+    # roller must spin only with the shim down -- robot.intake() owns that
+    # ordering.
+    a_dx = AgentA.ROLL_AXIS_X - AgentA.ARM_PIVOT_X
+    a_dz = AgentA.ROLL_AXIS_Z - AgentA.ARM_PIVOT_Z
+    a_len = (a_dx**2 + a_dz**2) ** 0.5
+    a_ang = degrees_atan(-a_dz, a_dx)
+    arm_k = AgentA.ARM_PRELOAD_N * mm(a_dx) / 0.1396      # preload at 8 deg past stop
+    fingers = []
+    for k in range(8):
+        ph = k * 45.0
+        c, s_ = cos(radians(ph)), sin(radians(ph))
+        r0 = mm((10.0 + AgentA.ROLL_TIP_R) / 2.0)
+        fingers.append(
+            f'      <geom type="box" contype="0" conaffinity="0" '
+            f'pos="{r0*c:.5f} 0 {r0*s_:.5f}" euler="0 {-ph:.1f} 0" '
+            f'size="{mm((AgentA.ROLL_TIP_R-10.0)/2):.5f} {mm(AgentA.ROLL_W/2-2):.5f} 0.0015" '
+            f'mass="0" rgba="0.85 0.45 0.25 0.9"/>')
+    body += [
+        f'  <body name="A_arm" pos="{lx(AgentA.ARM_PIVOT_X):.5f} 0 '
+        f'{mm(AgentA.ARM_PIVOT_Z):.5f}">',
+        f'    <joint name="A_arm_j" type="hinge" axis="0 1 0" range="-40 0" '
+        f'stiffness="{arm_k:.4f}" springref="8" damping="0.02"/>',
+        f'    <geom name="A_arm_l" type="box" contype="0" conaffinity="0" '
+        f'pos="{mm(a_dx/2):.5f} {mm(AgentA.ROLL_W/2+3):.5f} {mm(a_dz/2):.5f}" '
+        f'euler="0 {a_ang:.4f} 0" size="{mm(a_len/2):.5f} 0.002 0.0025" '
+        f'mass="0.008" rgba="0.35 0.37 0.40 1"/>',
+        f'    <geom name="A_arm_r" type="box" contype="0" conaffinity="0" '
+        f'pos="{mm(a_dx/2):.5f} {-mm(AgentA.ROLL_W/2+3):.5f} {mm(a_dz/2):.5f}" '
+        f'euler="0 {a_ang:.4f} 0" size="{mm(a_len/2):.5f} 0.002 0.0025" '
+        f'mass="0.008" rgba="0.35 0.37 0.40 1"/>',
+        f'    <body name="A_drum" pos="{mm(a_dx):.5f} 0 {mm(a_dz):.5f}">',
+        f'      <joint name="A_drum_j" type="hinge" axis="0 1 0" limited="false" '
+        f'damping="0.0001"/>',
+        f'      <geom name="A_drum_g" type="cylinder" zaxis="0 1 0" contype="4" '
+        f'conaffinity="4" condim="3" friction="0.90 0.02 0.0002" '
+        f'solref="0.008 1" solimp="0.90 0.95 0.002" '
+        f'size="{mm(AgentA.ROLL_DRUM_R):.5f} {mm(AgentA.ROLL_W/2):.5f}" '
+        f'mass="0.050" rgba="0.30 0.32 0.35 0.35"/>',
+        f'      <geom name="A_hub_v" type="cylinder" zaxis="0 1 0" contype="0" '
+        f'conaffinity="0" size="0.010 {mm(AgentA.ROLL_W/2):.5f}" mass="0.01" '
+        f'rgba="0.20 0.22 0.25 1"/>',
+    ] + fingers + [
+        '    </body>',
         '  </body>']
 
     # ---- sweeper fingers ---------------------------------------------------
@@ -634,6 +703,14 @@ def agent_a_body(name="agentA", pose=None, with_beams=False):
     <velocity name="a_drive_r" joint="A_w_r" kv="5.0" ctrlrange="-30 30" forcerange="-0.5 0.5"/>
     <position name="a_finger_l" joint="A_f_l" kp="4" ctrlrange="-0.55 0.55"/>   <!-- RADIANS -->
     <position name="a_finger_r" joint="A_f_r" kp="4" ctrlrange="-0.55 0.55"/>   <!-- RADIANS -->
+    <!-- knife servo: the force cap IS the tip preload (~0.3 N at the tip);
+         down (+droop) saturates against the floor, up (-lift) clears transit -->
+    <position name="a_shim" joint="A_shim_j" kp="0.8" kv="0.05"
+              ctrlrange="{-radians(AgentA.SHIM_LIFT):.5f} {radians(AgentA.SHIM_DROOP):.5f}"
+              forcerange="-0.02 0.02"/>
+    <!-- brush roller: velocity servo capped at the N20's stall torque -->
+    <velocity name="a_roller" joint="A_drum_j" kv="0.010"
+              ctrlrange="0 60" forcerange="{-AgentA.ROLL_TORQUE} {AgentA.ROLL_TORQUE}"/>
     <position name="a_gate" joint="A_gate_j" kp="900" kv="12" ctrlrange="0 {esc:.5f}" forcerange="-25 25"/>
     <position name="a_blade" joint="A_blade_j" kp="600" kv="10" ctrlrange="{nesc:.5f} 0" forcerange="-12 12"/>
     <position name="a_feed" joint="A_feed_j" kp="120" kv="5" ctrlrange="{fs:.5f} 0" forcerange="-4.0 4.0"/>
@@ -698,11 +775,17 @@ def beam_body(i, x, y, length, heading_deg, mass, z0=0.5):
 def contact_pairs(agent="A", n_discs=3):
     """Explicit friction pairs -- see note in scene()."""
     out = ["  <contact>"]
+    # The knife shim rides inside the chassis envelope (guide walls seal to its
+    # top face) and the lifted tip swings into the drum's collision circle, so
+    # both pairings are masked out -- the real contacts are silent brushes.
+    out.append(f'    <exclude body1="agentA" body2="A_shim"/>')
+    out.append(f'    <exclude body1="A_shim" body2="A_drum"/>')
     for i in range(4):
         out.append(f'    <pair geom1="{agent}_ball{i}" geom2="floor" '
                    f'friction="{Chassis.MU_BALL} {Chassis.MU_BALL} 0.0001 0.0001 0.0001" '
                    f'solref="0.02 2.0" solimp="0.6 0.9 0.01"/>')
-    # scoop is excluded from the floor by collision bitmask -- no pair needed
+    # shim plate is excluded from the floor by collision bitmask -- no pair
+    # needed; only its tip lip touches the field
     # The gate must slide OUT FROM UNDER the disc.  MuJoCo takes the element-wise
     # MAX of the two geoms' friction, so a smooth gate against a 0.6 piece still
     # gets 0.6 -- and the disc simply rode the gate out of the chute.
@@ -720,6 +803,12 @@ def contact_pairs(agent="A", n_discs=3):
         for g in ("guide_l", "guide_r", "lane_l", "lane_r"):
             out.append(f'    <pair geom1="{agent}_{g}" geom2="disc{i}_g" '
                        f'friction="0.08 0.08 0.001 0.0001 0.0001"/>')
+        # The knife is polished spring steel; MuJoCo's element-wise MAX would
+        # otherwise hand it the disc's 0.6 and brake every climb.
+        for g in ("shim_g", "shim_blade"):
+            out.append(f'    <pair geom1="{agent}_{g}" geom2="disc{i}_g" '
+                       f'friction="0.30 0.30 0.002 0.0001 0.0001" '
+                       f'solref="0.004 1" solimp="0.95 0.99 0.001"/>')
         for nm in CHUTE_GEOMS + CONE_GEOMS.get("A_chutelead", []):
             out.append(f'    <pair geom1="{nm}" geom2="disc{i}_g" '
                        f'friction="0.08 0.08 0.001 0.0001 0.0001"/>')

@@ -7,7 +7,7 @@ Every value traces to the Rev C source set. Values the spec tagged [VERIFY], and
 the ten contradictions resolved in RFGYC26_simulation_plan.md, are marked below.
 check_geometry.py re-derives the over-determined quantities and fails loudly.
 """
-from math import tan, radians, cos, sin, sqrt
+from math import tan, radians, cos, sin, sqrt, atan2, degrees
 
 # ---------------------------------------------------------------- conversions
 def mm(x):  return x / 1000.0          # mm -> m
@@ -95,19 +95,20 @@ class Chassis:
     BELT_INCLINE    = 11.0             # R1: incline pinned, tail height derived
     BELT_SPEED      = 60.0             # mm/s
     ROLLER_D        = 16.0
-    # HEIGHT OF THE POWERED SURFACE AT THE INTAKE.  This is the single biggest
-    # modelling assumption in the whole simulator (F1).  At -0.3 the belt reaches
-    # the floor and picks pieces up directly -- which a O16 roller cannot do: its
-    # own radius puts the belt face at ~9.5 at best, and spec 3.1 quotes 17.5.
-    # Sweep it (scripts/risk_intake.py) to see what the intake really tolerates.
-    # 3.0 = a knife-edge nose bar, which is buildable.  Measured cliff, capture
-    # over 8 randomised matches (24 samples): Za -0.3, 3, 4, 5 -> 24/24;
-    # Za 6, 9.5, 13, 17.5 -> 0/24.  ONE MILLIMETRE wide, and the reason is
-    # geometric: the powered edge has to get under the piece's half-thickness
-    # (2.5 mm for a 5 mm disc) or it just shunts it along the floor.
-    # A O16 roller puts the belt face at ~18 -- it cannot work, at all.
-    BELT_NOSE_Z     = 3.0
-    BELT_TOP_NOSE   = 17.5             # = roller_r + roller_r + belt_t(1.5)
+    # The old BELT_NOSE_Z (a powered face 3 mm off the floor at the scoop tip)
+    # is GONE -- it was the simulator's biggest stand-in (F1), a surface no
+    # mechanism produced.  Its measured cliff (<=5 mm captures 24/24, >=6 mm
+    # 0/24) and its replacement live in the AgentA intake section: a knife
+    # shim owns engagement, a driven brush roller owns conveyance, and the
+    # belt now starts where a belt physically can, at its nose roller.
+    # F64: the belt reaches FORWARD to meet the brush roller's bite, on the
+    # same plane (tail height and the whole magazine untouched).  With the old
+    # 210 nose, the drum's bite ended ~30 mm short of the belt and off-centre
+    # discs stalled in the unpowered stretch (measured: parked at Xa ~220,
+    # creeping).  The nose therefore sits at 241 on a O10 roller -- smaller
+    # than the O16 drive roller, which stays at the tail.
+    NOSE_ROLLER_D   = 10.0
+    BELT_TOP_NOSE   = 11.5             # = nose_roller + belt(1.5)
 
     TRACK           = 150.0
     WHEEL_D         = 60.0
@@ -202,12 +203,54 @@ class AgentA:
     CAPTURE_OPEN    = 165.0
     CAPTURE_CLOSED  = 116.0
 
-    SCOOP_FROM      = 275.0
-    SCOOP_TO        = 210.0            # = belt nose
-    SCOOP_ANGLE     = 15.0
-    SCOOP_T         = 1.5              # collision proxy; real shim is 0.5
+    # LOCKED INTAKE (F64): sprung knife shim + driven brush roller.  This
+    # replaces the powered-surface stand-in that fed the belt from the scoop
+    # tip (the old A_belt ran to Xa 275 with its face at 3 mm and surfacevel
+    # doing the conveying -- a mechanism that never existed).  The two jobs are
+    # now split between two mechanisms that do:
+    #   ENGAGEMENT -- a 0.5 spring-steel knife shim, hinged over the belt nose,
+    #   tip floating on the field.  The edge it presents to a disc is its own
+    #   thickness, so the old 1 mm height spec (capture 24/24 at <=5 mm, 0/24
+    #   at >=6 -- the powered edge had to get under the disc's 2.5 mm
+    #   half-thickness) is met by construction, not by build accuracy.
+    #   A servo also LIFTS it 25 deg for transit: a floor-pressed knife would
+    #   bulldoze already-placed discs on every non-collecting leg.
+    #   CONVEYANCE -- a brush roller over the shim: silicone fingers on a
+    #   D20 hub, N20-driven, on a sprung swing arm.  It presses ~1.3 N down on
+    #   the piece and drives it aft at the finger tips, which is what carries
+    #   the disc across the dead zone where F1 measured a passive piece
+    #   stranding (19 mm engaged, 46 mm short of the belt, becalmed).
+    SHIM_TIP_X      = 272.0            # knife tip; = GUIDE_TOP_X, 13 in from the shell
+    SHIM_HINGE_X    = 242.0            # hinge axis, hanging over the belt nose
+    # Plate TOP at the hinge = belt nose top, FLUSH within 0.2 (the old scoop
+    # check, relearned the hard way: built 0.75 proud "so the disc drops onto
+    # the belt", the aft edge became a fulcrum -- the disc see-sawed on it,
+    # the belt got 0.03 N of normal force and lost the tug-of-war to the
+    # passive shim.  Measured: creeping at 2 mm/s, forever).
+    SHIM_HINGE_Z    = 11.25            # plate mid-plane at the hinge
+    SHIM_T          = 0.5              # spring steel; the presented step
+    SHIM_DROOP      = 6.0              # deg past nominal the servo presses (preload)
+    SHIM_LIFT       = 35.0             # deg tip-up for transit (short shim needs more)
+    ROLL_AXIS_X     = 262.0            # drum axis at rest
+    ROLL_AXIS_Z     = 25.5             # rest height: collision drum bottom at 3.5
+    ROLL_DRUM_R     = 22.0             # collision proxy: hub 10 + fingers at working squish
+    ROLL_TIP_R      = 25.0             # visual finger tips (D50 swept)
+    ROLL_W          = 128.0            # across the mouth, inside the guide walls
+    ROLL_RPM        = 300.0            # N20 nominal; sweep 200-500
+    ROLL_TORQUE     = 0.098            # N*m -- 1.0 kg*cm N20 stall, the honest cap
+    ARM_PIVOT_X     = 205.0            # swing-arm pivot
+    ARM_PIVOT_Z     = 60.0
+    ARM_PRELOAD_N   = 1.3              # downforce at the drum, arm on its stop
+    # The knife is NARROWER than the mouth on purpose.  The sweeper fingers
+    # occupy z 2..27 wherever they swing (raked, their structure reaches in to
+    # |y| ~56), and a lifted knife rotates its corners up through that plane --
+    # a metal-on-metal clash in the real build, found when the first sim lift
+    # jammed at 1.5 mm.  At 108 the knife clears every finger position at every
+    # knife angle; a disc funnelled in from wider out crosses the knife's 0.5
+    # side edge, which is nothing (F63's side-climb was a ~9 mm scoop edge).
+    SHIM_W          = 108.0
 
-    BELT_NOSE_X     = 210.0
+    BELT_NOSE_X     = 241.0            # F64: forward to the drum bite; was 210
     # F17 (supersedes F7).  The tail roller must stand ONE DISC RADIUS forward of
     # the chute axis -- not over it.  A piece is supported until its trailing edge
     # clears the tail, so it is released when its CENTRE is one radius aft of the
@@ -320,9 +363,16 @@ class AgentA:
     # One folded strip of the same 1 mm sheet as the chassis: the cheapest part
     # on the robot, and the one that makes the magazine work.
     HOLD_FROM       = 64.0             # Xa, at the tail roller (= BELT_TAIL_X)
-    HOLD_TO         = 180.0            # Xa, upstream end (flared)
+    # F64: the strip reaches forward to the drum (which roofs the shim itself),
+    # because the brush feeds pieces at several hundred mm/s where the old
+    # surface crawled at 60 -- and a fast piece arriving pitched or shingled
+    # sailed OVER a strip that started at 180 and parked on top of it
+    # (measured: two tandem discs at z 42, on the strip's back).  The same one
+    # straight plate, longer: a launch-catcher at the front, the F16
+    # anti-shingle taper at the tail.
+    HOLD_TO         = 235.0            # Xa, upstream end (5 clear of the drum)
     HOLD_GAP0       = 8.0              # clear height above the belt at the tail
-    HOLD_GAP1       = 14.0             # clear height at the upstream end
+    HOLD_GAP1       = 18.0             # clear height at the upstream end
     HOLD_W          = 62.0             # matches the single-file lane
     HOLD_T          = 1.0
 
@@ -474,11 +524,14 @@ class AgentA:
 
 
 # ============================================================ derived + checks
-BELT_RUN_A   = AgentA.BELT_NOSE_X - AgentA.BELT_TAIL_X            # 175
-BELT_RISE_A  = BELT_RUN_A * tan(radians(Chassis.BELT_INCLINE))    # 34.02
-BELT_TOP_TAIL_A = Chassis.BELT_TOP_NOSE + BELT_RISE_A             # 51.5  (R1)
-SCOOP_RUN_A  = AgentA.SCOOP_FROM - AgentA.SCOOP_TO                # 65
-SCOOP_RISE_A = SCOOP_RUN_A * tan(radians(AgentA.SCOOP_ANGLE))     # 17.4
+BELT_RUN_A   = AgentA.BELT_NOSE_X - AgentA.BELT_TAIL_X            # 146
+BELT_RISE_A  = BELT_RUN_A * tan(radians(Chassis.BELT_INCLINE))    # 28.4
+BELT_TOP_TAIL_A = Chassis.BELT_TOP_NOSE + BELT_RISE_A             # 45.9  (R1)
+# Knife shim plane, from the hinge (top face over the belt nose) down to the
+# floating tip.  The angle is DERIVED -- the two anchor points own it.
+SHIM_RUN_A   = AgentA.SHIM_TIP_X - AgentA.SHIM_HINGE_X            # 61
+SHIM_DROP_A  = (AgentA.SHIM_HINGE_Z + AgentA.SHIM_T/2) - AgentA.SHIM_T   # 17.75
+SHIM_ANGLE_A = degrees(atan2(SHIM_DROP_A, SHIM_RUN_A))            # 16.2 deg
 
 # discharge throw: piece leaves the tail at BELT_SPEED, falls BELT_TOP_TAIL
 DROP_TIME_A  = sqrt(2 * (BELT_TOP_TAIL_A / 1000.0) / 9.81)
@@ -509,8 +562,21 @@ def _guide_ball_clearance():
 CHECKS = [
     ("belt rise closes on the nose height",
      abs(BELT_TOP_TAIL_A - (Chassis.BELT_TOP_NOSE + BELT_RISE_A)) < 1e-9),
-    ("scoop rise meets the belt nose within 0.2",
-     abs(SCOOP_RISE_A - Chassis.BELT_TOP_NOSE) < 0.2),
+    ("shim top meets the belt nose FLUSH within 0.2 (a proud edge is a fulcrum)",
+     abs((AgentA.SHIM_HINGE_Z + AgentA.SHIM_T/2) - Chassis.BELT_TOP_NOSE) <= 0.2),
+    ("a disc bridges the roller bite to the belt -- no dead zone by construction",
+     AgentA.ROLL_AXIS_X - AgentA.SHIM_HINGE_X + 5.0 <= Piece.DISC_D),
+    ("drum bite starts below a disc's top face",
+     AgentA.ROLL_AXIS_Z - AgentA.ROLL_DRUM_R <= Piece.DISC_T - 1.0),
+    ("lifted knife tip clears a placed disc by >= 10",
+     AgentA.SHIM_HINGE_Z + AgentA.SHIM_T/2
+     + SHIM_RUN_A * sin(radians(AgentA.SHIM_LIFT - SHIM_ANGLE_A))
+     >= Piece.DISC_T + 10.0),
+    ("roller fits inside the guide walls at its station",
+     AgentA.ROLL_W/2.0 <= AgentA.GUIDE_TO_W/2.0
+     + (AgentA.ROLL_AXIS_X - AgentA.GUIDE_END_X)
+     / (AgentA.GUIDE_TOP_X - AgentA.GUIDE_END_X)
+     * (AgentA.GUIDE_FROM_W - AgentA.GUIDE_TO_W)/2.0 - 2.0),
     ("A width budget: belt + wheels + pockets fits 235",
      Chassis.BELT_W + 2*Chassis.WHEEL_W + 20 + 2*24 <= AgentA.W),
     ("axle is on the fore-aft centroid",
@@ -527,15 +593,16 @@ CHECKS = [
      abs(DEG_PER_STEP - 0.36) < 0.01),
     ("beam tip-over is 18.4 deg",
      abs(BEAM_TIP_OVER - 18.4) < 0.05),
-    ("belt nose height is roller-determined",
-     abs(Chassis.BELT_TOP_NOSE - (Chassis.ROLLER_D + 1.5)) < 1e-9),
-    # The one that actually decides whether the intake works.  Measured cliff:
-    # a powered edge at or below Za 5 captures 24/24, at Za 6 it captures 0/24,
-    # because it has to get under the piece's half-thickness instead of shunting
-    # it.  This assertion is what stops the design drifting back to a roller.
-    ("intake edge gets under the piece (Za <= half its thickness + 2.5)",
-     Chassis.BELT_NOSE_Z <= Piece.DISC_T / 2.0 + 2.5),
-    ("a roller nose could NOT satisfy that -- the design needs a knife edge",
+    ("belt nose height is nose-roller-determined",
+     abs(Chassis.BELT_TOP_NOSE - (Chassis.NOSE_ROLLER_D + 1.5)) < 1e-9),
+    # The one that actually decides whether the intake works.  Measured cliff
+    # (F1 era): an edge at or below Za 5 captures 24/24, at Za 6 it captures
+    # 0/24, because it has to get under the piece's half-thickness instead of
+    # shunting it.  The knife shim satisfies it BY CONSTRUCTION -- the step it
+    # presents is its own 0.5 thickness plus a O1 tip lip.
+    ("knife edge stands under the piece's half-thickness",
+     AgentA.SHIM_T + 1.0 <= Piece.DISC_T / 2.0),
+    ("a bare roller nose could NOT satisfy that -- the shim is load-bearing",
      Chassis.ROLLER_D + 1.5 > Piece.DISC_T / 2.0 + 2.5),
     # --- beams ---------------------------------------------------------
     ("beam 1 lands on the west wall, spanning X 0-280",

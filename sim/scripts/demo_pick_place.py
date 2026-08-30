@@ -54,7 +54,7 @@ def main():
     m = mujoco.MjModel.from_xml_string(xml)
     d = mujoco.MjData(m)
     rb = AgentARobot(m, d, step_loss=a.step_loss, rng=rng)
-    rb.fingers(True); rb.gate(False)
+    rb.fingers(True); rb.gate(False); rb.intake(False)
     rb.cradle(1, True); rb.cradle(2, True)      # beams carried clear of the field
 
     dbid = [mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "disc%d" % i) for i in range(3)]

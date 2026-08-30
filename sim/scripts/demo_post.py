@@ -15,7 +15,7 @@ gj = m.jnt_qposadr[mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, "A_gate_j")]
 
 total = 0
 for hi, hx in enumerate(Field.LAB_HOLE_X):
-    d = mujoco.MjData(m); rb = AgentARobot(m, d); rb.fingers(True); rb.gate(False)
+    d = mujoco.MjData(m); rb = AgentARobot(m, d); rb.fingers(True); rb.gate(False); rb.intake(False)
     d.qpos[0], d.qpos[1] = hx/1000.0, (HY-OFF)/1000.0
     d.qpos[3:7] = [np.cos(np.radians(135)), 0, 0, np.sin(np.radians(135))]   # yaw 270
     db = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "disc0")

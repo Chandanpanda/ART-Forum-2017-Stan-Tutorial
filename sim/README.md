@@ -108,40 +108,42 @@ number from here.
 
 ## 2. Status — where this actually stands
 
-**Nine of twelve randomised matches score the maximum +120 inside the 120 s
+**Ten of twelve randomised matches score the maximum +120 inside the 120 s
 clock** — all three samples posted, both beams standing, the quarantine sealed —
-and the mean at the buzzer is **+110.3**.
+and the mean at the buzzer is **+116.2**.
 
-Read that against a stricter yardstick than the earlier numbers used: the T-joint
-is now scored as the gap between the two beams' footprints, face to face, with
-3 mm of tolerance (F56). The old test allowed a whole beam width of slack and was
-passing joints with 7 mm of air in them.
+This is the first score with **no powered-surface stand-in anywhere in it**: the
+intake is the F64 knife shim and brush roller, built in contact, and the
+capture numbers rest entirely on mechanisms that exist. It is also scored with
+the honest T-joint (footprint gap, 3 mm tolerance, F56).
 
 | | |
 |---|---|
 | Model generation from one parameter file | **works** |
-| 23 geometry assertions | **all pass** |
+| 29 geometry assertions | **all pass** |
 | Conveyor carry on the incline | **works** — 59.2 mm/s against a 60 mm/s belt |
-| **Pick: samples off the floor into the magazine** | **9 of 12 matches take all three** |
+| **Pick: samples off the floor into the magazine** | **10 of 12 matches take all three** — no stand-in; capture protocol 23/24 |
+| Intake robustness (F64 matrix) | **±2 mm ride height, µ 0.30–0.60, 200–500 rpm, 100–215 mm/s: all pass** |
 | **Magazine escapement: one piece per stroke** | **works** — in the mission, not just on the bench |
 | **Dock a slot in a 6 mm laboratory** | **works — 0.8–2.4 mm**, ~15 s each |
-| **Post all three samples** | **9 of 12** |
-| **Seal the quarantine with both beams** | **11 of 12**, +70 |
-| **Full match inside 120 s** | **11 of 12** (the twelfth finishes at 121.6 and still scores +97 at the buzzer) |
+| **Post all three samples** | **10 of 12** |
+| **Seal the quarantine with both beams** | **12 of 12**, +70 |
+| **Full match inside 120 s** | **12 of 12** (worst finish 111.1) |
 
 ```
  seed        1     2     3     4     5     6     7     8     9    10    11    12
- samples   +50   +50   +25   +50   +27   +50   +50   +50   +50   +50   +50   +27
- beams     +70   +70   +25   +70   +70   +70   +70   +70   +70   +70   +70   +70
- BUZZER   +120  +120   +50  +120   +97  +120  +120  +120  +120  +120  +120   +97
- finish    106   115   106   112   103   112   114   119   114   112   112   122
- T-joint   0.8   1.2     -   1.9   1.6   3.0   3.0   1.4   1.0   0.1   2.1   2.9   mm
- mean at the buzzer  +110.3     sealed 11/12     over the clock 1/12
+ samples   +50   +50   +50   +50   +50   +50   +27   +50   +50   +50   +50   +27
+ beams     +70   +70   +70   +70   +70   +70   +70   +70   +70   +70   +70   +70
+ BUZZER   +120  +120  +120  +120  +120  +120   +97  +120  +120  +120  +120   +97
+ finish    104   111   109   102   111   106   107   102   110   102   102   110
+ T-joint   1.4   0.5   0.1   0.4   0.8   1.9   2.1   2.4   0.0   0.1   0.0   0.6   mm
+ mean at the buzzer  +116.2     sealed 12/12     over the clock 0/12
 ```
 
-Where the clock goes, averaged over the twelve: **sweep 27 s, laboratory 47 s,
-beams 38 s**. The beam budget is 39 s and the laboratory runs to a deadline
-derived from it, so a slow sweep costs a slot rather than the seal.
+Where the clock goes, averaged over the twelve: **sweep 19.7 s, laboratory
+49.7 s, beams 36.8 s** — the brush roller feeds so much faster than the old
+60 mm/s surface that the sweep gives back seven seconds, which is where the
+12/12-under-the-clock comes from.
 
 Where this came from, same twelve seeds:
 
@@ -150,16 +152,16 @@ Where this came from, same twelve seeds:
 | samples only, before any of this | +44 | — | — | 5/12 |
 | samples + beams, first working version | +69 | 10/12 | 1/12 | 1/12 |
 | …after the clock work (lenient T-joint) | +101 | 10/12 | 8/12 | 2/12 |
-| **now, with the T-joint scored honestly** | **+110.3** | **11/12** | **9/12** | **1/12** |
+| …with the T-joint scored honestly | +110.3 | 11/12 | 9/12 | 1/12 |
+| **now: F64 intake built for real, stall bias recalibrated** | **+116.2** | **12/12** | **10/12** | **0/12** |
 
-**The three matches that fall short all fail the same way, and it is not the
-beams.** Each sweep pass carries 62 mm of bulldozer beyond what its mouth can
-collect, so a sample can be shoved out of the quarantine before the second lane
-reaches it (F59). On seeds 5 and 12 that costs one slot. On seed 3 it costs the
-slot *and* beam 1, because the sample it strands ends up inside the beam's
-footprint and the beam comes down on top of it — one defect, both tasks. The fix
-is at the intake, not in the route: a recovery pass was tried, measured, and
-removed for spending 41 s to recover nothing.
+**The two matches that fall short fail the same way, and it is not the beams or
+the intake.** A sample outboard of ±78 mm is not in the mouth at all — it is
+under the chassis, dribbled by a ball transfer (F59/F63) — and on seeds 7 and
+12 one sample is shoved out of reach before the second lane arrives. That is
+the chassis-level question §8 opens with, unchanged. (Old seed 3 — which used
+to lose a slot *and* a beam to one stranded sample — now scores +120: the
+faster sweep gets to the piece before it is lost.)
 
 ## 3. Findings — things the simulator discovered about the design
 
@@ -865,6 +867,78 @@ under the chassis and dribbled out somewhere unpredictable.** That corrects
 F59's account of the mechanism, and it is why the losses scatter as far as
 (37, 273) — but it does not, as F59 assumed, point at a fix in the funnel.
 
+**F64. The intake is now real: a servo-lifted knife shim plus a driven brush
+roller, built in contact, replacing the simulator's biggest stand-in — and
+five design lessons came out of making it work.** Since F1 the "belt" collision
+surface ran to the scoop tip with its face 3 mm off the floor and `surfacevel`
+doing the conveying: a powered surface no mechanism produced, standing in for
+"whatever actively drives the piece onto it". Every capture number before this
+entry leaned on it. It is deleted. What replaced it splits the job in two:
+**engagement** is a 0.5 spring-steel knife (108 wide, hinged over the belt
+nose, servo-pressed to the floor with the actuator's force cap as the preload,
+servo-lifted 35° for transit so it cannot bulldoze placed pieces), and
+**conveyance** is a Ø50 silicone-finger brush roller on a sprung swing arm,
+spun by an N20 through a velocity actuator capped at the motor's real stall
+torque. The five lessons, each measured, each a build instruction:
+
+1. **A knife edge on the floor is a wall unless it is skived.** The first build
+   gave the knife a Ø1 rolled tip lip standing on the floor, and it bulldozed
+   every disc to the shell and beyond: a bar at floor height meets a disc rim
+   with a *horizontal* contact normal. The blade must continue the plate's top
+   plane down past the floor line to an edge effectively below the disc's
+   under-face — in the model a floor-excluded 0.2 mm blade, on the machine a
+   sharpened edge. Nothing about the shim's 0.5 thickness makes this automatic.
+2. **The shim's aft edge must meet the belt flush, ±0.2 mm.** Built 0.75 proud
+   ("so the disc drops onto the belt") the edge became a fulcrum: the disc
+   see-sawed on it, the belt got 0.03 N of normal force, and the piece crept at
+   2 mm/s forever. The old scoop check — "meets the belt nose within 0.2" —
+   was this lesson, learned once already.
+3. **No unpowered stretch, anywhere.** With the belt nose at the spec's Xa 210,
+   the drum's bite ended ~30 mm short of it and off-centre discs stalled in
+   between. The belt now runs forward to Xa 241 on a Ø10 nose roller (same
+   plane, tail and magazine untouched, top 11.5 at the nose), so the drum
+   presses the piece *across* the handoff. A Ø56 disc bridges every gap in the
+   chain by construction — asserted in params.
+4. **The brush feeds ten times faster than the old surface, and the hold-down
+   must grow to meet it.** Pieces arriving at several hundred mm/s pitched or
+   shingled sailed over a strip that started at Xa 180 and parked ON TOP of it
+   (two tandem discs, measured, at z 42). The same one straight plate now runs
+   Xa 235 → 64, gap 18 → 8: a launch-catcher at the front, F16's anti-shingle
+   taper at the tail. The drum itself roofs the shim, so nothing can flip
+   anywhere on the powered path.
+5. **The knife is narrower than the mouth because the sweeper fingers own the
+   z 2–27 band.** At 146 wide, the lifting knife's corners rose into the
+   fingers' swept volume — a metal-on-metal clash found when the first lift
+   jammed at 1.5 mm of rise. At 108 it clears every finger position at every
+   knife angle, and a funnelled disc crosses the knife's 0.5 mm side edge,
+   which is nothing.
+
+Measured, with every stand-in off: **roller OFF reproduces F1 honestly** (the
+disc engages the knife and strands — first time the failure was expressible in
+contact); roller ON seats singles across the whole mouth (±50 mm), through
+**ride-height error of ±2 mm** (wheel and ball radii changed together — the
+tolerance the knife-edge design never had), floor friction 0.30–0.60, roller
+speed 200–500 rpm, approach speed 100–215 mm/s, tandem pairs and abreast pairs:
+20 of 21 cases; the one loss is one disc of a dense three-disc cluster, which
+the mission's second pass covers. The historical capture protocol scores
+**23 of 24** (8 randomised matches; the miss is seed 7's F59 outboard shove,
+not an intake failure), and the twelve-seed mission is tabled in §2 —
+**+116.2 mean, 10/12 at maximum** after one knock-on fix: the heavier nose
+shifted the beam-2 stall-release bias by +2 mm and every T-joint opened to
+3–4 mm until the estimate was recalibrated in `seal_quarantine` (measured on
+seeds 1 and 8, corrected, re-verified 12/12 closed). Transit over a stray
+disc with the knife lifted shoves it 51 mm straight along the drive line — the
+parked drum is a soft bumper — against the old model's constant bulldozing;
+lifting the arm too would need a sixth servo and is not built.
+
+What is STILL a stand-in, so nobody re-discovers it: the drum's collision shape
+is a rigid cylinder at working finger squish with soft contact standing for the
+silicone (the visual fingers are cosmetic); silicone-on-wood friction is taken
+at 0.9 unmeasured; the knife's working height comes from its servo stop rather
+than floor-following (conservative — the real sprung knife does better); the
+20 mm tape is not modelled; and `surfacevel` remains on the belt box, which is
+exactly what a driven belt is.
+
 **F60. The bore rangefinder cannot be trusted to skip work.** It reads the top of
 the stack, so a piece that arrives perched — which is the entire reason
 `settle_stack` exists — reads as a full magazine. Measured on seed 1: three
@@ -956,9 +1030,13 @@ point of listing them here is that none is optional.
 | **The cradle wedges the beam against the pocket wall** | A loose beam's inertia arrives late and destroys the dock (F50) | shape of the lip |
 | Sweeper finger pivots may need 5–8 mm aft | Only if you keep the beam's forward face flush with the chassis nose | none |
 | ~~The mouth wants to be as wide as the chassis~~ — **withdrawn, see F63** | Built and measured: widening it costs 40 points a match, because the mouth already overhangs the pan that receives the piece, and the pan cannot follow it — the front ball transfers are in the way. Widening the intake means **moving the front ball transfers**, which is a chassis change with a nose-support problem attached. | not an intake change |
+| **The intake is a knife shim + brush roller (F64)** — 0.5 spring-steel knife, 108 wide, skived edge, hinged over the belt nose, servo-lifted 35° for every non-collecting leg; Ø50 silicone-finger roller on a sprung arm, N20-driven, ~1.3 N of press | The old knife-edge-only intake bet the mission on a 1 mm height spec held forever; the powered surface the sim scored with never existed (F1). Engagement and conveyance are now separate mechanisms, measured together at ±2 mm of ride-height tolerance | 1 × MG90S (knife lift, from the ordered spares) + 1 × N20 + silicone tube |
+| **The belt nose moves forward to Xa 241 on a Ø10 roller** — same plane, tail and magazine untouched; nose face top at 11.5 | The drum's bite must reach the belt or off-centre pieces stall in the unpowered stretch (F64 lesson 3). A Ø10 roller needs MR84ZZ-class bearings in a Ø10–12 tube | one small roller + 2 bearings |
+| **The hold-down strip grows to Xa 235 → 64, gap 18 → 8** | The brush feeds ten times faster than the old surface; a strip starting at 180 was landed ON, not slid under (F64 lesson 4) | none — same plate, longer |
 
-Bench-test before committing: the intake at a ≤5 mm powered edge (F25), and
-turn efficiency for `Chassis.WHEEL_COLLISION_W`.
+Bench-test before committing: the knife-and-roller intake on real MDF discs
+(the F64 rig protocol: singles across the mouth, tandem, abreast, held 2 mm
+high and low), and turn efficiency for `Chassis.WHEEL_COLLISION_W`.
 
 ## 8. Next steps, in the order I would do them
 
@@ -988,8 +1066,12 @@ turn efficiency for `Chassis.WHEEL_COLLISION_W`.
    stack, so a perched piece reads as a full load. Anything that decides work
    from that count — skipping a pass, ending the sweep — is deciding on a
    number that can be wrong in both directions.
-4. **Bench-test the intake before ordering the belt** (F25). A knife edge at
-   ≤5 mm picks up; a Ø16 roller never does.
+4. **Bench-test the knife-and-roller intake on real MDF discs** (F64 replaces
+   F25's version of this item). The sim's remaining assumptions are the
+   silicone-on-wood friction (taken at 0.9) and the finger-compliance proxy;
+   both are one afternoon on a hand-held rig: singles across the mouth,
+   tandem, abreast, and the board held 2 mm high and 2 mm low. The ±2 mm
+   claim is the one the design now rests on.
 5. **Measure turn efficiency on the real robot** and set
    `Chassis.WHEEL_COLLISION_W` from it.
 6. **Bench-test the beam cradle**: 200 g at 108 mm off the pocket wall, 34 mm

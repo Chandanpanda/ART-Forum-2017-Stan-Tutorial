@@ -13,7 +13,7 @@ DISCS = [(330, 130), (240, 133), (170, 128)]
 
 m = mujoco.MjModel.from_xml_string(mjcf.scene_pick_place(DISCS))
 d = mujoco.MjData(m)
-rb = AgentARobot(m, d); rb.fingers(True); rb.gate(False)
+rb = AgentARobot(m, d); rb.fingers(True); rb.gate(False); rb.intake(False)
 dbs = [mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "disc%d" % i) for i in range(3)]
 
 def seq():

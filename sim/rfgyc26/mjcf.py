@@ -399,8 +399,8 @@ def agent_a_body(name="agentA", pose=None, with_beams=False):
     # the channel is single-file from the tip: spec 7's gradual 116 -> 62 over
     # Xa 200->50 gives three O56 discs 75 mm of un-guided belt to bunch in, and
     # two of them fit abreast on a 116 belt (F8).
-    GUIDE_END_X = 195.0                    # Xa where the taper finishes
-    GUIDE_TOP_X = 272.0                    # Xa where it starts
+    GUIDE_END_X = AgentA.GUIDE_END_X       # Xa where the taper finishes
+    GUIDE_TOP_X = AgentA.GUIDE_TOP_X       # Xa where it starts
     GH = 16.0                              # wall height above the belt face
     # The belt face is at Za 0.4 up here, so a wall foot 1 mm under it would sit
     # BELOW the floor plane -- and these are robot-class geoms, so they plough.

@@ -818,6 +818,53 @@ against samples 60–90 mm off the lane before committing to the geometry** — 
 model cannot answer it, and the twelve-match spread says nothing else in the
 robot is this sensitive.
 
+**F63. The intake cannot be widened and the sweeper fingers cannot be removed —
+both were built, measured over twelve matches, and both are regressions.** The
+plan was F59's: the mouth collects a ~110 mm band inside a 235 mm body, so widen
+the mouth to the chassis and delete the fingers, which the memo and I both
+expected to be free. It is not.
+
+| configuration | mean at the buzzer | all three samples |
+|---|---|---|
+| **as built — fingers, mouth 148** | **+110.3** | **9/12** |
+| fingers removed, mouth 148 | +93.5 | 4/12 |
+| fingers removed, mouth 162 | ≈ +69 (5 seeds) | 1/5 |
+| fingers removed, mouth 175, steeper taper | ≈ +77 (4 seeds) | 0/4 |
+
+**Why the fingers earn their keep, which a single-disc probe got backwards.**
+Probing one sample at a time, a piece 55 mm off the lane takes 17.3 N off a
+finger and ends up 132 mm away uncollected — which reads as the finger shoving
+it, and is the evidence I removed them on. It is the wrong reading. The fingers
+hang on hinges driven by a position actuator at **kp = 4** carrying a 30 g bar:
+they are the only *compliant* thing at the intake, and that 17.3 N is as much
+the disc deflecting the finger as the reverse. Take them out and the mouth
+becomes rigid guide wall, which does not deflect — capture drops from 9 matches
+in 12 to 4.
+
+**Why widening makes it worse, not better.** The mouth is already 32 mm wider
+than the PAN it feeds: the scoop is belt-width, 116 mm. A piece funnelled in at
+y 70 crosses 16 mm of bare floor and has to climb the scoop's 1.5 mm side edge,
+and widening the mouth just delivers more pieces into the wedge between the
+guide wall and that edge — 23 mm of overhang at 162, 29.5 mm at 175.
+
+**And the pan cannot be widened to match, which is the architectural finding.**
+The Ø20 front ball transfers sit at Xa 245, y ±80 — exactly the volume a wider
+intake needs, walls and pan alike. They cannot move outboard (the outer 20 mm
+each side is beam pocket, and a wall out there fouls the beam being carried and
+then the beam already placed, F44), nor inboard (that is under the belt), nor
+far aft (they are what stops the nose dipping over a 105 mm overhang). Widening
+the intake is a **chassis-level change, not an intake change**, and nothing in
+the intake can be done about it.
+
+What *is* still true from the aperture map, and worth having: ground clearance
+is 6 mm and a sample is 5 mm, so the flanks, pocket walls and deck all ride over
+one. Only the belt (±58), the guides (±30…±75) and the finger tips (±82.5) can
+touch a sample at all. Outboard of about ±78 mm the only thing that reaches it
+is a ball transfer at 1–2.5 N: **the piece is not shoved aside, it is swallowed
+under the chassis and dribbled out somewhere unpredictable.** That corrects
+F59's account of the mechanism, and it is why the losses scatter as far as
+(37, 273) — but it does not, as F59 assumed, point at a fix in the funnel.
+
 **F60. The bore rangefinder cannot be trusted to skip work.** It reads the top of
 the stack, so a piece that arrives perched — which is the entire reason
 `settle_stack` exists — reads as a full magazine. Measured on seed 1: three
@@ -908,23 +955,28 @@ point of listing them here is that none is optional.
 | **The pocket end stops start at Za 16, not at the floor** | Below Za 6 they plough the laboratory on every reverse dock (F52) | none |
 | **The cradle wedges the beam against the pocket wall** | A loose beam's inertia arrives late and destroys the dock (F50) | shape of the lip |
 | Sweeper finger pivots may need 5–8 mm aft | Only if you keep the beam's forward face flush with the chassis nose | none |
-| **The mouth wants to be as wide as the chassis** — or the pass wants a lead-in that deflects rather than pushes | A pass collects a ~110 mm band inside a 235 mm body, so 62 mm either side is a bulldozer, and a sample shoved north leaves the quarantine and lands in beam 1's footprint (F59). Three matches in twelve. | fingers/guides only |
+| ~~The mouth wants to be as wide as the chassis~~ — **withdrawn, see F63** | Built and measured: widening it costs 40 points a match, because the mouth already overhangs the pan that receives the piece, and the pan cannot follow it — the front ball transfers are in the way. Widening the intake means **moving the front ball transfers**, which is a chassis change with a nose-support problem attached. | not an intake change |
 
 Bench-test before committing: the intake at a ≤5 mm powered edge (F25), and
 turn efficiency for `Chassis.WHEEL_COLLISION_W`.
 
 ## 8. Next steps, in the order I would do them
 
-1. **Bench-test the intake against samples 60–90 mm off the lane, then widen the
-   mouth.** This is the only defect left in the scoring path: three matches in
-   twelve lose a sample to the 62 mm of bulldozer either side of the intake
-   (F59), and on one of them the stranded sample lands where beam 1 goes and
-   costs that too. Two routes out of it were tried and measured, and neither
-   works: a recovery pass spends 41 s to recover nothing, and stroking the
-   fingers (F62) fixes some matches and breaks others, because a sample at a
-   finger tip is decided by one contact and swings 70 points on it. The answer
-   is the mouth reaching as wide as the chassis — but measure it on the bench
-   first, because that 70-point swing is exactly what a simulator is worst at.
+1. **Decide whether the front ball transfers can move — everything else at the
+   intake is blocked behind them.** Three matches in twelve lose a sample, and
+   on one of them the stranded sample lands where beam 1 goes and costs that
+   too. Four fixes have now been built and measured, and all four are worse than
+   doing nothing: a third sweep lane (41 s to recover nothing), stroking the
+   fingers (F62), removing the fingers, and widening the mouth (F63). They fail
+   for one reason — a sample outboard of ±78 mm is not in the intake at all, it
+   is under the chassis — and the only thing that would put it in the intake is
+   a wider pan, which the front ball transfers at Xa 245, y ±80 occupy. So the
+   question is not an intake question. It is whether the nose can be supported
+   some other way: skids further outboard clear of the beam pockets, a wider
+   wheelbase, or accepting the overhang. **Bench-test that before anything
+   else** — and bench-test capture at 60–90 mm off the lane while you are there,
+   because F62 showed a single contact swings 70 points, which is exactly what
+   a simulator is worst at.
 2. **Odometry instead of ground truth** (F38), and the slot-probe datum on top
    of it. Until the robot can be wrong about where it is, the datum has nothing
    to correct — and that is the difference between these numbers and the real

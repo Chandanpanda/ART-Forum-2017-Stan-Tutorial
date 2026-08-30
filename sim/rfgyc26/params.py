@@ -223,8 +223,18 @@ class AgentA:
     # line met the guide's LEADING EDGE square-on instead of its inner face and
     # was bulldozed along instead of funnelled in.  Start them at the mouth width
     # and the hand-off is continuous.
+    # 148 IS A MEASURED CEILING, NOT A DRAFT (F63).  Widening it looks free and
+    # is not: at 162 the mean over twelve matches falls +110 -> +69, at 175 into
+    # a steeper taper further still.  The mouth is already 32 mm wider than the
+    # PAN it feeds -- the scoop is belt-width, 116 -- so a funnelled piece
+    # crosses bare floor and has to climb the scoop's side edge, and widening
+    # only delivers more pieces into that wedge.  Widening the pan to match is
+    # blocked by the front ball transfers at Xa 245, y +/-80.
     GUIDE_FROM_W    = 148.0
     GUIDE_TO_W      = 62.0
+    # Promoted out of mjcf.py so the two ceilings above can be asserted.
+    GUIDE_END_X     = 195.0            # Xa where the taper finishes
+    GUIDE_TOP_X     = 272.0            # Xa where it starts
 
     # Moved forward from the spec's Xa 33 so the bore is not jammed against the
     # chassis rear wall.  Even at 36 there is only 3 mm between the bore's rear
@@ -478,6 +488,24 @@ BEAM_TIP_OVER = 18.434948822922             # atan(20/60), degrees
 STEPS_PER_360 = 3.14159265358979 * Chassis.TRACK / Chassis.MM_PER_STEP
 DEG_PER_STEP  = 360.0 / STEPS_PER_360
 
+def _guide_ball_clearance():
+    """Gap between the converging guide wall and the front ball transfer, mm.
+
+    The wall runs from (GUIDE_TOP_X, GUIDE_FROM_W/2) to (GUIDE_END_X, GUIDE_TO_W/2)
+    and the ball is a sphere sitting on the floor at (BALL_FRONT_X, +/-BALL_Y).
+    Widening the mouth walks the wall straight across it -- which is why F63's
+    widening experiments had to end the taper further forward to fit at all.
+    """
+    ax, ay = AgentA.GUIDE_END_X, AgentA.GUIDE_TO_W/2.0
+    bx, by = AgentA.GUIDE_TOP_X, AgentA.GUIDE_FROM_W/2.0
+    px, py = Chassis.BALL_FRONT_X, Chassis.BALL_Y
+    dx, dy = bx - ax, by - ay
+    t = ((px-ax)*dx + (py-ay)*dy) / max(dx*dx + dy*dy, 1e-9)
+    t = min(1.0, max(0.0, t))
+    d = ((px - (ax + t*dx))**2 + (py - (ay + t*dy))**2) ** 0.5
+    return d - Chassis.BALL_D/2.0 - 0.75          # ball radius, half wall thickness
+
+
 CHECKS = [
     ("belt rise closes on the nose height",
      abs(BELT_TOP_TAIL_A - (Chassis.BELT_TOP_NOSE + BELT_RISE_A)) < 1e-9),
@@ -530,6 +558,11 @@ CHECKS = [
      abs(2*(AgentA.POCKET_Y + Piece.BEAM_W/2) - AgentA.W) < 1e-9),
     ("the hooks lift clear of a 60 beam",
      AgentA.HOOK_LIFT >= Piece.BEAM_H + 2.0),
+    # Both ceilings on the guide mouth, because both are one edit away (F63).
+    ("the guide mouth clears the front ball transfer (F63)",
+     _guide_ball_clearance() >= 3.0),
+    ("...and stays inboard of the beam pocket wall",
+     AgentA.GUIDE_FROM_W/2.0 + 0.75 <= AgentA.POCKET_IN_Y - 1.5),
     ("the parked escapement retainer stays out of the beam pocket (F47)",
      AgentA.ESC_BLADE_PARK + AgentA.ESC_BLADE_Y <= AgentA.POCKET_IN_Y),
     ("...and parked it is still clear of the bore",

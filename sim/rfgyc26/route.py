@@ -165,7 +165,7 @@ def dwell_until_loaded(rb, cap=None, quiet=4.6, want=None):
     faster than the old behaviour, never slower.
     """
     cap = Chassis.SWEEP_DWELL if cap is None else cap
-    n, steady = rb.mag_count(), 0.0
+    n, steady, full = rb.mag_count(), 0.0, 0.0
     for _ in range(int(cap * HZ)):
         rb.stop()
         c = rb.mag_count()
@@ -174,7 +174,13 @@ def dwell_until_loaded(rb, cap=None, quiet=4.6, want=None):
         # bore rangefinder tells it how many it is holding, so a pass that
         # swept the lot can leave the instant the last one seats.  Worth 4-5 s,
         # and it costs nothing when the pass was not that lucky.
-        if want is not None and c >= want:
+        # ...but only on a count that HOLDS.  F60 says the ray over-reads as
+        # freely as it under-reads, and a piece still riding the belt crosses
+        # under it reading like a full stack for a few ticks.  Trusting one
+        # sample ended a sweep at T+13.8 with one disc aboard (seed 11) --
+        # the exit needs the same steadiness the quiet timer already uses.
+        full = full + 1.0/HZ if (want is not None and c >= want) else 0.0
+        if full >= 1.2:
             return
         steady = steady + 1.0/HZ if c == n else 0.0
         n = c

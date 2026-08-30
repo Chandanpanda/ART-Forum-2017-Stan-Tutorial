@@ -84,6 +84,8 @@ class AgentARobot:
 
     def fingers(self, opened=True):
         # RADIANS -- actuator ctrlrange is not converted by compiler angle="degree"
+        if self.a_fl < 0:            # fingerless build: ctrl[-1] would hit the cradle
+            return
         a = np.radians(AgentA.FINGER_OPEN if opened else AgentA.FINGER_RAKE)
         self.d.ctrl[self.a_fl] = a
         self.d.ctrl[self.a_fr] = -a

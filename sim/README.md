@@ -108,42 +108,43 @@ number from here.
 
 ## 2. Status — where this actually stands
 
-**Ten of twelve randomised matches score the maximum +120 inside the 120 s
-clock** — all three samples posted, both beams standing, the quarantine sealed —
-and the mean at the buzzer is **+116.2**.
+**All twelve randomised matches score the maximum +120 inside the 120 s
+clock** — all three samples posted, both beams standing, the quarantine
+sealed, mean at the buzzer **+120.0**.
 
-This is the first score with **no powered-surface stand-in anywhere in it**: the
-intake is the F64 knife shim and brush roller, built in contact, and the
-capture numbers rest entirely on mechanisms that exist. It is also scored with
-the honest T-joint (footprint gap, 3 mm tolerance, F56).
+This is scored with **no powered-surface stand-in anywhere in it** (the intake
+is the F64 knife shim and brush roller, built in contact), with the honest
+T-joint (footprint gap, 3 mm tolerance, F56), and with the sweep's early exit
+required to hold its count for 1.2 s rather than trust one bore reading
+(F65 — the race that had been quietly taxing every earlier card).
 
 | | |
 |---|---|
 | Model generation from one parameter file | **works** |
 | 29 geometry assertions | **all pass** |
 | Conveyor carry on the incline | **works** — 59.2 mm/s against a 60 mm/s belt |
-| **Pick: samples off the floor into the magazine** | **10 of 12 matches take all three** — no stand-in; capture protocol 23/24 |
+| **Pick: samples off the floor into the magazine** | **12 of 12 matches take all three** — no stand-in |
 | Intake robustness (F64 matrix) | **±2 mm ride height, µ 0.30–0.60, 200–500 rpm, 100–215 mm/s: all pass** |
 | **Magazine escapement: one piece per stroke** | **works** — in the mission, not just on the bench |
-| **Dock a slot in a 6 mm laboratory** | **works — 0.8–2.4 mm**, ~15 s each |
-| **Post all three samples** | **10 of 12** |
+| **Dock a slot in a 6 mm laboratory** | **works**, ~15 s each |
+| **Post all three samples** | **12 of 12** |
 | **Seal the quarantine with both beams** | **12 of 12**, +70 |
-| **Full match inside 120 s** | **12 of 12** (worst finish 111.1) |
+| **Full match inside 120 s** | **12 of 12** (worst finish 119.4 — see the caveat below) |
 
 ```
  seed        1     2     3     4     5     6     7     8     9    10    11    12
- samples   +50   +50   +50   +50   +50   +50   +27   +50   +50   +50   +50   +27
+ samples   +50   +50   +50   +50   +50   +50   +50   +50   +50   +50   +50   +50
  beams     +70   +70   +70   +70   +70   +70   +70   +70   +70   +70   +70   +70
- BUZZER   +120  +120  +120  +120  +120  +120   +97  +120  +120  +120  +120   +97
- finish    104   111   109   102   111   106   107   102   110   102   102   110
- T-joint   1.4   0.5   0.1   0.4   0.8   1.9   2.1   2.4   0.0   0.1   0.0   0.6   mm
- mean at the buzzer  +116.2     sealed 12/12     over the clock 0/12
+ BUZZER   +120  +120  +120  +120  +120  +120  +120  +120  +120  +120  +120  +120
+ finish    112   107   112   108   119   107   116   110   115   106   117   109
+ T-joint   0.9   0.1   0.3   0.5   0.5   0.0   2.0   0.0   0.5   0.2   1.7   0.9   mm
+ mean at the buzzer  +120.0     sealed 12/12     over the clock 0/12
 ```
 
-Where the clock goes, averaged over the twelve: **sweep 19.7 s, laboratory
-49.7 s, beams 36.8 s** — the brush roller feeds so much faster than the old
-60 mm/s surface that the sweep gives back seven seconds, which is where the
-12/12-under-the-clock comes from.
+Where the clock goes, averaged over the twelve: **sweep 23.2 s, laboratory
+51.1 s, beams 37.3 s**.  The F65 fix spends ~2 s more per pass waiting for an
+honest count, and buys back every sample that used to leave the sweep aboard
+only on paper.
 
 Where this came from, same twelve seeds:
 
@@ -153,15 +154,17 @@ Where this came from, same twelve seeds:
 | samples + beams, first working version | +69 | 10/12 | 1/12 | 1/12 |
 | …after the clock work (lenient T-joint) | +101 | 10/12 | 8/12 | 2/12 |
 | …with the T-joint scored honestly | +110.3 | 11/12 | 9/12 | 1/12 |
-| **now: F64 intake built for real, stall bias recalibrated** | **+116.2** | **12/12** | **10/12** | **0/12** |
+| …F64 intake built for real, stall bias recalibrated | +116.2 | 12/12 | 10/12 | 0/12 |
+| **now: F65 honest sweep exit, F66 passive-spring fingers** | **+120.0** | **12/12** | **12/12** | **0/12** |
 
-**The two matches that fall short fail the same way, and it is not the beams or
-the intake.** A sample outboard of ±78 mm is not in the mouth at all — it is
-under the chassis, dribbled by a ball transfer (F59/F63) — and on seeds 7 and
-12 one sample is shoved out of reach before the second lane arrives. That is
-the chassis-level question §8 opens with, unchanged. (Old seed 3 — which used
-to lose a slot *and* a beam to one stranded sample — now scores +120: the
-faster sweep gets to the piece before it is lost.)
+**A perfect card is a statement about these twelve seeds, not about the
+robot.**  Three cautions before anyone celebrates.  Seed 5 finishes at 119.4 —
+six tenths of a second of margin, so the clock risk is not gone, it is
+merely not expressed here.  The F59 mechanism (a sample outboard of ±78 mm is
+under the chassis, not in the mouth) still exists; the slower, honest dwell
+happens to reach every piece on these twelve draws.  And the robot still
+navigates on ground truth (§3 F38): odometry, drift and a hand-placed start
+pose are the next honesty costs, and they will take points back.
 
 ## 3. Findings — things the simulator discovered about the design
 
@@ -926,7 +929,8 @@ not an intake failure), and the twelve-seed mission is tabled in §2 —
 **+116.2 mean, 10/12 at maximum** after one knock-on fix: the heavier nose
 shifted the beam-2 stall-release bias by +2 mm and every T-joint opened to
 3–4 mm until the estimate was recalibrated in `seal_quarantine` (measured on
-seeds 1 and 8, corrected, re-verified 12/12 closed). Transit over a stray
+seeds 1 and 8, corrected, re-verified 12/12 closed).  Since raised to +120.0
+by F65's dwell fix. Transit over a stray
 disc with the knife lifted shoves it 51 mm straight along the drive line — the
 parked drum is a soft bumper — against the old model's constant bulldozing;
 lifting the arm too would need a sixth servo and is not built.
@@ -938,6 +942,40 @@ at 0.9 unmeasured; the knife's working height comes from its servo stop rather
 than floor-following (conservative — the real sprung knife does better); the
 20 mm tape is not modelled; and `surfacevel` remains on the belt box, which is
 exactly what a driven belt is.
+
+**F65. The sweep's early exit trusted one bore reading, and one reading lies.**
+`dwell_until_loaded` left the moment `mag_count() >= want` on a single sample —
+and a piece still riding the belt crosses under the bore ray for a few ticks
+reading like a full stack, so a sweep could declare itself done at T+13.8 with
+one disc aboard (seed 11, measured).  The race is microsecond-sensitive: any
+perturbation of the build reshuffles which seeds it bites, which is how it hid
+inside run-to-run variance through every earlier configuration — the +116.2
+card was paying for it without showing it.  The exit now requires the count to
+HOLD at `want` for 1.2 s, the same steadiness discipline the dwell's quiet
+timer always had.  With that one change the twelve-seed card is **+120.0 —
+every seed at maximum** — at the price of ~2 s more dwell per pass.  F60 said
+the count cannot be trusted to skip work; this is the exit that had not read
+F60.
+
+**F66. The sweeper fingers stay, their servos go.**  Re-measured under the F64
+intake (F63's verdict predates it and leaned on the powered-surface stand-in),
+twelve full matches each way with the F65 fix in:
+
+| configuration | mean at the buzzer | at +120 |
+|---|---|---|
+| **fingers (passive springs), knife 108** | **+120.0** | **12/12** |
+| no fingers, knife 108 | +108.9 | 7/12 |
+| no fingers, knife 146 (capture protocol only) | no better than knife 108 | — |
+
+Eleven points a match, same sign as F63, smaller magnitude — the drum now
+does part of the compliance job the fingers were kept for, but the outer band
+of the mouth is still theirs.  And the money half of the question has a clean
+answer: **the rake position is never commanded anywhere in the mission** — the
+fingers sit at OPEN for the whole match, so the two servos were torsion
+springs wearing servo badges.  The model now builds them that way (joint
+`stiffness=4, springref=OPEN`, bit-identical statics to the old kp=4 hold),
+and the build should too: a spring pivot per finger, two MG90S and two driver
+channels deleted.
 
 **F60. The bore rangefinder cannot be trusted to skip work.** It reads the top of
 the stack, so a piece that arrives perched — which is the entire reason

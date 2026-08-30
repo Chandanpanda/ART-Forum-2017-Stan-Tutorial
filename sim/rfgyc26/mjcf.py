@@ -605,7 +605,14 @@ def agent_a_body(name="agentA", pose=None, with_beams=False):
         body += [
             f'  <body name="A_finger_{tag}" pos="{lx(AgentA.SWEEP_PIVOT_X):.5f} '
             f'{s*mm(FINGER_PIVOT_Y):.5f} {mm(14.5):.5f}">',
-            f'    <joint name="A_f_{tag}" type="hinge" axis="0 0 1" range="-30 30" damping="0.01"/>',
+            # PASSIVE SPRING, NOT A SERVO (F65).  The rake position is never
+            # commanded anywhere in the mission -- the fingers sit at OPEN for
+            # the whole match -- so the "actuator" was a torsion spring wearing
+            # a servo's badge.  stiffness 4 at springref OPEN is bit-identical
+            # to the old kp=4 position hold; two MG90S and two driver channels
+            # leave the build.
+            f'    <joint name="A_f_{tag}" type="hinge" axis="0 0 1" range="-30 30" '
+            f'stiffness="4" springref="{s*AgentA.FINGER_OPEN:.2f}" damping="0.01"/>',
             f'    <geom name="A_fg_{tag}" class="robot" type="box" '
             f'pos="{-mm(FINGER_LEN/2):.5f} 0 0" '
             f'size="{mm(FINGER_LEN/2):.5f} {mm(2):.5f} {mm(12.5):.5f}" mass="0.03" '
@@ -701,8 +708,6 @@ def agent_a_body(name="agentA", pose=None, with_beams=False):
     act = f"""
     <velocity name="a_drive_l" joint="A_w_l" kv="5.0" ctrlrange="-30 30" forcerange="-0.5 0.5"/>
     <velocity name="a_drive_r" joint="A_w_r" kv="5.0" ctrlrange="-30 30" forcerange="-0.5 0.5"/>
-    <position name="a_finger_l" joint="A_f_l" kp="4" ctrlrange="-0.55 0.55"/>   <!-- RADIANS -->
-    <position name="a_finger_r" joint="A_f_r" kp="4" ctrlrange="-0.55 0.55"/>   <!-- RADIANS -->
     <!-- knife servo: the force cap IS the tip preload (~0.3 N at the tip);
          down (+droop) saturates against the floor, up (-lift) clears transit -->
     <position name="a_shim" joint="A_shim_j" kp="0.8" kv="0.05"

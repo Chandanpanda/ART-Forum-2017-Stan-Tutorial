@@ -56,11 +56,44 @@ belt, hold-down, chute, collar, escapement and feed plunger work inside — pres
 it again to bring them back. `--xray` starts that way. It is a rendering change
 only: `geom_rgba` does not touch contact, so an x-rayed run is bit-identical.
 
-**Left-drag orbits, right-drag pans, scroll zooms.** `[` and `]`
-cycle the fixed cameras — `field` (the whole 2000x1000 arena), `lab`, `quar`, and
-`A_chase` which follows the robot; `Esc` returns to the free camera and `Tab`
-toggles the side panel. The free camera opens framing the whole field, at which
-distance the robot reads as a single box — zoom in or press `]`.
+#### Moving the camera
+
+On the **free camera** the mouse does all three: **left-drag orbits, right-drag
+translates, scroll zooms.** The viewer opens on it, framed on the field from the
+south.
+
+**`[` and `]` switch to the model's four FIXED cameras — and on those the mouse
+does nothing at all.** No pan, no orbit, no zoom, and nothing on screen says so.
+If the view has gone dead, that is what happened: press `0` (or `Esc`) to get
+back. This is worth knowing before it costs you ten minutes.
+
+The same three operations are on the keyboard as well, which is easier for
+lining a shot up precisely and works whatever your mouse does with right-drag.
+**Every one of these keys also snaps back to the free camera**, so any of them
+is an escape hatch:
+
+| key | |
+|---|---|
+| **← → ↑ ↓** | translate over the field — left/right, away/toward you |
+| **Page Up / Page Down** | raise / lower the view |
+| **Home / End** | orbit left / right |
+| **`-` / `=`** | zoom out / in |
+| **`1` `2` `3`** | top-down / from the south / from the west |
+| **`4`** | close in on the robot and stay with it |
+| **`.`** | follow the robot (unlike the `A_chase` camera, you can still orbit and zoom) |
+| **`0`** | free camera, framed on the whole field |
+
+Steps scale with how far out you are: pulled back, one press moves you 180 mm;
+zoomed into the magazine, 4 mm. So the same keys work at both ends of the scale.
+
+The bindings are all arrows, digits and punctuation because **there was no
+choice** — MuJoCo binds every letter `A`–`Z` to a visualisation flag, so a
+letter here would toggle wireframe or shadows at the same time. (`X` for the
+chassis is the one exception, and it does also toggle MuJoCo's Texture flag;
+`rfgyc26/view.py::taken_letters()` prints the full list from the installed
+MuJoCo if you want to check.)
+
+`Esc` also returns to the free camera and `Tab` toggles the side panel.
 
 ### Auditing what is actually simulated
 

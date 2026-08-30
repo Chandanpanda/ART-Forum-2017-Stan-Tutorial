@@ -6,7 +6,7 @@ conveyor, reverse-dock the laboratory and post one disc into each hole.
 import argparse, os, sys, time
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import numpy as np, mujoco
-from rfgyc26 import mjcf, referee
+from rfgyc26 import mjcf, referee, view
 from rfgyc26.params import Field, AgentA
 from rfgyc26.robot import AgentARobot
 from rfgyc26.route import mission_agent_a
@@ -75,7 +75,15 @@ def main():
     shown = {"xray": a.xray}
     mjcf.set_xray(m, a.xray)
 
+    # The rig has to exist before the viewer can be asked for it and after the
+    # key callback has been handed over, so the callback reaches it by box.
+    rig = {"cam": None}
+
     def on_key(keycode):
+        # Camera first: those keys are all non-letters (see rfgyc26.view), so
+        # they cannot collide with anything below or inside the viewer.
+        if rig["cam"] is not None and rig["cam"].key(keycode):
+            return
         # X toggles the chassis plates in and out of view.  Rendering only --
         # geom_rgba does not touch contact, so the run is unaffected.
         if keycode in (ord("X"), ord("x")):
@@ -87,8 +95,11 @@ def main():
     if a.gui:
         import mujoco.viewer as _mjv          # 'import mujoco.viewer' would shadow the global
         viewer = _mjv.launch_passive(m, d, key_callback=on_key)
-        print("  viewer: X toggles the chassis transparent, [ and ] cycle cameras,"
-              " right-drag pans, scroll zooms")
+        rig["cam"] = view.CameraRig(
+            viewer, m,
+            follow=lambda: (rb.pose[0]/1000.0, rb.pose[1]/1000.0, 0.06))
+        print("  viewer: X toggles the chassis transparent")
+        print(view.HELP)
 
     if a.gui and a.speed == 0.0:
         a.speed = 1.0            # unthrottled is unwatchable; pace the viewer
@@ -113,6 +124,7 @@ def main():
             renderer.update_scene(d, camera=-1); frames.append(renderer.render())
         if viewer is not None and k % 20 == 0:
             if not viewer.is_running(): break
+            rig["cam"].tick()
             viewer.sync()
         if a.speed > 0 and k % 20 == 0:
             # launch_passive hands the physics loop to US, so the viewer does no

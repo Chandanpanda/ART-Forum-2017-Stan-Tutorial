@@ -8,7 +8,7 @@ be judged without waiting for the sample mission:
 import argparse, os, sys, time
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import numpy as np, mujoco
-from rfgyc26 import mjcf, referee
+from rfgyc26 import mjcf, referee, view
 from rfgyc26.params import Field, AgentA
 from rfgyc26.robot import AgentARobot
 from rfgyc26.route import place_beam, seal_quarantine, guard, turn_to, pursue
@@ -60,10 +60,20 @@ def main():
         else:
             yield from seal_quarantine(rb, clk=lambda: d.time)
 
+    rig = {"cam": None}
+
+    def on_key(keycode):
+        if rig["cam"] is not None:
+            rig["cam"].key(keycode)
+
     viewer = None
     if a.gui:
         import mujoco.viewer as _mjv
-        viewer = _mjv.launch_passive(m, d)
+        viewer = _mjv.launch_passive(m, d, key_callback=on_key)
+        rig["cam"] = view.CameraRig(
+            viewer, m,
+            follow=lambda: (rb.pose[0]/1000.0, rb.pose[1]/1000.0, 0.06))
+        print(view.HELP)
         if a.speed == 0.0:
             a.speed = 1.0
     run, k, done = script(), 0, False
@@ -77,6 +87,7 @@ def main():
         mujoco.mj_step(m, d); k += 1
         if viewer is not None and k % 20 == 0:
             if not viewer.is_running(): break
+            rig["cam"].tick()
             viewer.sync()
         if a.speed > 0 and k % 20 == 0:
             lag = d.time/a.speed - (time.perf_counter() - wall0)

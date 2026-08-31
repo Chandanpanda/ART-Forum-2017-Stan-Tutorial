@@ -286,6 +286,50 @@ FINGER_CLOSED  = AgentA.FINGER_RAKE
 GATE_OPEN_MM   = 62.0
 
 
+def _finger_set(tip_r, width, tag, rgba, indent="      "):
+    """The silicone fingers, as bodies that bend (F72).
+
+    Each is hinged at the hub with a torsional spring, so it deflects when it
+    meets something and springs back -- which is the whole reason a brush
+    roller works on pieces of different heights.  With ROLL_FINGERS off they
+    revert to F64's decoration and the rigid drum does the work, so the two
+    models can be run against each other rather than argued about.
+    """
+    out, n = [], AgentA.FING_N
+    hub, L = AgentA.FING_HUB_R, tip_r - AgentA.FING_HUB_R
+    for k in range(n):
+        ph = k * (360.0 / n)
+        c, s_ = cos(radians(ph)), sin(radians(ph))
+        if not AgentA.ROLL_FINGERS:
+            r0 = mm((hub + tip_r) / 2.0)
+            out.append(
+                f'{indent}<geom type="box" contype="0" conaffinity="0" '
+                f'pos="{r0*c:.5f} 0 {r0*s_:.5f}" euler="0 {-ph:.1f} 0" '
+                f'size="{mm(L/2):.5f} {mm(width/2-2):.5f} 0.0015" '
+                f'mass="0" rgba="{rgba}"/>')
+            continue
+        out += [
+            f'{indent}<body name="A_f{tag}{k}" pos="{mm(hub)*c:.5f} 0 {mm(hub)*s_:.5f}" '
+            f'euler="0 {-ph:.1f} 0">',
+            f'{indent}  <joint name="A_f{tag}{k}_j" type="hinge" axis="0 1 0" '
+            f'range="-75 75" stiffness="{AgentA.FING_K}" damping="{AgentA.FING_DAMP}" '
+            f'armature="1e-7"/>',
+            # BIT 3, WHICH ONLY GAME PIECES CARRY.  A finger is a separate
+            # BODY, and MuJoCo's <exclude> is body-level -- so putting sixteen
+            # of them on the intake's own bit 2 had them smashing into the knife
+            # shim, which is excluded from the DRUM but knows nothing about its
+            # fingers.  Discs went from 5 of 5 to 0 of 5.  A bit of their own
+            # says what is actually meant: fingers touch pieces, nothing else.
+            f'{indent}  <geom name="A_f{tag}{k}_g" type="box" contype="8" conaffinity="8" '
+            f'condim="3" friction="1.10 0.02 0.0002" '
+            f'solref="0.012 1" solimp="0.80 0.92 0.004" '
+            f'pos="{mm(L/2):.5f} 0 0" '
+            f'size="{mm(L/2):.5f} {mm(width/2-2):.5f} {mm(AgentA.FING_T/2):.5f}" '
+            f'mass="0.0015" rgba="{rgba}"/>',
+            f'{indent}</body>']
+    return out
+
+
 def agent_a_body(name="agentA", pose=None, with_beams=False):
     del CHUTE_GEOMS[:]
     """Returns (xml, actuator_xml, sensor_xml). pose = (field_x, field_y, heading_deg)."""
@@ -582,16 +626,8 @@ def agent_a_body(name="agentA", pose=None, with_beams=False):
     a_len = (a_dx**2 + a_dz**2) ** 0.5
     a_ang = degrees_atan(-a_dz, a_dx)
     arm_k = AgentA.ARM_PRELOAD_N * mm(a_dx) / 0.1396      # preload at 8 deg past stop
-    fingers = []
-    for k in range(8):
-        ph = k * 45.0
-        c, s_ = cos(radians(ph)), sin(radians(ph))
-        r0 = mm((10.0 + AgentA.ROLL_TIP_R) / 2.0)
-        fingers.append(
-            f'      <geom type="box" contype="0" conaffinity="0" '
-            f'pos="{r0*c:.5f} 0 {r0*s_:.5f}" euler="0 {-ph:.1f} 0" '
-            f'size="{mm((AgentA.ROLL_TIP_R-10.0)/2):.5f} {mm(AgentA.ROLL_W/2-2):.5f} 0.0015" '
-            f'mass="0" rgba="0.85 0.45 0.25 0.9"/>')
+    fingers = _finger_set(AgentA.ROLL_TIP_R, AgentA.ROLL_W, "d", "0.85 0.45 0.25 0.9",
+                          indent="      ")
     body += [
         f'  <body name="A_arm" pos="{lx(AgentA.ARM_PIVOT_X):.5f} 0 '
         f'{mm(AgentA.ARM_PIVOT_Z):.5f}">',
@@ -611,7 +647,8 @@ def agent_a_body(name="agentA", pose=None, with_beams=False):
         f'      <geom name="A_drum_g" type="cylinder" zaxis="0 1 0" contype="4" '
         f'conaffinity="4" condim="3" friction="0.90 0.02 0.0002" '
         f'solref="0.008 1" solimp="0.90 0.95 0.002" '
-        f'size="{mm(AgentA.ROLL_DRUM_R):.5f} {mm(AgentA.ROLL_W/2):.5f}" '
+        f'size="{mm(AgentA.FING_HUB_R if AgentA.ROLL_FINGERS else AgentA.ROLL_DRUM_R):.5f} '
+        f'{mm(AgentA.ROLL_W/2):.5f}" '
         f'mass="0.050" rgba="0.30 0.32 0.35 0.35"/>',
         f'      <geom name="A_hub_v" type="cylinder" zaxis="0 1 0" contype="0" '
         f'conaffinity="0" size="0.010 {mm(AgentA.ROLL_W/2):.5f}" mass="0.01" '
@@ -619,6 +656,36 @@ def agent_a_body(name="agentA", pose=None, with_beams=False):
     ] + fingers + [
         '    </body>',
         '  </body>']
+
+    # ---- trip bar (F71: lay the patients down before the mouth) ------------
+    if AgentA.TRIP_BAR:
+        body.append(
+            f'  <geom name="A_trip" type="cylinder" zaxis="0 1 0" contype="4" '
+            f'conaffinity="4" condim="3" friction="0.35 0.005 0.0001" '
+            f'pos="{lx(AgentA.TRIP_X):.5f} 0 {mm(AgentA.TRIP_Z):.5f}" '
+            f'size="{mm(AgentA.TRIP_R):.5f} {mm(AgentA.TRIP_W/2):.5f}" '
+            f'mass="0.006" rgba="0.85 0.85 0.30 1"/>')
+
+    # ---- upper roller (F71: the patients) ----------------------------------
+    # Fixed axis, not sprung: it only has to be there when a tall piece arrives,
+    # and a second swing arm would have to be tuned against the first.  Same
+    # collision mask as the lower drum -- pieces only (bit 2) -- so it cannot
+    # touch the floor, the shim or the chassis.
+    if AgentA.UP_ROLL:
+        up_f = _finger_set(AgentA.UP_TIP_R, AgentA.UP_W, "u", "0.25 0.65 0.85 0.9",
+                           indent="    ")
+        body += [
+            f'  <body name="A_up" pos="{lx(AgentA.UP_AXIS_X):.5f} 0 '
+            f'{mm(AgentA.UP_AXIS_Z):.5f}">',
+            f'    <joint name="A_up_j" type="hinge" axis="0 1 0" limited="false" '
+            f'damping="0.0001"/>',
+            f'    <geom name="A_up_g" type="cylinder" zaxis="0 1 0" contype="4" '
+            f'conaffinity="4" condim="3" friction="0.90 0.02 0.0002" '
+            f'solref="0.008 1" solimp="0.90 0.95 0.002" '
+            f'size="{mm(AgentA.FING_HUB_R if AgentA.ROLL_FINGERS else AgentA.UP_DRUM_R):.5f} '
+            f'{mm(AgentA.UP_W/2):.5f}" '
+            f'mass="0.050" rgba="0.20 0.45 0.60 0.35"/>',
+        ] + up_f + ['  </body>']
 
     # ---- sweeper fingers ---------------------------------------------------
     for s, tag in ((1, "l"), (-1, "r")):
@@ -793,6 +860,9 @@ def agent_a_body(name="agentA", pose=None, with_beams=False):
              f'  <camera name="A_chase" pos="{-mm(560):.4f} 0 {mm(420):.4f}" xyaxes="0 -1 0 0.6 0 0.8"/>',
              '</body>']
 
+    UPACT = ('<velocity name="a_uproll" joint="A_up_j" kv="0.010" ctrlrange="0 60" '
+             'forcerange="%.4f %.4f"/>' % (-AgentA.UP_TORQUE, AgentA.UP_TORQUE)
+             ) if AgentA.UP_ROLL else ""
     fs = -mm(AgentA.FEED_STROKE)
     nesc = -bpk
     esc2, bpk2 = 2*esc, 2*bpk           # a tendon of two joints reads twice the stroke
@@ -808,6 +878,7 @@ def agent_a_body(name="agentA", pose=None, with_beams=False):
     <!-- brush roller: velocity servo capped at the N20's stall torque -->
     <velocity name="a_roller" joint="A_drum_j" kv="0.010"
               ctrlrange="0 60" forcerange="{-AgentA.ROLL_TORQUE} {AgentA.ROLL_TORQUE}"/>
+    {UPACT}
     <!-- F68 trim slide: one MG90S through a Scotch yoke, carrying the whole
          posting head.  kv is high because the head must ARRIVE and stay put --
          a slide still ringing when the shelf opens is the same error the
@@ -864,7 +935,7 @@ def disc_body(i, x, y, z=None):
     z = z if z is not None else Piece.DISC_T/2 + 0.5
     return (f'<body name="disc{i}" pos="{mm(x):.5f} {mm(y):.5f} {mm(z):.5f}">'
             f'<freejoint name="disc{i}_f"/>'
-            f'<geom name="disc{i}_g" class="piece" contype="7" conaffinity="7" type="cylinder" '
+            f'<geom name="disc{i}_g" class="piece" contype="15" conaffinity="15" type="cylinder" '
             f'size="{mm(Piece.DISC_D/2):.5f} {mm(Piece.DISC_T/2):.5f}" '
             f'mass="{Piece.DISC_M/1000.0:.4f}" rgba="{C_DISC}"/></body>')
 
@@ -873,7 +944,12 @@ def cyl_body(i, x, y, colour):
             "green": "0.25 0.62 0.32 1"}[colour]
     return (f'<body name="cyl{i}" pos="{mm(x):.5f} {mm(y):.5f} {mm(Piece.CYL_H/2+0.5):.5f}">'
             f'<freejoint name="cyl{i}_f"/>'
-            f'<geom name="cyl{i}_g" class="piece" type="cylinder" '
+            # BIT 2, LIKE A SAMPLE.  Without it a patient cannot touch the
+            # intake at all -- shim, blade and both rollers are on bit 2 -- and
+            # the simulator dutifully reported ten of ten "bulldozed", which was
+            # a masking artefact and not physics.  A finding that is really a
+            # collision filter is the most expensive kind.
+            f'<geom name="cyl{i}_g" class="piece" contype="15" conaffinity="15" type="cylinder" '
             f'size="{mm(Piece.CYL_D/2):.5f} {mm(Piece.CYL_H/2):.5f}" '
             f'mass="{Piece.CYL_M/1000.0:.4f}" rgba="{rgba}"/></body>')
 
@@ -929,6 +1005,10 @@ def contact_pairs(agent="A", n_discs=3):
     # both pairings are masked out -- the real contacts are silent brushes.
     out.append(f'    <exclude body1="agentA" body2="A_shim"/>')
     out.append(f'    <exclude body1="A_shim" body2="A_drum"/>')
+    if AgentA.UP_ROLL:
+        out.append(f'    <exclude body1="agentA" body2="A_up"/>')
+        out.append(f'    <exclude body1="A_shim" body2="A_up"/>')
+        out.append(f'    <exclude body1="A_drum" body2="A_up"/>')
     # F68.  The posting head is a body now, so its bore ring and the escapement
     # riding on it would collide with the shell they live inside -- geometry
     # that was silent while they were all one body.  The shell's plates are

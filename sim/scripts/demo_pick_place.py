@@ -1,5 +1,13 @@
-"""Agent A end-to-end: sweep the quarantine, collect three sample discs on the
-conveyor, reverse-dock the laboratory and post one disc into each hole.
+"""Agent A end-to-end, on the WHOLE 250-point board.
+
+Sweeps the quarantine, collects three sample discs onto the conveyor, docks the
+laboratory on camera and posts one disc into each slot, drives the northern loop
+delivering ten medical kits into three destination zones, and seals the
+quarantine with both beams -- all inside the 120 s match.
+
+The scene is `scene_full_match`: samples, beams, ten kits aboard and twelve
+patients on the field.  The patients are NOT yet collected (that is the open
+80 points); they are in the model so the route has to drive around them.
 
     python scripts/demo_pick_place.py [--seed N] [--video] [--gui]
 """
@@ -7,7 +15,7 @@ import argparse, os, sys, time
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import numpy as np, mujoco
 from rfgyc26 import mjcf, referee, view
-from rfgyc26.params import Field, AgentA
+from rfgyc26.params import Field, AgentA, M2
 from rfgyc26.robot import AgentARobot
 from rfgyc26.route import mission_agent_a
 
@@ -47,8 +55,8 @@ def main():
     discs = random_discs(rng)
     print("sample discs at: " + ", ".join("(%.0f, %.0f)" % p for p in discs))
 
-    xml = mjcf.scene_pick_place(discs, with_beams=True)
-    path = os.path.join(os.path.dirname(__file__), "..", "models", "scene_pick_place.xml")
+    xml = mjcf.scene_full_match(discs, rng=rng)
+    path = os.path.join(os.path.dirname(__file__), "..", "models", "scene_full_match.xml")
     os.makedirs(os.path.dirname(path), exist_ok=True)   # .gitignore'd, so absent on a fresh clone
     open(path, "w").write(xml)
     m = mujoco.MjModel.from_xml_string(xml)
@@ -59,8 +67,18 @@ def main():
 
     dbid = [mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "disc%d" % i) for i in range(3)]
     bbid = [mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "beam%d" % i) for i in (1, 2)]
+    kbid = [mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "kit%d" % i) for i in range(M2.N_KITS)]
+    cbid = [mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "cyl%d" % i) for i in range(M2.N_CYL)]
+    ccol = []
+    for b in cbid:
+        g = m.geom_rgba[m.body_geomadr[b]]
+        ccol.append("red" if g[0] > 0.6 and g[1] < 0.4 else
+                    ("green" if g[1] > 0.5 and g[0] < 0.5 else "yellow"))
     beams = lambda: [(d.xpos[b][0]*1000, d.xpos[b][1]*1000, d.xpos[b][2]*1000,
                       d.xquat[b].copy()) for b in bbid]
+    kits  = lambda: [(d.xpos[b][0]*1000, d.xpos[b][1]*1000) for b in kbid]
+    cyls  = lambda: [(d.xpos[b][0]*1000, d.xpos[b][1]*1000, c)
+                     for b, c in zip(cbid, ccol)]
     mission = mission_agent_a(rb, Field.LAB_HOLE_X, mjcf.LAB_HOLE_Y, CHUTE_OFFSET,
                               clock=lambda: d.time)
 
@@ -71,7 +89,7 @@ def main():
         except Exception as e:
             print("  (offscreen render unavailable: %s -- continuing without video)" % e)
 
-    beams_buzzer = None
+    beams_buzzer = kits_buzzer = cyls_buzzer = None
     shown = {"xray": a.xray}
     mjcf.set_xray(m, a.xray)
 
@@ -112,7 +130,7 @@ def main():
         if at_buzzer is None and d.time >= MATCH:
             at_buzzer = [(d.xpos[b][0]*1000, d.xpos[b][1]*1000, d.xpos[b][2]*1000)
                          for b in dbid]
-            beams_buzzer = beams()
+            beams_buzzer, kits_buzzer, cyls_buzzer = beams(), kits(), cyls()
         if k % CTRL_DECIM == 0 and not done:
             try: next(mission)
             except StopIteration:
@@ -138,33 +156,32 @@ def main():
     if viewer is not None: viewer.close()
 
     pos = [(d.xpos[b][0]*1000, d.xpos[b][1]*1000, d.xpos[b][2]*1000) for b in dbid]
-    pts, detail = referee.score_discs(pos)
-    bpts_final, bdetail = referee.score_beams(beams())
     print("\n--- final sample positions ------------------------------")
     for i, (x, y, z) in enumerate(pos):
         near = min((np.hypot(x-hx, y-mjcf.LAB_HOLE_Y), j) for j, hx in enumerate(Field.LAB_HOLE_X))
         print("  disc %d  (%7.1f, %7.1f, z=%5.2f)   nearest hole %d at %6.1f mm"
               % (i, x, y, z, near[1]+1, near[0]))
-    print("\n--- referee ---------------------------------------------")
-    for i, what, p in detail:
-        print("  %-22s %+4d" % (("disc %d: %s" % (i, what)) if i >= 0 else what, p))
-    for _i, what, p in bdetail:
-        print("  %-22s %+4d" % (what[:22], p) if False else "  %-58s %+4d" % (what, p))
-    print("  %-22s %+4d   (sim %.1f s in %.1f s wall clock)"
-          % ("TOTAL", pts + bpts_final, d.time, time.time()-t0))
-    # The match is 120 s (rules g.1).  Anything not posted by then does not count,
-    # so state the verdict rather than leaving it implicit in the timings.
-    print("  %-22s %s   (%.1f s of 120 s)"
-          % ("match budget", "WITHIN" if d.time <= MATCH else
-             "OVER by %.0f s" % (d.time - MATCH), d.time))
-    # The score that would actually be awarded.  A run finishing at T+160 does not
-    # score what it finished with -- it scores what was on the field at 2 minutes.
-    bpts = pts if at_buzzer is None else referee.score_discs(at_buzzer)[0]
-    bbm  = bpts_final if beams_buzzer is None else referee.score_beams(beams_buzzer)[0]
-    print("  %-22s %+4d   <-- THE SCORE THAT COUNTS%s"
-          % ("AT THE BUZZER", bpts + bbm,
-             "" if at_buzzer is not None else "  (finished inside the match)"))
-    print("       samples %+d   beams %+d" % (bpts, bbm))
+
+    # THE SCORE THAT COUNTS IS THE ONE AT 120 s (rules g.1).  A run that
+    # finishes at T+160 scores what was on the field at two minutes, not what it
+    # ended up with, so the whole board is snapshotted at the buzzer.
+    if at_buzzer is None:
+        at_buzzer, beams_buzzer, kits_buzzer, cyls_buzzer = pos, beams(), kits(), cyls()
+        note = "  (finished inside the match)"
+    else:
+        note = ""
+    total, parts = referee.score_match(at_buzzer, beams_buzzer, kits_buzzer, cyls_buzzer)
+    print("\n--- referee, at the buzzer ------------------------------")
+    for name, p, detail in parts:
+        print("  %s" % name.upper())
+        for i, what, q in detail:
+            print("    %-56s %+4d" % (("disc %d: %s" % (i, what)) if i >= 0 else what, q))
+        print("    %-56s %+4d" % ("subtotal", p))
+    print("  %-58s %+4d%s" % ("TOTAL AT THE BUZZER", total, note))
+    print("  %-58s %s" % ("match budget",
+                          "WITHIN (%.1f s of 120)" % d.time if d.time <= MATCH
+                          else "the route ran to %.1f s; scored at 120" % d.time))
+    print("  (sim %.1f s in %.1f s wall clock)" % (d.time, time.time()-t0))
     if frames:
         out = os.path.join(os.path.dirname(__file__), "..", "out")
         os.makedirs(out, exist_ok=True)
@@ -176,7 +193,7 @@ def main():
             np.save(os.path.join(out, "pick_place_frames.npy"), np.array(frames[::5]))
             print("  %d frames -> out/pick_place_frames.npy "
                   "(pip install 'imageio[ffmpeg]' for mp4)" % len(frames))
-    return 0 if pts > 0 else 1
+    return 0 if total > 0 else 1
 
 
 if __name__ == "__main__":

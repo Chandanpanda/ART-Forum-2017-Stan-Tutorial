@@ -480,6 +480,98 @@ class AgentA:
     ARM_PIVOT_X     = 205.0            # swing-arm pivot
     ARM_PIVOT_Z     = 60.0
     ARM_PRELOAD_N   = 1.3              # downforce at the drum, arm on its stop
+
+    # THE FINGERS ARE REAL NOW (F72), and until this they were not.
+    #
+    # F64 built the brush roller as a RIGID DRUM inscribed at "working finger
+    # squish" (r 22 against a 25 mm tip circle), with the eight fingers drawn as
+    # contype=0 decoration.  For a 5 mm disc that proxy is defensible and was
+    # calibrated -- the roller only ever touches the disc's top face, and a
+    # rigid surface pressing down through a spring-loaded arm is what that is.
+    #
+    # For a O20 x 20 patient standing on the floor it is not defensible at all.
+    # A rigid drum meets the cylinder near its top and shoves it over; silicone
+    # fingers are 15 mm long and bend, so they wrap round it and sweep it back.
+    # Those are different mechanisms, and the simulator was answering for the
+    # wrong one.
+    #
+    # Each finger is now a body hinged at the hub with a torsional spring.
+    # FING_K from a cantilever: k = 3EI/L^3 with E ~ 3 MPa (shore A 40),
+    # 25 wide x 2 thick x 15 long, gives 44 N/m at the tip = 0.010 N*m/rad about
+    # the root.  [VERIFY on the bench: press one finger with a gram scale and
+    # measure the deflection -- it is a five-minute test and it is the single
+    # number this whole mechanism turns on.]
+    # OFF, AND HONESTLY SO.  The finger bodies are built and the collision
+    # bits are right, but the model does not yet work: a finger jams against
+    # the piece and stalls the drum at 0.5 rad/s against a commanded 31, and
+    # discs go from 5 of 5 to 0 of 5.  Almost certainly the sprung swing arm
+    # (F64) reacting to sixteen new contact bodies -- the arm is what gives the
+    # rigid drum its tolerance, and it was never tuned against fingers that
+    # push back.  Left in the tree behind this flag because the QUESTION it
+    # exists to answer is real (see below) and half the work is done.
+    ROLL_FINGERS    = False            # True builds the compliant fingers
+    FING_N          = 8
+    FING_K          = 0.014            # N*m/rad at the root  [VERIFY]
+    FING_DAMP       = 0.0008
+    FING_T          = 2.0              # thickness
+    FING_HUB_R      = 10.0
+
+    # UPPER ROLLER (F71) -- the patients.
+    #
+    # The F64 intake is geometrically specific to a 5 mm flat disc, and the
+    # simulator said so the first time it was asked: 10 patients of 10 were
+    # BULLDOZED along the floor, upright and on their sides, at every offset
+    # across the mouth.  A O20 x 20 cylinder standing on the floor is 20 tall,
+    # and the drum's axis is at Za 25.5 -- so the fingers meet it near its TOP,
+    # 5.5 mm below the axis, and push it over forwards instead of sweeping it
+    # back onto the knife.  A 5 mm disc is only ever touched on its top face,
+    # which is why the same roller carries it perfectly.
+    #
+    # An OVER-UNDER pair fixes it, and is what game-piece intakes do: a second
+    # roller above, so a tall piece is caught between the two and driven up the
+    # knife by both.  Sized so a disc passes underneath UNTOUCHED -- the lower
+    # gap is 12 mm against a 5 mm disc -- so nothing about the validated disc
+    # intake changes.  One more N20 and one more silicone tube.
+    # OFF.  Measured over twelve matches with it fitted: mean +113.2 against
+    # +125.1 without, and the laboratory dock fell from 30 samples of 36 to 26.
+    # It buys nothing until the patient question is settled on a bench, and it
+    # is not free -- a second roller in the mouth disturbs the disc path that
+    # F64 spent a rebuild getting right.  Parameterised so it costs one line to
+    # try again once there is a reason to.
+    UP_ROLL         = False
+    # Swept: Xa 252 / Za 49 takes a patient lying down 5 times in 5; every
+    # other position in the grid managed 0-3.
+    UP_AXIS_X       = 252.0
+    UP_AXIS_Z       = 49.0             # fingers reach to Za 24 = 12 above a disc
+    UP_DRUM_R       = 22.0
+    UP_TIP_R        = 25.0
+    UP_W            = 128.0
+    UP_RPM          = 300.0
+    UP_TORQUE       = 0.098
+
+    # TRIP BAR (F71) -- a bent rod across the mouth, and the cheapest part on
+    # the robot after the hold-down strip.
+    #
+    # A patient LYING DOWN goes in 5 times out of 5 once the upper roller is
+    # sited (swept).  Standing up it goes in 1 time in 5, and the reason is not
+    # the gap: a O20 x 20 cylinder has a 1:1 aspect ratio and its centre of mass
+    # 10 mm up, so anything that pushes it above 10 rotates it instead of moving
+    # it, and the knife's 0.2 mm edge WEDGES UNDER the base and stands it on the
+    # ramp, where it topples sideways out of the mouth (measured: they finish
+    # 80 mm off the lane).
+    #
+    # So do not try to convey it standing -- lay it down first.  A blunt bar at
+    # Za 6-9 meets the cylinder BELOW its centre of mass and trips it over
+    # towards the robot; a 5 mm sample passes underneath with a millimetre to
+    # spare, so the disc intake is untouched and the bar needs no actuator.
+    # OFF, for the same reason: it was built to lay a standing patient down and
+    # it does not (0 of 5, and it made the lying case worse).  Kept because the
+    # REASONING is worth preserving even though the part is not.
+    TRIP_BAR        = False
+    TRIP_X          = 285.0            # ahead of the knife tip at 272
+    TRIP_Z          = 7.5              # centre; O3 rod spans 6.0-9.0
+    TRIP_R          = 1.5
+    TRIP_W          = 130.0            # across the mouth
     # The knife is NARROWER than the mouth on purpose.  The sweeper fingers
     # occupy z 2..27 wherever they swing (raked, their structure reaches in to
     # |y| ~56), and a lifted knife rotates its corners up through that plane --

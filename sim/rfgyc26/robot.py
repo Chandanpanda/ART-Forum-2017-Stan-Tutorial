@@ -25,6 +25,7 @@ class AgentARobot:
         self.a_fr  = gid(mujoco.mjtObj.mjOBJ_ACTUATOR, "a_finger_r")
         self.a_shim  = gid(mujoco.mjtObj.mjOBJ_ACTUATOR, "a_shim")
         self.a_roller= gid(mujoco.mjtObj.mjOBJ_ACTUATOR, "a_roller")
+        self.a_up    = gid(mujoco.mjtObj.mjOBJ_ACTUATOR, "a_uproll")
         self.a_gate= gid(mujoco.mjtObj.mjOBJ_ACTUATOR, "a_gate")
         self.a_feed= gid(mujoco.mjtObj.mjOBJ_ACTUATOR, "a_feed")
         self.a_blade = gid(mujoco.mjtObj.mjOBJ_ACTUATOR, "a_blade")
@@ -105,8 +106,17 @@ class AgentARobot:
         if collecting:
             self.d.ctrl[self.a_shim]   = np.radians(AgentA.SHIM_DROOP)
             self.d.ctrl[self.a_roller] = 2*np.pi*(rpm or AgentA.ROLL_RPM)/60.0
+            if self.a_up >= 0:
+                # SAME SENSE AS THE LOWER DRUM, not counter-rotating.  What has
+                # to move rearward is the surface FACING THE PIECE, and for both
+                # rollers that is the underside -- the piece rides the shim
+                # below them, it is not squeezed in a gap between them.  Driven
+                # the other way the upper roller pushes the piece back out.
+                self.d.ctrl[self.a_up] = 2*np.pi*AgentA.UP_RPM/60.0
         else:
             self.d.ctrl[self.a_roller] = 0.0
+            if self.a_up >= 0:
+                self.d.ctrl[self.a_up] = 0.0
             self.d.ctrl[self.a_shim]   = -np.radians(AgentA.SHIM_LIFT)
 
     # ------------------------------------------------------------ mission 2

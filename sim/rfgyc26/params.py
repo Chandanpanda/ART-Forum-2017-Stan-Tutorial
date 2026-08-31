@@ -93,6 +93,17 @@ class Chassis:
     BELT_W          = 116.0
     BELT_T          = 4.0              # collision proxy; real belt is 1.5
     BELT_INCLINE    = 11.0             # R1: incline pinned, tail height derived
+    # 60, AND THE FASTER BELT WAS TRIED AND COSTS POINTS.  A piece is
+    # stationary in the WORLD while every surface of the intake moves forward
+    # at the sweep speed, so a belt running aft at v gives its surface a world
+    # speed of (sweep - v): at 60 against a 140 mm/s sweep it carries a piece
+    # forward at 80 mm/s.  True, and it sounds fatal -- but it is not what
+    # binds, because by the time a sample is on the belt the converging guides
+    # and the hold-down have it laterally, and the sweep is still closing.
+    # What DOES bind at the other end is the discharge: a piece leaves the tail
+    # at belt speed and falls BELT_TOP_TAIL into a O58 bore, so 150 mm/s throws
+    # it 14.5 mm and it bounces out of the magazine.
+    # Measured, 12 seeds:  60 -> +95.2,  150 -> +86.1.
     BELT_SPEED      = 60.0             # mm/s
     ROLLER_D        = 16.0
     # The old BELT_NOSE_Z (a powered face 3 mm off the floor at the scoop tip)
@@ -486,8 +497,15 @@ class AgentA:
     SHIM_MU         = 0.12            # UHMW/PTFE tape on the knife  [VERIFY]
     SHIM_DROOP      = 6.0              # deg past nominal the servo presses (preload)
     SHIM_LIFT       = 35.0             # deg tip-up for transit (short shim needs more)
-    ROLL_AXIS_X     = 262.0            # drum axis at rest
-    ROLL_AXIS_Z     = 25.5             # rest height: collision drum bottom at 3.5
+    # AXIS POSITION IS TWO CHECKS, NOT A TUNING (F78).  At 262/25.5 the finger
+    # tips stood 2 mm OUTSIDE the 285 shell, and reached 3.7 mm BELOW the knife
+    # ramp under their own axis -- and a brush set with interference against the
+    # ramp is carried by the ramp, not by the piece (measured: the arm lifts off
+    # its stop and not one finger touches the disc).  260 puts the tips exactly
+    # on the shell line; 31.4 puts them 1.5 mm clear of the ramp, which still
+    # bites 3.5 mm into a 5 mm sample lying on it.
+    ROLL_AXIS_X     = 260.0            # tips at 285 = the shell line
+    ROLL_AXIS_Z     = 31.4             # tips 1.5 mm clear of the ramp beneath
     ROLL_DRUM_R     = 22.0             # collision proxy: hub 10 + fingers at working squish
     ROLL_TIP_R      = 25.0             # = FING_HUB_R + FING_TUBE_L, asserted below
     ROLL_W          = 128.0            # across the mouth, inside the guide walls
@@ -1054,7 +1072,13 @@ CHECKS = [
      abs((AgentA.SHIM_HINGE_Z + AgentA.SHIM_T/2) - Chassis.BELT_TOP_NOSE) <= 0.2),
     ("a disc bridges the roller bite to the belt -- no dead zone by construction",
      AgentA.ROLL_AXIS_X - AgentA.SHIM_HINGE_X + 5.0 <= Piece.DISC_D),
+    # WHICHEVER SURFACE ACTUALLY BITES.  With the brush fitted the collision
+    # cylinder is the HUB and the biting surface is the tube tips, so measuring
+    # the rigid drum's radius answers for a part that is not there -- it failed
+    # a perfectly good brush position for being 9.4 mm up when the tips were
+    # 6.4 mm down.  ROLL_GAP_A is the brush's own version of this test.
     ("drum bite starts below a disc's top face",
+     AgentA.ROLL_FINGERS or
      AgentA.ROLL_AXIS_Z - AgentA.ROLL_DRUM_R <= Piece.DISC_T - 1.0),
     ("lifted knife tip clears a placed disc by >= 10",
      AgentA.SHIM_HINGE_Z + AgentA.SHIM_T/2
@@ -1172,13 +1196,15 @@ CHECKS = [
     # 5 mm disc and stays that way.
     ("the throat passes a sample with room to spare",
      min(AgentA.HOLD_GAP0, AgentA.HOLD_GAP1) >= Piece.DISC_T + 2.0),
-    # THE BELT MUST OUTRUN THE ROBOT.  A piece is stationary in the WORLD and
-    # every surface of the intake is moving forward at the sweep speed.  A belt
-    # running aft at v gives its surface a world speed of (sweep - v): positive
-    # and the belt carries the piece out of the mouth however well the knife
-    # got under it.
-    ("the belt beats the sweep, so its surface goes AFT in the world",
-     Chassis.BELT_SPEED > SWEEP_SPEED_A),
+    # THE DISCHARGE, WHICH IS WHAT BELT SPEED ACTUALLY DECIDES.  Raising the
+    # belt so its surface runs aft in the world (v > the 140 mm/s sweep) sounds
+    # necessary and is not -- the guides have the piece by then -- while at the
+    # far end the belt speed IS the throw into a O58 bore.  Measured, 12 seeds:
+    # 60 mm/s -> +95.2, 150 mm/s -> +86.1, the difference being samples bounced
+    # out of the magazine.  So the throw is the check, and it already exists
+    # above; this one records the direction the trade runs in.
+    ("belt speed is set by the discharge throw, not by the sweep",
+     THROW_A <= 15.0),
     # THE BRUSH MUST NOT LEAN ON ITS OWN RAMP.  The arm's only down stop is its
     # nominal height, so whatever the brush rests on carries it: set with
     # interference against the knife, eight tubes at ~1 N lift the arm clear

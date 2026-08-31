@@ -108,63 +108,65 @@ number from here.
 
 ## 2. Status — where this actually stands
 
-**All twelve randomised matches score the maximum +120 inside the 120 s
-clock** — all three samples posted, both beams standing, the quarantine
-sealed, mean at the buzzer **+120.0**.
+**Eleven of twelve randomised matches score the maximum +90, and the laboratory
+dock now places every sample the sweep delivers it — 34 of 34.**
 
-This is scored with **no powered-surface stand-in anywhere in it** (the intake
-is the F64 knife shim and brush roller, built in contact), with the honest
-T-joint (footprint gap, 3 mm tolerance, F56), and with the sweep's early exit
-required to hold its count for 1.2 s rather than trust one bore reading
-(F65 — the race that had been quietly taxing every earlier card).
++90, not +120, and that is not a regression — it is what an honest referee
+returns.  Two things changed:
+
+* **The slot test used to be wrong (F67).**  It allowed a disc 10 mm of radial
+  error and a centre height of `LAB_PLATE_T + DISC_T`, so a disc lying **flat on
+  top of the plate, 9 mm off the hole**, passed both and scored +15.  The rules
+  say "completely inside" (2.1).  Every earlier number in this file was
+  flattered by that.
+* **Mission 2 is now scored (§ referee).**  Three empty kit destination zones is
+  −10 each under the Senior table, so a Mission-1-only robot scores **+90, not
+  +120**.  That −30 is the honest cost of not having built Mission 2 yet.
 
 | | |
 |---|---|
 | Model generation from one parameter file | **works** |
-| 29 geometry assertions | **all pass** |
-| Conveyor carry on the incline | **works** — 59.2 mm/s against a 60 mm/s belt |
-| **Pick: samples off the floor into the magazine** | **12 of 12 matches take all three** — no stand-in |
-| Intake robustness (F64 matrix) | **±2 mm ride height, µ 0.30–0.60, 200–500 rpm, 100–215 mm/s: all pass** |
-| **Magazine escapement: one piece per stroke** | **works** — in the mission, not just on the bench |
-| **Dock a slot in a 6 mm laboratory** | **works**, ~15 s each |
-| **Post all three samples** | **12 of 12** |
+| 39 geometry assertions | **all pass** |
+| **Pick: samples off the floor into the magazine** | **34 of 36** — no stand-in |
+| **Post: samples from the magazine into a slot** | **34 of 34** — 100% of what it is given |
 | **Seal the quarantine with both beams** | **12 of 12**, +70 |
-| **Full match inside 120 s** | **12 of 12** (worst finish 119.4 — see the caveat below) |
+| **Full match inside 120 s** | **11 of 12** |
+| Mission 2 (kits, patients) | **not built** — costs −30 |
 
 ```
  seed        1     2     3     4     5     6     7     8     9    10    11    12
- samples   +50   +50   +50   +50   +50   +50   +50   +50   +50   +50   +50   +50
- beams     +70   +70   +70   +70   +70   +70   +70   +70   +70   +70   +70   +70
- BUZZER   +120  +120  +120  +120  +120  +120  +120  +120  +120  +120  +120  +120
- finish    112   107   112   108   119   107   116   110   115   106   117   109
- T-joint   0.9   0.1   0.3   0.5   0.5   0.0   2.0   0.0   0.5   0.2   1.7   0.9   mm
- mean at the buzzer  +120.0     sealed 12/12     over the clock 0/12
+ swept     3/3   3/3   3/3   3/3   3/3   3/3   3/3   3/3   3/3   3/3   1/3   3/3
+ placed    3/3   3/3   3/3   3/3   3/3   3/3   3/3   3/3   3/3   3/3   1/1   3/3
+ BUZZER    +90   +90   +90   +90   +90   +90   +90   +90   +90   +90   +49   +90
+ finish    100   110    99    92    98   104   104   102   100    94   118   109
+ mean +86.6      dock 34/34      sweep 34/36      the one loss is a SWEEP loss
 ```
 
-Where the clock goes, averaged over the twelve: **sweep 23.2 s, laboratory
-51.1 s, beams 37.3 s**.  The F65 fix spends ~2 s more per pass waiting for an
-honest count, and buys back every sample that used to leave the sweep aboard
-only on paper.
+Where the clock goes, averaged: **sweep 19.5 s, laboratory 40.8 s, beams
+37.5 s**.  The laboratory used to cost **53.0 s** — 44% of the match for 50
+points, with 130 points of Mission 2 waiting for a clock that did not exist.
+F68/F69 bought 12 s of it back and took the dock residual from ±4 mm to
+**1.0–1.3 mm**.
 
-Where this came from, same twelve seeds:
+### The slot pitch is no longer an assumption
 
-| | mean at buzzer | sealed | all 3 samples | over 120 s |
-|---|---|---|---|---|
-| samples only, before any of this | +44 | — | — | 5/12 |
-| samples + beams, first working version | +69 | 10/12 | 1/12 | 1/12 |
-| …after the clock work (lenient T-joint) | +101 | 10/12 | 8/12 | 2/12 |
-| …with the T-joint scored honestly | +110.3 | 11/12 | 9/12 | 1/12 |
-| …F64 intake built for real, stall bias recalibrated | +116.2 | 12/12 | 10/12 | 0/12 |
-| **now: F65 honest sweep exit, F66 passive-spring fingers** | **+120.0** | **12/12** | **12/12** | **0/12** |
+`Field.LAB_HOLE_X` is marked `[VERIFY]`: the rulebook says "3 marked slots of
+60 mm" and gives no pitch, and every route until now assumed 140 mm.  With the
+**real** pitch moved to 100, 120, 160 and 180 mm while the robot's own map still
+says 140, it places **43 of 45 samples**.  The camera measures what the rulebook
+declines to specify — which is the whole reason it is worth its power budget.
 
-**A perfect card is a statement about these twelve seeds, not about the
-robot.**  Three cautions before anyone celebrates.  Seed 5 finishes at 119.4 —
-six tenths of a second of margin, so the clock risk is not gone, it is
-merely not expressed here.  The F59 mechanism (a sample outboard of ±78 mm is
-under the chassis, not in the mouth) still exists; the slower, honest dwell
-happens to reach every piece on these twelve draws.  And the robot still
-navigates on ground truth (§3 F38): odometry, drift and a hand-placed start
-pose are the next honesty costs, and they will take points back.
+### What is still not honest
+
+* **Navigation is ground truth** (§3 F38).  The dock no longer depends on it —
+  the terminal is a relative measurement, which is the property that has to
+  survive the move to VIO — but getting to the pivot still does.
+* **Seed 11 collects one sample of three.**  That is the sweep, not the dock,
+  and it reproduces at `HEAD` before any of this work: `demo_capture` has
+  scored 2 of 3 on its fixed layout all along.  It is now the largest single
+  loss on the board and §8 lists it first.
+* **Mission 2 exists only in the referee and the scene builder.**  The robot
+  has no verb for a patient and drops kits by deactivating a weld.
 
 ## 3. Findings — things the simulator discovered about the design
 
@@ -1000,6 +1002,143 @@ quarantine, so they cannot precede the sweep, and once beam 1 is down the robot
 is **boxed in** (north of a 60 mm obstacle, west of a laboratory it cannot
 climb, 87 mm of gap against a 235 mm body). The beams have to be last.
 
+**F67. The referee was scoring discs that were not in the slot.**
+The test allowed 10 mm of radial error and a centre height of
+`LAB_PLATE_T + DISC_T`. A Ø56 disc lying **flat on top of a 6 mm plate** has its
+centre at Za 8.5, so it passed both — 9 mm off the hole, not in it at all,
+scored +15. The rules require "completely inside" (2.1). The honest test has no
+free parameters: a disc physically inside a Ø60 bore cannot be more than
+(60−56)/2 = 2.0 mm off its axis, and "inside" means its top is not above the
+plate's. Every mission number in this file before this finding was flattered by
+it, the robustness sweeps most of all, because a near miss that skates onto the
+plate looks exactly like a hit.
+
+**F68. The dock was expensive because a differential drive cannot move
+sideways — so the head was given a slide, and the escapement had to be rebuilt
+to make room for it.**
+
+The laboratory cost **53 s of a 120 s match** for 50 points (measured over six
+seeds: 18.6 + 17.4 + 17.0). The escapement was not what cost it — 34 of 36
+samples went in — the approach was. A Ø56 disc into a Ø60 slot has 2.0 mm of
+radial clearance and nothing widens that, so the old dock closed a chute 106 mm
+behind the axle onto a ±4 mm window by repeating whole reverse passes. Measured
+separately, **one turn-and-reverse takes 3.2 s and leaves the lateral error
+exactly as it found it**: lateral error can only be corrected by turning, and
+turning swings the chute. The hunt is inherent.
+
+*The trim slide.* One MG90S through a ±25 mm Scotch yoke carries the whole
+posting head — bore, collar, escapement, feed. The chassis stops trying to hit
+3 mm and the head takes the last few millimetres.
+
+*Why the escapement had to change.* Every lateral extent on the head is now
+spent twice, once by the mechanism and once by the trim. A single sliding shelf
+must roof a Ø66 bore closed **and** be entirely out from under a Ø56 disc open,
+so its stroke is at least 66 mm and it reaches 99 mm off the head before any
+trim is added. Cut to fit, it does not release the disc — it **perches** it on
+the few millimetres of shelf still under its far edge, and the returning shelf
+scoops it back up. Measured: **0 of 81** on the capture grid, against 23 before.
+
+*Two leaves.* Each roofs half the bore and retracts 37 mm, so the far edge is 70
+instead of 111 — and the release is **symmetric**, which fixes something the
+single shelf never did. A returning shelf used to sweep a released disc 10.7 mm
+sideways (F41) and could pinch one against a slot's countersink hard enough to
+bolt the robot to the laboratory (F55). Two leaves meeting at the axis apply no
+net side force: **a released disc now moves 0.11 mm laterally instead of 4.6**,
+and the capture grid went **23/81 → 55/81**. One pinion drives both racks, which
+is how the model couples them — one actuator on a fixed tendon, not two servos
+asked to agree.
+
+**F69. A reflectance sensor answers the wrong question. Two cameras on one plate
+answer the right one.**
+
+Rev C specified a TCRT array to find the slots, and F68 made it work: a 1.5 s
+servo sweep across the slot's rims gave ±22 mm of capture at under a millimetre
+of residual. Every millimetre of it was bought by **moving something**, because
+a reflectance sensor only ever answers "is there anything 14 mm below this one
+point" — so the robot has to move to ask again, and the whole dock was built
+around asking enough times.
+
+*Why not a depth-camera module.* A packaged stereo device hands over a dense
+depth map and charges a **minimum range** for it: `min_depth = f·B/levels`,
+which for a 75 mm baseline at 800P is 697 mm. The corridor south of the
+laboratory is 360 mm wide (F10), so the robot can never stand more than ~290 mm
+from its dock — a sensor with a 700 mm floor is blind for the entire approach.
+Dropping to 400P with extended disparity brings it to 173 mm and the whole
+design then has to be arranged around a blind cone it cannot avoid.
+
+None of that applies to a pair we mount ourselves, because the robot does not
+need a dense depth map. It needs **one feature**: the centre of a Ø60 circle.
+Found independently in each image and triangulated, that has no disparity search
+and therefore **no minimum range at all**.
+
+*The sensor is not the limit — the bracket is.* At 1280×720 and 102°, for a slot
+200 mm away:
+
+| | |
+|---|---|
+| ellipse centre, few hundred boundary pixels | 0.01 mm |
+| triangulated range, 130 mm baseline | 0.02 mm |
+| range from the **known** Ø60 diameter, one camera | 0.03 mm |
+| **camera-plate-to-bore calibration** | **1.0 mm** |
+| **mast flex at 200 mm/s, 0.2°** | **0.70 mm** |
+| ellipse-centre perspective bias at 45°, uncorrected | 0.46 mm |
+
+So spend the effort on a **short stiff mast**, on both cameras being on **one
+laser-cut plate** rather than two brackets, and on calibrating to the **bore**
+rather than only to each other. Do not spend it on megapixels.
+
+*102°, and the reason is coverage, not precision.* Counting slots whose **full
+rim** is in frame, over the whole band the corridor allows:
+
+```
+ HFOV  toe      d=140 130 120 110 100
+  66     8        3   3   2   2   0     loses the slot it is docking
+  66    12        2   2   2   2   0     toe alone does not fix it
+  78     8        3   3   3   3   0
+ 102     8        3   3   3   3   0
+```
+
+At 66° the **nearest** slot's rim leaves the frame first, so the robot keeps the
+two it is not docking and loses the one it is. 78 fixes it, 102 does no better —
+but 78 is not a stock Pi lens and 102 (Camera Module 3 Wide) is. The cost is
+focal length, which takes the lateral noise from 0.016 mm to 0.031, against a
+calibration bias of 1.0. It is free.
+
+*Validated against actual depth renders.* `see_lab()` projects ground truth and
+adds a sensor model rather than rendering, because rendering 20 fps for 120 s ×
+12 seeds is not affordable. That is only legitimate if what it claims to measure
+is really in the image, so the same poses were rendered and the slots found the
+way a depth pipeline would (fit the ground plane, find the holes). **Model and
+render agree to 0.2–1.4 mm in range.**
+
+The renders also caught a bias the model was missing. A slot is a Ø60 hole in a
+6 mm plate seen from 45°: its **floor** is a crescent, not a circle, because the
+near wall hides part of it. The centroid of "everything below plate level" is
+therefore off the slot's axis — measured at **−2.37 mm** for a slot straight
+behind the camera and **+1.56 mm** for one 140 mm to the far side, *constant with
+range* and signed by the viewing offset. That is a bias comparable to the entire
+rest of the budget, and the fix is in the pipeline, not the optics: **fit the top
+rim**, which is a real circle and is never occluded from above, instead of
+taking the centroid of what you can see through it.
+
+*Average in world, not in the robot frame.* Averaging ten frames in the robot's
+own frame silently assumes the robot is not moving, and it is — `look_lab` runs
+straight after a drive and the chassis is still coasting. 0.2 s at 170 mm/s is
+**34 mm of travel smeared into the answer**: one slot came back 9.9 mm out on a
+measurement whose noise is about one, and that sample missed its hole. Converting
+each frame to world before averaging is right whether the robot is moving or not
+— which also means the robot may look **while** it drives rather than stopping to.
+
+**F70. The bore's own clearance is spent twice.**
+F9 made the bore Ø66 for a Ø56 disc because a piece tipping off the belt tail
+into a Ø58 bore overshoots and jams on the rim. That 5 mm of play is spent again
+at the dock, where the piece lands wherever it happens to be sitting rather than
+on the bore's axis. Measured at the instant the escapement fires: **1.5, 3.9 and
+4.6 mm off axis**, on top of whatever the dock itself is off by. A taper over the
+bore's **last 8 mm** — Ø66 where the piece arrives, closing to Ø59.5 where it
+rests — gets both: **0.7 mm off axis**, and nothing about the catch changes. It
+is a funnel, and it is the reason funnels exist.
+
 ## 4. Modelling decisions you should know about
 
 Each of these is a deliberate, documented departure from the drawings.
@@ -1063,7 +1202,7 @@ point of listing them here is that none is optional.
 |---|---|---|
 | **Beam pockets lose their outboard walls** — inner wall on Ya 95.5/139.5, open bottom, the beam's own face is the envelope | The robot does not fit beside its own cargo once either beam is down (F44) | none, it is less material |
 | **Beams are carried 12 mm clear and set down to place** — one cradle servo per pocket, 34 mm stroke, 20 mm retaining lip | A dragging beam cannot cross the 6 mm laboratory, and that left no legal pivot in the southern half of the field (F45/F46) | 2 × MG90S-class servo + a cam |
-| **The escapement retainer shortens to 62 mm on a 64 mm stroke** | At 80/74 it parks 16.5 mm inside a beam pocket, at exactly the height a carried beam rides (F47) | none, it is a smaller part |
+| ~~**The escapement retainer shortens to 62 mm on a 64 mm stroke**~~ — **superseded by F68's two-leaf iris** | Still true that at 80/74 it parks 16.5 mm inside a beam pocket at a carried beam's height (F47); the iris solves it differently | see below |
 | **The pocket end stops start at Za 16, not at the floor** | Below Za 6 they plough the laboratory on every reverse dock (F52) | none |
 | **The cradle wedges the beam against the pocket wall** | A loose beam's inertia arrives late and destroys the dock (F50) | shape of the lip |
 | Sweeper finger pivots may need 5–8 mm aft | Only if you keep the beam's forward face flush with the chassis nose | none |
@@ -1072,11 +1211,33 @@ point of listing them here is that none is optional.
 | **The belt nose moves forward to Xa 241 on a Ø10 roller** — same plane, tail and magazine untouched; nose face top at 11.5 | The drum's bite must reach the belt or off-centre pieces stall in the unpowered stretch (F64 lesson 3). A Ø10 roller needs MR84ZZ-class bearings in a Ø10–12 tube | one small roller + 2 bearings |
 | **The hold-down strip grows to Xa 235 → 64, gap 18 → 8** | The brush feeds ten times faster than the old surface; a strip starting at 180 was landed ON, not slid under (F64 lesson 4) | none — same plate, longer |
 
+| **The escapement becomes a TWO-LEAF IRIS** — two shelf leaves (Ya −2→33, 37 mm stroke) and two retainer knives (Ya −1→23, 36 mm stroke), each pair on one pinion driving two racks | A single sliding shelf needs 66 mm of stroke and reaches Ya 99 before any trim; cut to fit it perches the disc instead of dropping it (0 of 81, measured). Two leaves halve the extent and release symmetrically — 0.11 mm of sideways sweep instead of 4.6 (F68) | same 2 servos, 4 laser-cut leaves + 2 pinions instead of 2 plates |
+| **The posting head rides a ±25 mm lateral trim slide** | A differential drive corrects lateral error only by turning, and turning swings a chute 106 mm behind the axle: the dock cost 53 s of a 120 s match hunting a ±4 mm window (F68) | 1 × MG90S + a Scotch yoke + a short linear rail |
+| **The bore gains a seat taper** — Ø66 at the mouth closing to Ø59.5 over its last 8 mm | The 5 mm of catch clearance F9 needs is spent again at the dock: the piece lands wherever it sits, 1.5–4.6 mm off axis. Tapered, 0.7 mm (F70) | a chamfer on a part already being made |
+| **TWO PI CAMERAS ON ONE LASER-CUT PLATE** at Xa 24 / Za 158, pitched 45° down and facing aft, 130 mm baseline, 8° toe-in, Camera Module 3 **Wide** (102°) | The laboratory dock is the only task on the board needing millimetre vision and it is a reverse dock. Self-built rather than a depth module because a packaged pair's minimum range (173–697 mm) exceeds the whole corridor the robot can stand in (F69) | 2 × Camera Module 3 Wide + a plate + a stiff mast |
+| **The four TCRT slot/edge probes are DELETED** | Replaced by the cameras; they also forced the escapement retainer 9 mm further outboard than it needed to be (F69) | −4 sensors and their wiring |
+
 Bench-test before committing: the knife-and-roller intake on real MDF discs
 (the F64 rig protocol: singles across the mouth, tandem, abreast, held 2 mm
 high and low), and turn efficiency for `Chassis.WHEEL_COLLISION_W`.
 
+**And bench-test the camera rig's rigidity, because that is the error budget.**
+The sensor contributes 0.01–0.03 mm and the bracket 1.0; the way to find out
+whether the mast is stiff enough is to put a slot-sized target 200 mm behind the
+robot, drive it over the field at 200 mm/s, and see how far the measured centre
+moves. Anything under a millimetre is fine. Calibrate the pair to the **bore**,
+not only to each other, and fit the slot's **top rim** rather than the centroid
+of the hole — a naive centroid is biased 1.5–2.4 mm (F69).
+
 ## 8. Next steps, in the order I would do them
+
+0. **Build Mission 2.**  It is 130 of the 250 points on the board and the robot
+   currently scores **−30** of it: three empty kit destination zones at −10 each,
+   before anything is counted.  The referee and the scene builder are done
+   (`score_kits`, `score_cylinders`, `scene_full_match`); what does not exist is
+   any robot verb for a patient, or a route that visits the side areas.  The
+   laboratory work above exists mostly to pay for this: the match now finishes
+   around T+100 with ~20 s of slack where before it had none.
 
 1. **Decide whether the front ball transfers can move — everything else at the
    intake is blocked behind them.** Three matches in twelve lose a sample, and

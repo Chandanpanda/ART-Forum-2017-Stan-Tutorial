@@ -287,46 +287,53 @@ GATE_OPEN_MM   = 62.0
 
 
 def _finger_set(tip_r, width, tag, rgba, indent="      "):
-    """The silicone fingers, as bodies that bend (F72).
+    """The silicone tubes, as bodies that bend (F72).
 
-    Each is hinged at the hub with a torsional spring, so it deflects when it
-    meets something and springs back -- which is the whole reason a brush
-    roller works on pieces of different heights.  With ROLL_FINGERS off they
-    revert to F64's decoration and the rigid drum does the work, so the two
-    models can be run against each other rather than argued about.
+    Rows across the drum, staggered half a pitch row to row, each tube hinged
+    at the hub with a torsional spring taken from the part's own bending
+    stiffness.  With ROLL_FINGERS off they revert to F64's decoration and the
+    rigid drum does the work, so the two models can be run against each other
+    rather than argued about.
     """
-    out, n = [], AgentA.FING_N
+    out = []
     hub, L = AgentA.FING_HUB_R, tip_r - AgentA.FING_HUB_R
-    for k in range(n):
-        ph = k * (360.0 / n)
-        c, s_ = cos(radians(ph)), sin(radians(ph))
-        if not AgentA.ROLL_FINGERS:
+    nr, na = AgentA.FING_ROWS, AgentA.FING_AROUND
+    if not AgentA.ROLL_FINGERS:
+        for k in range(8):
+            ph = k * 45.0
+            c, s_ = cos(radians(ph)), sin(radians(ph))
             r0 = mm((hub + tip_r) / 2.0)
             out.append(
                 f'{indent}<geom type="box" contype="0" conaffinity="0" '
                 f'pos="{r0*c:.5f} 0 {r0*s_:.5f}" euler="0 {-ph:.1f} 0" '
                 f'size="{mm(L/2):.5f} {mm(width/2-2):.5f} 0.0015" '
                 f'mass="0" rgba="{rgba}"/>')
-            continue
-        out += [
-            f'{indent}<body name="A_f{tag}{k}" pos="{mm(hub)*c:.5f} 0 {mm(hub)*s_:.5f}" '
-            f'euler="0 {-ph:.1f} 0">',
-            f'{indent}  <joint name="A_f{tag}{k}_j" type="hinge" axis="0 1 0" '
-            f'range="-75 75" stiffness="{AgentA.FING_K}" damping="{AgentA.FING_DAMP}" '
-            f'armature="1e-7"/>',
-            # BIT 3, WHICH ONLY GAME PIECES CARRY.  A finger is a separate
-            # BODY, and MuJoCo's <exclude> is body-level -- so putting sixteen
-            # of them on the intake's own bit 2 had them smashing into the knife
-            # shim, which is excluded from the DRUM but knows nothing about its
-            # fingers.  Discs went from 5 of 5 to 0 of 5.  A bit of their own
-            # says what is actually meant: fingers touch pieces, nothing else.
-            f'{indent}  <geom name="A_f{tag}{k}_g" type="box" contype="8" conaffinity="8" '
-            f'condim="3" friction="1.10 0.02 0.0002" '
-            f'solref="0.012 1" solimp="0.80 0.92 0.004" '
-            f'pos="{mm(L/2):.5f} 0 0" '
-            f'size="{mm(L/2):.5f} {mm(width/2-2):.5f} {mm(AgentA.FING_T/2):.5f}" '
-            f'mass="0.0015" rgba="{rgba}"/>',
-            f'{indent}</body>']
+        return out
+    # A CAPSULE'S CAP IS PART OF ITS RADIUS.  fromto 0..L with size r sweeps
+    # hub+L+r, not hub+L -- the tube tips would stand 3 mm proud of the O50
+    # circle the part actually makes.  Draw the segment 3 mm short so the swept
+    # radius is ROLL_TIP_R by construction.
+    seg = max(L - AgentA.FING_TUBE_R, 0.5)
+    span = width - 2*AgentA.FING_TUBE_R - 4.0
+    for r in range(nr):
+        yy = -span/2 + span*r/(nr-1) if nr > 1 else 0.0
+        for k in range(na):
+            ph = k*(360.0/na) + (180.0/na if r % 2 else 0.0)
+            c, s_ = cos(radians(ph)), sin(radians(ph))
+            nm = f"A_f{tag}{r}_{k}"
+            out += [
+                f'{indent}<body name="{nm}" pos="{mm(hub)*c:.5f} {mm(yy):.5f} '
+                f'{mm(hub)*s_:.5f}" euler="0 {-ph:.1f} 0">',
+                f'{indent}  <joint name="{nm}_j" type="hinge" axis="0 1 0" '
+                f'range="-80 80" stiffness="{AgentA.FING_K}" '
+                f'damping="{AgentA.FING_DAMP}" armature="2e-8"/>',
+                f'{indent}  <geom name="{nm}_g" type="capsule" contype="8" '
+                f'conaffinity="24" condim="3" friction="1.20 0.02 0.0002" '
+                f'solref="0.010 1" solimp="0.85 0.95 0.003" '
+                f'fromto="0 0 0 {mm(seg):.5f} 0 0" '
+                f'size="{mm(AgentA.FING_TUBE_R):.5f}" '
+                f'mass="{AgentA.FING_MASS}" rgba="{rgba}"/>',
+                f'{indent}</body>']
     return out
 
 
@@ -577,11 +584,25 @@ def agent_a_body(name="agentA", pose=None, with_beams=False):
     s_len  = (s_run**2 + s_drop**2) ** 0.5
     s_ang  = degrees_atan(s_drop, s_run)
     SHIM_W = AgentA.SHIM_W                # narrower than the mouth -- see params
+    PAD_T  = 24.0                         # brush-only backing under the plate
+    SKIVE_UP = AgentA.SHIM_T/2.0 - 0.10   # razor top plane == plate top plane
+    PAD_H  = PAD_T/2.0 - AgentA.SHIM_T/2.0
     body += [
         f'  <body name="A_shim" pos="{lx(AgentA.SHIM_HINGE_X):.5f} 0 '
         f'{mm(AgentA.SHIM_HINGE_Z):.5f}">',
+        # THE DROOP STOP IS THE FLOOR, AND IT HAS TO EXIST (F73).  The 0.5
+        # spring shim is preloaded DOWN and its tip rests on the field; the
+        # servo pushes past nominal and the floor takes it.  The plate is
+        # floor-excluded here (a razor at floor level would be a wall, not a
+        # wedge), so nothing was taking it: commanded to +6 the plate simply
+        # SANK, tip 3.75 mm under the floor line instead of 0.34, ramp 26 deg
+        # instead of 20, and the knife edge effectively 6 mm back from where
+        # params says it is.  The joint limit is that floor: the servo still
+        # commands SHIM_DROOP, so the preload is real, but the stop holds the
+        # geometry at nominal.
         f'    <joint name="A_shim_j" type="hinge" axis="0 1 0" '
-        f'range="{-AgentA.SHIM_LIFT:.1f} {AgentA.SHIM_DROOP:.1f}" damping="0.005"/>',
+        f'range="{-AgentA.SHIM_LIFT:.1f} 0" damping="0.005" '
+        f'solreflimit="0.002 1" solimplimit="0.98 0.999 0.0001"/>',
         f'    <geom name="A_shim_g" type="box" contype="4" conaffinity="4" condim="3" '
         f'friction="0.30 0.002 0.0001" solref="0.004 1" solimp="0.95 0.99 0.001" '
         f'pos="{mm(s_run/2):.5f} 0 {mm(-s_drop/2):.5f}" '
@@ -600,10 +621,37 @@ def agent_a_body(name="agentA", pose=None, with_beams=False):
         f'    <geom name="A_shim_blade" type="box" contype="4" conaffinity="4" '
         f'condim="3" friction="0.30 0.002 0.0001" '
         f'solref="0.004 1" solimp="0.95 0.99 0.001" '
-        f'pos="{mm(s_run/2 + (s_len/2 + 2.0)*cos(radians(s_ang)) + 0.15*sin(radians(s_ang))):.5f} 0 '
-        f'{mm(-s_drop/2 - (s_len/2 + 2.0)*sin(radians(s_ang)) - 0.15*cos(radians(s_ang))):.5f}" '
+        # SKIVE_UP puts the razor's TOP PLANE on the plate's top plane, which
+        # is the whole point of a skived edge: one unbroken ramp from under the
+        # piece to the belt.  It was signed the wrong way (+sin, -cos is not a
+        # move along the plate normal), which dropped the razor 0.30 mm BELOW
+        # the plate -- so the piece rode the razor up and then met the plate's
+        # end face as a 0.30 mm wall and stopped dead, 272.3 in robot X, every
+        # single time.  Measured: the disc lifts 0.2 mm and is then bulldozed.
+        f'pos="{mm(s_run/2 + (s_len/2 + 2.0)*cos(radians(s_ang)) + SKIVE_UP*sin(radians(s_ang))):.5f} 0 '
+        f'{mm(-s_drop/2 - (s_len/2 + 2.0)*sin(radians(s_ang)) + SKIVE_UP*cos(radians(s_ang))):.5f}" '
         f'size="0.003 {mm(SHIM_W/2 - 1.0):.5f} 0.0001" '
         f'euler="0 {s_ang:.4f} 0" mass="0.003" rgba="0.80 0.80 0.85 1"/>',
+        # THE BRUSH BEARS ON THE KNIFE, AND MAY NOT LIFT IT (F73).
+        # The tubes must feel the ramp -- a roller set so low that its fingers
+        # are folded flat on the plate has no reach left for a piece, and a
+        # model that lets them pass through it cannot say so.  But a O6 tube
+        # against a 0.5 mm plate ENGULFS it: the capsule wraps the edge, gets
+        # under the plate and jacks the knife up.  Measured, before this pad
+        # existed: 19 finger-on-shim contacts holding the knife at -21 deg,
+        # tip at Za +12.6 instead of +0.5, and every disc then skated under a
+        # knife that was no longer on the floor.
+        # So the brush rides a PAD: same top plane as the plate, 10 mm of
+        # backing under it, and its own mask bit (4) so it is visible to the
+        # tubes and to nothing else.  It is not a part -- it is the plate's
+        # own top surface, given enough thickness to be a surface.
+        f'    <geom name="A_shim_pad" type="box" contype="16" conaffinity="0" '
+        f'condim="3" friction="0.30 0.002 0.0001" solref="0.004 1" '
+        f'solimp="0.95 0.99 0.001" '
+        f'pos="{mm(s_run/2 - PAD_H*sin(radians(s_ang))):.5f} 0 '
+        f'{mm(-s_drop/2 - PAD_H*cos(radians(s_ang))):.5f}" '
+        f'size="{mm(s_len/2):.5f} {mm(SHIM_W/2):.5f} {mm(PAD_T/2):.5f}" '
+        f'euler="0 {s_ang:.4f} 0" mass="0" rgba="0.72 0.72 0.75 0.15"/>',
         '  </body>']
 
     # ---- brush roller (F64: conveyance) ------------------------------------
@@ -628,20 +676,34 @@ def agent_a_body(name="agentA", pose=None, with_beams=False):
     arm_k = AgentA.ARM_PRELOAD_N * mm(a_dx) / 0.1396      # preload at 8 deg past stop
     fingers = _finger_set(AgentA.ROLL_TIP_R, AgentA.ROLL_W, "d", "0.85 0.45 0.25 0.9",
                           indent="      ")
+    # THE ARM'S ONLY DOWN STOP IS ITS OWN NOMINAL HEIGHT, so anything the
+    # brush leans on carries it: set with interference against the knife ramp,
+    # eight tubes at ~1 N each lift the arm clean off that stop and the brush
+    # then rides the RAMP and never the piece (measured: not one finger-on-disc
+    # contact in a whole approach).  ARM_SPRUNG=False bolts the axis down and
+    # leaves the compliance where the part actually has it -- in the tubes,
+    # which bend 80 deg -- so the two can be compared instead of assumed.
+    if AgentA.ARM_SPRUNG:
+        body += [
+            f'  <body name="A_arm" pos="{lx(AgentA.ARM_PIVOT_X):.5f} 0 '
+            f'{mm(AgentA.ARM_PIVOT_Z):.5f}">',
+            f'    <joint name="A_arm_j" type="hinge" axis="0 1 0" range="-40 0" '
+            f'stiffness="{arm_k:.4f}" springref="8" damping="0.02"/>',
+            f'    <geom name="A_arm_l" type="box" contype="0" conaffinity="0" '
+            f'pos="{mm(a_dx/2):.5f} {mm(AgentA.ROLL_W/2+3):.5f} {mm(a_dz/2):.5f}" '
+            f'euler="0 {a_ang:.4f} 0" size="{mm(a_len/2):.5f} 0.002 0.0025" '
+            f'mass="0.008" rgba="0.35 0.37 0.40 1"/>',
+            f'    <geom name="A_arm_r" type="box" contype="0" conaffinity="0" '
+            f'pos="{mm(a_dx/2):.5f} {-mm(AgentA.ROLL_W/2+3):.5f} {mm(a_dz/2):.5f}" '
+            f'euler="0 {a_ang:.4f} 0" size="{mm(a_len/2):.5f} 0.002 0.0025" '
+            f'mass="0.008" rgba="0.35 0.37 0.40 1"/>']
+        drum_pos = f'{mm(a_dx):.5f} 0 {mm(a_dz):.5f}'
+    else:
+        body += [f'  <body name="A_arm" pos="{lx(AgentA.ROLL_AXIS_X):.5f} 0 '
+                 f'{mm(AgentA.ROLL_AXIS_Z):.5f}">']
+        drum_pos = '0 0 0'
     body += [
-        f'  <body name="A_arm" pos="{lx(AgentA.ARM_PIVOT_X):.5f} 0 '
-        f'{mm(AgentA.ARM_PIVOT_Z):.5f}">',
-        f'    <joint name="A_arm_j" type="hinge" axis="0 1 0" range="-40 0" '
-        f'stiffness="{arm_k:.4f}" springref="8" damping="0.02"/>',
-        f'    <geom name="A_arm_l" type="box" contype="0" conaffinity="0" '
-        f'pos="{mm(a_dx/2):.5f} {mm(AgentA.ROLL_W/2+3):.5f} {mm(a_dz/2):.5f}" '
-        f'euler="0 {a_ang:.4f} 0" size="{mm(a_len/2):.5f} 0.002 0.0025" '
-        f'mass="0.008" rgba="0.35 0.37 0.40 1"/>',
-        f'    <geom name="A_arm_r" type="box" contype="0" conaffinity="0" '
-        f'pos="{mm(a_dx/2):.5f} {-mm(AgentA.ROLL_W/2+3):.5f} {mm(a_dz/2):.5f}" '
-        f'euler="0 {a_ang:.4f} 0" size="{mm(a_len/2):.5f} 0.002 0.0025" '
-        f'mass="0.008" rgba="0.35 0.37 0.40 1"/>',
-        f'    <body name="A_drum" pos="{mm(a_dx):.5f} 0 {mm(a_dz):.5f}">',
+        f'    <body name="A_drum" pos="{drum_pos}">',
         f'      <joint name="A_drum_j" type="hinge" axis="0 1 0" limited="false" '
         f'damping="0.0001"/>',
         f'      <geom name="A_drum_g" type="cylinder" zaxis="0 1 0" contype="4" '
@@ -997,7 +1059,7 @@ def beam_body(i, x, y, length, heading_deg, mass, z0=0.5):
 
 
 # ------------------------------------------------------------------ scenes
-def contact_pairs(agent="A", n_discs=3):
+def contact_pairs(agent="A", n_discs=3, n_cyls=0):
     """Explicit friction pairs -- see note in scene()."""
     out = ["  <contact>"]
     # The knife shim rides inside the chassis envelope (guide walls seal to its
@@ -1030,29 +1092,36 @@ def contact_pairs(agent="A", n_discs=3):
     # The gate must slide OUT FROM UNDER the disc.  MuJoCo takes the element-wise
     # MAX of the two geoms' friction, so a smooth gate against a 0.6 piece still
     # gets 0.6 -- and the disc simply rode the gate out of the chute.
-    for i in range(n_discs):
-        out.append(f'    <pair geom1="{agent}_feed_g" geom2="disc{i}_g" '
+    # EVERY PIECE, NOT JUST THE DISCS (F73).  These pairs exist because MuJoCo
+    # takes the element-wise MAX of two geoms' friction, so a slippery surface
+    # against a 0.6 piece IS a 0.6 surface.  They were written for the samples
+    # and the patients never got them: a O20 patient met the knife, the guides
+    # and the chute at wood-on-whiteboard friction, which is not what any of
+    # those parts are made of, and the knife it met was as grippy as the field.
+    for pg in ([f"disc{i}_g" for i in range(n_discs)]
+               + [f"cyl{i}_g" for i in range(n_cyls)]):
+        out.append(f'    <pair geom1="{agent}_feed_g" geom2="{pg}" '
                    f'friction="0.06 0.06 0.0005 0.0001 0.0001" '
                    f'solref="0.004 1" solimp="0.95 0.99 0.001"/>')
         for gg in ("gate_l_g", "gate_r_g", "blade_l_g", "blade_r_g",
                    "blade_l_lip", "blade_r_lip"):
-            out.append(f'    <pair geom1="{agent}_{gg}" geom2="disc{i}_g" '
+            out.append(f'    <pair geom1="{agent}_{gg}" geom2="{pg}" '
                        f'friction="0.04 0.04 0.0005 0.0001 0.0001" '
                        f'solref="0.004 1" solimp="0.95 0.99 0.001"/>')
         # Converging guides are printed PETG: slippery.  Combined at the floor's
         # 0.6 the discs jammed across the throat instead of single-filing -- the
         # spec's own "#1 jam risk", reproduced.
         for g in ("guide_l", "guide_r", "lane_l", "lane_r"):
-            out.append(f'    <pair geom1="{agent}_{g}" geom2="disc{i}_g" '
+            out.append(f'    <pair geom1="{agent}_{g}" geom2="{pg}" '
                        f'friction="0.08 0.08 0.001 0.0001 0.0001"/>')
         # The knife is polished spring steel; MuJoCo's element-wise MAX would
         # otherwise hand it the disc's 0.6 and brake every climb.
         for g in ("shim_g", "shim_blade"):
-            out.append(f'    <pair geom1="{agent}_{g}" geom2="disc{i}_g" '
-                       f'friction="0.30 0.30 0.002 0.0001 0.0001" '
+            out.append(f'    <pair geom1="{agent}_{g}" geom2="{pg}" '
+                       f'friction="{AgentA.SHIM_MU} {AgentA.SHIM_MU} 0.002 0.0001 0.0001" '
                        f'solref="0.004 1" solimp="0.95 0.99 0.001"/>')
         for nm in CHUTE_GEOMS + CONE_GEOMS.get("A_chutelead", []):
-            out.append(f'    <pair geom1="{nm}" geom2="disc{i}_g" '
+            out.append(f'    <pair geom1="{nm}" geom2="{pg}" '
                        f'friction="0.08 0.08 0.001 0.0001 0.0001"/>')
 
     out.append("  </contact>")
@@ -1119,7 +1188,7 @@ def scene_pick_place(disc_positions, robot_pose=None, with_beams=False):
                         for i in (1, 2))
               + "  </equality>")
     return scene("rfgyc26_pick_place", parts, act, sen,
-                 contacts=contact_pairs(n_discs=len(disc_positions)), equality=eq)
+                 contacts=contact_pairs(n_discs=len(disc_positions), n_cyls=0), equality=eq)
 
 
 def scene_full_match(disc_positions, robot_pose=None, rng=None, kits_aboard=True):
@@ -1142,7 +1211,9 @@ def scene_full_match(disc_positions, robot_pose=None, rng=None, kits_aboard=True
                                      (AgentA.BEAM2_LOCAL, Piece.BEAM2_L, Piece.BEAM2_M)), 1):
         wx, wy = local_to_world(px, py, ph, loc[0], loc[1])
         parts.append(beam_body(i, wx, wy, L, ph, M, z0=AgentA.CARRY_Z + 0.2))
-    for i, (cx, cy, col) in enumerate(m2_layout(rng)):
+    _cyls = m2_layout(rng)
+    n_cyl = len(_cyls)
+    for i, (cx, cy, col) in enumerate(_cyls):
         parts.append(cyl_body(i, cx, cy, col))
     # KITS RIDE IN THREE HOPPERS, ONE PER DESTINATION.  Grouped before the
     # match, so delivery is "open hopper X" and never a sorting problem.
@@ -1169,7 +1240,7 @@ def scene_full_match(disc_positions, robot_pose=None, rng=None, kits_aboard=True
                     for i in range(M2.N_KITS) if kits_aboard)
           + "  </equality>")
     return scene("rfgyc26_full_match", parts, act, sen,
-                 contacts=contact_pairs(n_discs=len(disc_positions)), equality=eq)
+                 contacts=contact_pairs(n_discs=len(disc_positions), n_cyls=n_cyl), equality=eq)
 
 
 def scene_belt_rig(n_pieces=4, incline=None, speed=None):

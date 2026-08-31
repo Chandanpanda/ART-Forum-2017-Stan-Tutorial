@@ -7,7 +7,7 @@ Every value traces to the Rev C source set. Values the spec tagged [VERIFY], and
 the ten contradictions resolved in RFGYC26_simulation_plan.md, are marked below.
 check_geometry.py re-derives the over-determined quantities and fails loudly.
 """
-from math import tan, radians, cos, sin, sqrt, atan2, degrees
+from math import tan, radians, cos, sin, sqrt, atan, atan2, degrees
 
 # ---------------------------------------------------------------- conversions
 def mm(x):  return x / 1000.0          # mm -> m
@@ -468,6 +468,7 @@ class AgentA:
     # passive shim.  Measured: creeping at 2 mm/s, forever).
     SHIM_HINGE_Z    = 11.25            # plate mid-plane at the hinge
     SHIM_T          = 0.5              # spring steel; the presented step
+    SHIM_MU         = 0.30            # knife face against a piece [VERIFY]
     SHIM_DROOP      = 6.0              # deg past nominal the servo presses (preload)
     SHIM_LIFT       = 35.0             # deg tip-up for transit (short shim needs more)
     ROLL_AXIS_X     = 262.0            # drum axis at rest
@@ -477,43 +478,39 @@ class AgentA:
     ROLL_W          = 128.0            # across the mouth, inside the guide walls
     ROLL_RPM        = 300.0            # N20 nominal; sweep 200-500
     ROLL_TORQUE     = 0.098            # N*m -- 1.0 kg*cm N20 stall, the honest cap
+    ARM_SPRUNG      = True            # False = axis bolted down, tubes do it all
     ARM_PIVOT_X     = 205.0            # swing-arm pivot
     ARM_PIVOT_Z     = 60.0
     ARM_PRELOAD_N   = 1.3              # downforce at the drum, arm on its stop
 
-    # THE FINGERS ARE REAL NOW (F72), and until this they were not.
+    # THE FINGERS ARE SILICONE TUBES, IN ROWS (F72).
     #
     # F64 built the brush roller as a RIGID DRUM inscribed at "working finger
-    # squish" (r 22 against a 25 mm tip circle), with the eight fingers drawn as
-    # contype=0 decoration.  For a 5 mm disc that proxy is defensible and was
-    # calibrated -- the roller only ever touches the disc's top face, and a
-    # rigid surface pressing down through a spring-loaded arm is what that is.
+    # squish" (r 22 against a 25 mm tip circle), with the fingers drawn as
+    # contype=0 decoration.  That is not the machine: the machine is a hub with
+    # short lengths of silicone tube standing out of it, and the whole reason
+    # such a roller works on objects of unknown size is that each tube bends
+    # independently.  A rigid drum has one contact height; a brush has as many
+    # as it has fingers.
     #
-    # For a O20 x 20 patient standing on the floor it is not defensible at all.
-    # A rigid drum meets the cylinder near its top and shoves it over; silicone
-    # fingers are 15 mm long and bend, so they wrap round it and sweep it back.
-    # Those are different mechanisms, and the simulator was answering for the
-    # wrong one.
+    # It matters most for the small pieces.  A O56 sample spans the drum and
+    # meets every row at once, so a rigid cylinder is a fair stand-in for it --
+    # which is why F64's numbers held.  A O20 patient meets ONE OR TWO ROWS,
+    # and what those rows do is the whole mechanism.  Modelling it as a plate
+    # across the full width answers for a piece that does not exist.
     #
-    # Each finger is now a body hinged at the hub with a torsional spring.
-    # FING_K from a cantilever: k = 3EI/L^3 with E ~ 3 MPa (shore A 40),
-    # 25 wide x 2 thick x 15 long, gives 44 N/m at the tip = 0.010 N*m/rad about
-    # the root.  [VERIFY on the bench: press one finger with a gram scale and
-    # measure the deflection -- it is a five-minute test and it is the single
-    # number this whole mechanism turns on.]
-    # OFF, AND HONESTLY SO.  The finger bodies are built and the collision
-    # bits are right, but the model does not yet work: a finger jams against
-    # the piece and stalls the drum at 0.5 rad/s against a commanded 31, and
-    # discs go from 5 of 5 to 0 of 5.  Almost certainly the sprung swing arm
-    # (F64) reacting to sixteen new contact bodies -- the arm is what gives the
-    # rigid drum its tolerance, and it was never tuned against fingers that
-    # push back.  Left in the tree behind this flag because the QUESTION it
-    # exists to answer is real (see below) and half the work is done.
-    ROLL_FINGERS    = False            # True builds the compliant fingers
-    FING_N          = 8
-    FING_K          = 0.014            # N*m/rad at the root  [VERIFY]
-    FING_DAMP       = 0.0008
-    FING_T          = 2.0              # thickness
+    # STIFFNESS IS DERIVED FROM THE PART, not fitted.  A O6/O3 silicone tube
+    # 15 mm long, E ~ 3 MPa (shore A 40): I = 5.96e-11 m^4, tip stiffness
+    # 159 N/m, so 0.036 N*m/rad about the root and 0.38 g of finger.  0.3 N at
+    # the tip bends it 7 degrees; 1 N bends it 24.
+    # [VERIFY: press one finger against a gram scale and read the deflection.]
+    ROLL_FINGERS    = True             # False restores the F64 rigid drum
+    FING_ROWS       = 5                # across the drum's width
+    FING_AROUND     = 8                # per row, staggered half a pitch row to row
+    FING_K          = 0.036            # N*m/rad at the root, derived above
+    FING_DAMP       = 0.0006
+    FING_MASS       = 0.00038          # kg
+    FING_TUBE_R     = 3.0              # O6 silicone tube
     FING_HUB_R      = 10.0
 
     # UPPER ROLLER (F71) -- the patients.
@@ -942,9 +939,46 @@ BELT_RISE_A  = BELT_RUN_A * tan(radians(Chassis.BELT_INCLINE))    # 28.4
 BELT_TOP_TAIL_A = Chassis.BELT_TOP_NOSE + BELT_RISE_A             # 45.9  (R1)
 # Knife shim plane, from the hinge (top face over the belt nose) down to the
 # floating tip.  The angle is DERIVED -- the two anchor points own it.
-SHIM_RUN_A   = AgentA.SHIM_TIP_X - AgentA.SHIM_HINGE_X            # 61
-SHIM_DROP_A  = (AgentA.SHIM_HINGE_Z + AgentA.SHIM_T/2) - AgentA.SHIM_T   # 17.75
-SHIM_ANGLE_A = degrees(atan2(SHIM_DROP_A, SHIM_RUN_A))            # 16.2 deg
+SHIM_RUN_A   = AgentA.SHIM_TIP_X - AgentA.SHIM_HINGE_X            # 30
+SHIM_DROP_A  = (AgentA.SHIM_HINGE_Z + AgentA.SHIM_T/2) - AgentA.SHIM_T   # 11.0
+SHIM_ANGLE_A = degrees(atan2(SHIM_DROP_A, SHIM_RUN_A))            # 20.1 deg
+SHIM_TOP_HINGE_A = AgentA.SHIM_HINGE_Z + AgentA.SHIM_T/2          # 11.5
+SHIM_SLOPE_A = SHIM_DROP_A / SHIM_RUN_A                           # 0.367
+
+
+def ramp_z(x):
+    """Top surface of the knife shim at Xa=x, shim on its stop (mm).
+
+    This is the surface a piece actually rides.  It is NOT the floor: the whole
+    intake happens on a 20 deg ramp that starts 0.5 mm off the field at Xa 272
+    and reaches the belt nose height, 11.5, at Xa 242.
+    """
+    x = min(max(x, AgentA.SHIM_HINGE_X), AgentA.SHIM_TIP_X)
+    return SHIM_TOP_HINGE_A - SHIM_SLOPE_A * (x - AgentA.SHIM_HINGE_X)
+
+
+def brush_reach(z):
+    """Forward-most Xa at which the finger-tip circle gets down to height z.
+
+    Beyond this the brush cannot touch a piece of that height at all; behind it
+    the brush is on the piece.  The knife's LEAD is SHIM_TIP_X minus this, and
+    the lead is what decides whether the knife wedges under a piece or the
+    brush shoves it away first.
+    """
+    dz = AgentA.ROLL_AXIS_Z - z
+    if abs(dz) >= AgentA.ROLL_TIP_R:
+        return None
+    return AgentA.ROLL_AXIS_X + sqrt(AgentA.ROLL_TIP_R**2 - dz*dz)
+
+
+# How far the finger tips clear the ramp directly under the axis.  Negative
+# means the tubes are folded flat on the plate and have no reach left for a
+# piece -- and, measured, they then get under the plate and jack the knife up.
+ROLL_GAP_A   = (AgentA.ROLL_AXIS_Z - AgentA.ROLL_TIP_R
+                - ramp_z(AgentA.ROLL_AXIS_X))
+
+# The sweep leg's speed, which the belt has to beat (route.sweep_line).
+SWEEP_SPEED_A = 140.0
 
 # discharge throw: piece leaves the tail at BELT_SPEED, falls BELT_TOP_TAIL
 DROP_TIME_A  = sqrt(2 * (BELT_TOP_TAIL_A / 1000.0) / 9.81)
@@ -1066,6 +1100,55 @@ CHECKS = [
      AgentA.ESC_BLADE_Y >= Piece.DISC_D/4.0),
     ("the parked retainer is clear of the bore",
      AgentA.ESC_BLADE_PARK - AgentA.ESC_BLADE_OVER >= AgentA.CHUTE_D/2.0),
+    # ------------------------------------------------------------------
+    # F73: THE INTAKE'S LAWS, WRITTEN DOWN.
+    #
+    # Six model faults in a row were found the expensive way -- by sweeping
+    # parameters and wondering why nothing moved.  Each one was a statement
+    # about the machine that nothing in the file was checking.  These are those
+    # statements.  A red line here is a design decision that has not been made
+    # yet, not a nuisance.
+    #
+    # GETTING UNDER A PIECE.  A piece resting on the field is held by nothing
+    # but mu_field * W.  Resolve a wedge of angle a and face friction mu_w and
+    # the piece stays put -- letting the knife slide under -- only while
+    #       a + atan(mu_w) <= atan(mu_field)
+    # Mass, size and the roller all cancel: it is two angles.  Measured, a
+    # sample climbs 54 mm having slipped 1.7 mm when this holds, and is
+    # bulldozed from first touch when it does not.
+    ("the knife can get UNDER a piece rather than shoving it",
+     SHIM_ANGLE_A + degrees(atan(AgentA.SHIM_MU))
+     <= degrees(atan(Chassis.MU_PIECE))),
+    # ...AND THEN HOLD IT.  A piece SHORTER than the ramp ends up entirely on
+    # the ramp with no floor contact left, and slides straight back down unless
+    #       atan(mu_w) >= a
+    # A O56 sample never gets here -- it bridges ramp to floor the whole way --
+    # but a O20 patient does, twenty millimetres in.  The two conditions bound
+    # the ramp at a <= min(phi_w, 31 - phi_w), best at mu_w 0.28.
+    ("...and hold one shorter than the ramp instead of dropping it back out",
+     degrees(atan(AgentA.SHIM_MU)) >= SHIM_ANGLE_A or
+     Piece.CYL_H > SHIM_RUN_A),
+    # THE THROAT.  Everything the intake swallows goes down one channel.  The
+    # hold-down clamp was sized for a 5 mm disc (F16) and is 8 mm at the tail:
+    # a 20 mm patient cannot enter the belt run at all, over 170 mm of it, and
+    # no roller position, speed or finger count can change that.
+    ("the throat passes the TALLEST piece, not just the flattest",
+     min(AgentA.HOLD_GAP0, AgentA.HOLD_GAP1) >= Piece.CYL_H + 2.0),
+    # THE BELT MUST OUTRUN THE ROBOT.  A piece is stationary in the WORLD and
+    # every surface of the intake is moving forward at the sweep speed.  A belt
+    # running aft at v gives its surface a world speed of (sweep - v): positive
+    # and the belt carries the piece out of the mouth however well the knife
+    # got under it.
+    ("the belt beats the sweep, so its surface goes AFT in the world",
+     Chassis.BELT_SPEED > SWEEP_SPEED_A),
+    # THE BRUSH MUST NOT LEAN ON ITS OWN RAMP.  The arm's only down stop is its
+    # nominal height, so whatever the brush rests on carries it: set with
+    # interference against the knife, eight tubes at ~1 N lift the arm clear
+    # and the brush rides the RAMP, never the piece.
+    ("the brush clears the knife ramp under its own axis",
+     ROLL_GAP_A >= 0.0),
+    ("...and its finger tips stay inside the shell",
+     AgentA.ROLL_AXIS_X + AgentA.ROLL_TIP_R <= AgentA.L),
     # F69: the camera is the primary sensor, so its geometry gets assertions.
     ("a O60 slot is hundreds of pixels across where the robot measures it",
      Field.LAB_HOLE_D * Vision.f_px() / 250.0 >= 100.0),

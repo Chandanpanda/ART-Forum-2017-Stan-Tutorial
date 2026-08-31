@@ -719,14 +719,31 @@ def agent_a_body(name="agentA", pose=None, with_beams=False):
         '    </body>',
         '  </body>']
 
-    # ---- trip bar (F71: lay the patients down before the mouth) ------------
-    if AgentA.TRIP_BAR:
+    # ---- the plough (F75: the patients, without ingesting them) ------------
+    # Sorts by height and has no actuator: a 5 mm sample goes UNDER it to the
+    # knife, a 20 mm patient is caught below its centre of mass and pushed.
+    # conaffinity 0 so it can only ever be felt by something that carries bit 2
+    # in its own conaffinity -- the pieces -- and never by the field, the walls
+    # or the robot's own sweeper fingers.
+    if AgentA.PLOUGH:
         body.append(
-            f'  <geom name="A_trip" type="cylinder" zaxis="0 1 0" contype="4" '
-            f'conaffinity="4" condim="3" friction="0.35 0.005 0.0001" '
+            f'  <geom name="A_plough" type="cylinder" zaxis="0 1 0" contype="4" '
+            f'conaffinity="0" condim="3" friction="0.35 0.005 0.0001" '
             f'pos="{lx(AgentA.TRIP_X):.5f} 0 {mm(AgentA.TRIP_Z):.5f}" '
             f'size="{mm(AgentA.TRIP_R):.5f} {mm(AgentA.TRIP_W/2):.5f}" '
             f'mass="0.006" rgba="0.85 0.85 0.30 1"/>')
+        wd = radians(AgentA.PLOUGH_WING_DEG)
+        for s_ in (1, -1):
+            wy = AgentA.TRIP_W/2 + AgentA.PLOUGH_WING/2*cos(wd)
+            wx = AgentA.TRIP_X - AgentA.PLOUGH_WING/2*sin(wd)
+            body.append(
+                f'  <geom name="A_plough_w{"l" if s_>0 else "r"}" type="capsule" '
+                f'contype="4" conaffinity="0" condim="3" '
+                f'friction="0.35 0.005 0.0001" '
+                f'pos="{lx(wx):.5f} {s_*mm(wy):.5f} {mm(AgentA.TRIP_Z):.5f}" '
+                f'euler="0 90 {s_*AgentA.PLOUGH_WING_DEG:.1f}" '
+                f'size="{mm(AgentA.TRIP_R):.5f} {mm(AgentA.PLOUGH_WING/2):.5f}" '
+                f'mass="0.004" rgba="0.85 0.85 0.30 1"/>')
 
     # ---- upper roller (F71: the patients) ----------------------------------
     # Fixed axis, not sprung: it only has to be there when a tall piece arrives,

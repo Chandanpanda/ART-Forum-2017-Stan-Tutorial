@@ -194,7 +194,15 @@ def score_kits(kit_xy):
 
 def score_cylinders(cyl):
     """cyl: list of (x_mm, y_mm, colour).  Returns (points, breakdown)."""
-    right, detail = 0, []
+    # THE PENALTY WAS MISSING, AND IT IS THE WHOLE GAME (F75).  Senior scoring:
+    #   +5  inside the correct destination zone
+    #   -5  placed in an INCORRECT destination zone (rule 4.4)
+    #   -3  outside their correct destination zone (scoring table)
+    # All twelve start on stickers in the side areas, which are not destination
+    # zones -- so a robot that ignores the patients does not score 0 for them,
+    # it scores -36.  Leaving them alone is the most expensive thing on the
+    # board after failing the beams.
+    right, wrong, adrift, detail = 0, 0, 0, []
     per = {c: {} for c in M2.COLOURS}
     for x, y, col in cyl:
         z = _zone_of(x, y, CYL_ZONES)
@@ -203,8 +211,16 @@ def score_cylinders(cyl):
         ok = (z in ("PCC_L", "PCC_R")) if col == "yellow" else (z == want)
         if ok:
             right += 1
-    pts = 5 * right
+        elif z is not None:
+            wrong += 1
+        else:
+            adrift += 1
+    pts = 5*right - 5*wrong - 3*adrift
     detail.append((-1, "%d patients in the correct zone" % right, 5 * right))
+    if wrong:
+        detail.append((-1, "%d in the WRONG destination zone" % wrong, -5*wrong))
+    if adrift:
+        detail.append((-1, "%d never moved to a destination zone" % adrift, -3*adrift))
     if per["red"].get("HOSP", 0) == 4:
         pts += 6; detail.append((-1, "all red in the hospital", +6))
     yl, yr = per["yellow"].get("PCC_L", 0), per["yellow"].get("PCC_R", 0)

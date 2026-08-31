@@ -593,11 +593,36 @@ class AgentA:
     # OFF, for the same reason: it was built to lay a standing patient down and
     # it does not (0 of 5, and it made the lying case worse).  Kept because the
     # REASONING is worth preserving even though the part is not.
-    TRIP_BAR        = False
-    TRIP_X          = 285.0            # ahead of the knife tip at 272
-    TRIP_Z          = 7.5              # centre; O3 rod spans 6.0-9.0
+    # THE PLOUGH (F75).  A patient is scored on WHERE IT ENDS UP ON THE FLOOR --
+    # "Placing one triaged patient inside the correct destination zone +5", and
+    # -3 for one left outside it.  Nothing in the rules asks for it to be
+    # lifted, carried or stood up.  Twelve of them start on stickers in the side
+    # areas, so a robot that ignores them scores -36, and the swing to a full
+    # sort is +116: the largest single item on the board, and the intake has
+    # nothing to do with it.
+    #
+    # So: a bar across the nose that sorts BY HEIGHT and has no actuator.
+    # Underside at 6.5 mm -- a O56 x 5 sample passes under it into the knife
+    # exactly as now, and a O20 x 20 patient is caught at 6.5-9.5, below its
+    # centre of mass at 10, so it is pushed rather than tipped.  Wings at 30 deg
+    # keep a pushed cylinder from rolling off the ends on a turn.
+    # OFF, AND THE REASON IS MEASURED.  A bar spanning the mouth blocks the
+    # SAMPLES: the sweep fell from 35 of 36 to 14 of 36 at 6.5 mm and 11 of 36
+    # at 9.5 mm, so raising it does not help -- anything across the mouth is in
+    # the samples' way.  The push itself works (6 of 6 into PCC_R, ~5 s each),
+    # so the plough is right and its MOUNTING is wrong.  Two ways out, both
+    # actuator-free: put the bars on the flanks outside the 148 mm mouth, or
+    # couple the bar to the knife servo through a bell-crank so that knife DOWN
+    # (sweeping samples) lifts the plough and knife UP (transit, pushing
+    # patients) drops it.  The second is better: full width, and the two jobs
+    # are already mutually exclusive in the route.
+    PLOUGH          = False
+    TRIP_X          = 285.0            # at the shell line, ahead of the knife
+    TRIP_Z          = 11.0             # centre; O3 rod spans 9.5-12.5
     TRIP_R          = 1.5
-    TRIP_W          = 130.0            # across the mouth
+    TRIP_W          = 130.0            # straight span across the mouth
+    PLOUGH_WING     = 45.0             # each wing, swept back
+    PLOUGH_WING_DEG = 30.0
     # The knife is NARROWER than the mouth on purpose.  The sweeper fingers
     # occupy z 2..27 wherever they swing (raked, their structure reaches in to
     # |y| ~56), and a lifted knife rotates its corners up through that plane --

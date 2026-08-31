@@ -288,11 +288,12 @@ def main():
     check("the model is numerically alive after settling", not nan)
 
     # ------------------------------------------------------------- 7. speeds
-    check("the belt's surface runs AFT in the world during a sweep",
-          Chassis.BELT_SPEED > P.SWEEP_SPEED_A,
-          "belt %.0f vs sweep %.0f mm/s -> surface %+.0f mm/s"
-          % (Chassis.BELT_SPEED, P.SWEEP_SPEED_A,
-             P.SWEEP_SPEED_A - Chassis.BELT_SPEED))
+    # Belt speed is set by the DISCHARGE, not by the sweep -- see the note in
+    # params.  Measured, 12 seeds: 60 mm/s -> +95.2, 150 -> +86.1.
+    check("the discharge throw lands inside the magazine's catch band",
+          4.0 <= P.THROW_A <= 15.0,
+          "belt %.0f mm/s throws %.1f mm off a %.1f mm tail"
+          % (Chassis.BELT_SPEED, P.THROW_A, P.BELT_TOP_TAIL_A))
 
     # ------------------------------------------------------------- report
     print("RFGYC'26 -- BUILT MODEL, settled and collecting\n" + "-" * 70)

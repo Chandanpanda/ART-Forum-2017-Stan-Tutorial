@@ -348,6 +348,64 @@ class M2:
     """
     N_KITS          = 10
     KIT_PLAN        = {"HOSP": 6, "PCC_L": 2, "PCC_R": 2}   # the +20 distribution
+    # WHICH KIT LIVES IN WHICH HOPPER.  A destination is a hopper, not a
+    # sorting problem: the kits may start on the robot (rules g.1), so they are
+    # loaded before the match already grouped, and the only verb the mission
+    # needs is "open hopper X".  Three MG90S flaps, and no colour, no
+    # singulation and no belt anywhere in it.
+    #
+    # THE DISTRIBUTION BONUS IS WHY ALL THREE MUST BE VISITED.  Measured on the
+    # referee: nothing at all is -30, hospital alone is -2, hospital plus one
+    # PCC is +14, and the full 6/2/2 is +50.  The last two kits, in the far
+    # corner, are worth 36 points on their own.
+    KIT_GROUPS      = {"HOSP": tuple(range(6)), "PCC_L": (6, 7), "PCC_R": (8, 9)}
+    # Hopper discharge points in the ROBOT frame (x from the axle, y, and the
+    # height the kit leaves at).
+    #
+    # THE KIT MUST LAND OUTSIDE THE ROBOT'S OWN FOOTPRINT, and that is not a
+    # detail.  With the shafts at Ya 78 the kits fell between the wheels (Ya 75,
+    # 22 wide) and the beam pockets -- inside the track.  The robot then could
+    # not leave: reversing ran the rear over them and driving forward was into a
+    # wall, because a corner zone is a 200 mm box and the swept radius is 185, so
+    # there is nowhere to pivot either.  Measured: 2 kits of 10 delivered, -30.
+    #
+    # 140 puts the discharge 22 mm PROUD of the chassis, which the same MG90S
+    # that opens the hopper provides as a short swing-out lip -- so the start
+    # envelope is still 235 (spec 4.2) and the kit still clears the wheels at 86
+    # and the beam pockets at 117.5.  With the kits outside the track the robot
+    # can simply reverse out of the corner and pivot where there is room.
+    #
+    # PCC_R's is on the OTHER flank, and that is geometry too: the zone runs
+    # x 943-1143 against a wall at 1143, so the robot's centre can never be east
+    # of 1025, and a left-hand lip on a north-facing robot drops the kit at 785 --
+    # nowhere near the zone.  A right-hand one drops it at 1040.
+    # ...and FORWARD of the axle, which is about the north wall rather than the
+    # kits.  A drop station has to be deep enough into a zone for the kit to
+    # land inside it, and with a purely sideways discharge that put the robot at
+    # y 1030 -- where, at any angle at all, its own corner is through the north
+    # wall (the half-diagonal is 185, and at 153 deg the y extent alone is 169).
+    # Measured: it ground along the wall at 4 mm/s for eight seconds, and the
+    # stall detector never fired because it never quite stopped.
+    #
+    # Discharging 100 mm AHEAD of the axle lets the robot stand 100 mm further
+    # south for the same landing point.  It also means reversing away from a
+    # drop moves the wheels away from the kit rather than over it.
+    # THE THREE HOPPERS MUST NOT OVERLAP IN SPACE, which sounds obvious and was
+    # not: HOSP's upper layer sat directly on top of a PCC_L kit, and a kit
+    # resting on a still-welded kit is resting on a shelf.  It rode the whole
+    # loop and fell in the wrong zone -- 10 kits delivered, +30 instead of +50,
+    # and the log cheerfully said "dropped 6".
+    #
+    # Layout on each flank, x measured forward from the axle:
+    #   HOSP   3 wide x 2 high at x 0, 28, 56      (left)
+    #   PCC_L  2 wide         at x 84, 112         (left)
+    #   PCC_R  2 wide         at x 84, 112         (right)
+    HOPPER          = {"HOSP":  (   0.0,  140.0),
+                       "PCC_L": (  84.0,  140.0),
+                       "PCC_R": (  84.0, -140.0)}
+    HOPPER_WIDE     = {"HOSP": 3, "PCC_L": 2, "PCC_R": 2}   # kits per layer
+    HOPPER_PITCH    = 28.0
+    HOPPER_Z        = 88.0             # above a carried beam (tops at Za 72)
     # Twelve cylinders, four of each colour, six per side area.
     N_CYL           = 12
     COLOURS         = ("red", "yellow", "green")

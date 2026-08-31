@@ -5,7 +5,7 @@ full-steps per second, and step loss can be injected, because the spec calls a
 skipped step 'silent' and that is the design's main odometry risk.
 """
 import numpy as np, mujoco
-from .params import Chassis, AgentA, Piece, Field, Vision, mm
+from .params import Chassis, AgentA, Piece, Field, Vision, M2, mm
 
 WHEEL_R = Chassis.WHEEL_D / 2000.0          # m
 HALF_TRACK = Chassis.TRACK / 2000.0         # m
@@ -125,15 +125,30 @@ class AgentARobot:
         return sum(1 for e in eq if self.d.eq_active[e])
 
     def drop_kits(self, n):
-        """Release n kits.  The rules let kits start ON the robot (g.1), so the
-        only verb Mission 2 needs for them is this one -- open a flap and roll
-        on.  Physically it is a weld going inactive; the kit then falls under
-        gravity and the referee reads where it lands, exactly as for a beam."""
+        """Release the next n kits, in index order.  Kept for the rigs."""
         eq = self._find_kits()
         live = [e for e in eq if self.d.eq_active[e]]
         for e in live[:n]:
             self.d.eq_active[e] = 0
         return min(n, len(live))
+
+    def open_hopper(self, dest):
+        """Open one destination's flap.  The rules let kits start ON the robot
+        (g.1) and they are loaded already grouped, so this is the ONLY verb
+        Mission 2 needs for a kit -- no pick-up, no sorting, no singulation.
+        One MG90S per hopper, opened once each in the match.
+
+        In the model it is a weld going inactive: the kits then fall under
+        gravity from wherever the hopper is, and the referee reads where they
+        land, exactly as it does for a beam.
+        """
+        eq = self._find_kits()
+        n = 0
+        for i in M2.KIT_GROUPS.get(dest, ()):
+            if i < len(eq) and self.d.eq_active[eq[i]]:
+                self.d.eq_active[eq[i]] = 0
+                n += 1
+        return n
 
     def feed(self, down):
         """Positive-feed plunger.  Parked its face is 33 mm above the highest a

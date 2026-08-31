@@ -13,7 +13,7 @@ Two hard constraints the simulator surfaced, both real:
 Every action is time-guarded so a mission can fail but never hang.
 """
 import numpy as np
-from .params import Chassis, AgentA, Field, Piece
+from .params import Chassis, AgentA, Field, Piece, M2
 
 HZ = 50.0
 MATCH = 120.0            # rules g.1
@@ -23,7 +23,14 @@ HOLE_BUDGET = 10.0       # measured cost of one sensed dock plus its post (F68)
 # over twelve seeds the mean went from +69 to about +50, with four matches
 # running past the buzzer with no beams down at all.  The seal is 70 points
 # and it is the phase with no slack, so it gets the clock it needs first.
-BEAM_BUDGET = 39.0       # measured cost of the two-beam seal from the lab
+# 34, not 39: the seal used to start from the laboratory and now starts from
+# PCC_L, which the kit loop visits last precisely because it is 370 mm from
+# where beam 2 stages rather than 530.
+BEAM_BUDGET = 34.0
+# MEASURED on the isolated rig: 27-28 s from the laboratory's exit to the last
+# drop, delivering the full 6/2/2 for +50.  30 leaves a little for a leg that
+# has to be re-aimed.
+KIT_BUDGET  = 30.0
 # 13, which is what a dock MEASURES: 11-16 s from arriving at the pivot to
 # being clear of the plate again.  At 9 the robot starts approaches it cannot
 # finish -- one match began its third slot at T+66, left the plate at T+84,
@@ -76,7 +83,7 @@ def drive_straight(rb, dist_mm, speed=200.0, stall_s=1.0):
         rb.drive(v, np.clip(2.0*_wrap(hold-th), -25, 25)); yield
 
 
-def turn_to(rb, heading, tol=2.0, wmax=110.0, free=True):
+def turn_to(rb, heading, tol=2.0, wmax=160.0, free=True):
     """Turn in place, and give up if the turn is not actually happening.
 
     F43.  A pivot that scrapes a wall looks exactly like a pivot that is
@@ -88,6 +95,19 @@ def turn_to(rb, heading, tol=2.0, wmax=110.0, free=True):
     is what frees a corner) and try once more; if that fails too, hand back to
     the caller rather than burning the guard.
     """
+    # MEASURED, mean of four 90 deg pivots, with and without beams aboard:
+    #
+    #     wmax   tol 2.0    tol 4.0    tol 6.0
+    #      110    3.2 s      2.4 s      2.0 s
+    #      160    2.5 s      2.1 s      1.9 s
+    #      220    2.7 s      2.1 s      1.7 s
+    #
+    # The TOLERANCE dominates, not the rate cap -- a P controller spends its
+    # time in the exponential tail.  220 is not reliably better than 160
+    # because it overshoots and comes back.  So: 160 by default, and every
+    # caller asks for the loosest tolerance its own job can stand.  The
+    # laboratory pays six pivots a match, the kit loop four and the beam phase
+    # more; half a second each is ten seconds of a 120 s match.
     stuck, th0, held = 0, rb.pose[2], 0
     while True:
         err = _wrap(heading - rb.pose[2])
@@ -549,15 +569,27 @@ def dock_and_post(rb, hole_x, hole_y, chute_offset, stroke=0.60, aboard=0,
     lap = (lambda w: None) if clk is None else (lambda w: log("        %-14s T+%5.1f" % (w, clk())))
     pv = nearest_pivot(hole_x, hole_y)
     lap("start")
-    if np.hypot(rb.pose[0]-pv[0], rb.pose[1]-pv[1]) > 60.0:
-        px, py, _ = rb.pose
+    px, py, ph = rb.pose
+    if abs(py - PIVOT_Y) < 55.0 and abs(_wrap(ph - 270.0)) < 25.0:
+        # ALREADY ON THE PIVOT LINE FACING THE PLATE, which is where the last
+        # slot's departure leaves the robot.  Two turns and a straight run beat
+        # a pursue: measured 3.7 s against 6.5, three times a match.  pursue has
+        # to curve in from wherever it is and then be squared up afterwards.
+        dx = pv[0] - px
+        if abs(dx) > 12.0:
+            h = 0.0 if dx > 0 else 180.0
+            yield from guard(turn_to(rb, h, tol=6.0), 8.0)
+            yield from guard(drive_straight(rb, abs(dx), speed=220.0), 8.0)
+    elif np.hypot(px-pv[0], py-pv[1]) > 60.0:
         yield from guard(turn_to(rb, np.degrees(np.arctan2(pv[1]-py, pv[0]-px))), 9.0)
         yield from guard(pursue(rb, pv[0], pv[1], speed=220.0, tol=20.0), 35.0)
     lap("at pivot")
     # Square to the plate.  Loose on purpose: 4 deg of yaw is 0.2% on the range
     # and the lateral is measured, not dead-reckoned.  Squaring to 1.5 deg cost
     # 3.4 s of a 16 s dock and bought nothing.
-    yield from guard(turn_to(rb, 270.0, tol=4.0), 9.0)
+    # 6 deg, because nothing downstream needs better: the lateral is measured
+    # and the tracked reverse steers, and 6 deg of yaw is 0.5% on the range.
+    yield from guard(turn_to(rb, 270.0, tol=6.0), 9.0)
     yield from wait(rb, 0.15)
     lap("squared")
 
@@ -576,14 +608,23 @@ def dock_and_post(rb, hole_x, hole_y, chute_offset, stroke=0.60, aboard=0,
     seen = getattr(rb, "lab_seen", [])
     tgt0 = pick_slot(seen, 0.0)
     dy0 = tgt0[1] if tgt0 else (hole_x - rb.pose[0])
-    # 32: the tracked reverse takes out about 16 mm over the 112 mm it has,
-    # and the trim slide 25.  Anything past their sum has to be walked across.
-    if abs(dy0) > 32.0:
+    # 36: the tracked reverse takes out about 16 mm over the 112 mm it has and
+    # the trim slide 25, so anything inside their sum needs no pivot at all.
+    if abs(dy0) > 36.0:
+        # AND THE PIVOT CANNOT HAPPEN HERE.  The look station is at Y 158 and
+        # the swept radius is 185, so a turn on the spot puts the robot's corner
+        # 27 mm through the south wall.  It grinds, the re-look then comes back
+        # empty, and the dock falls through to dead reckoning -- measured, 21.5
+        # mm out and the sample lost.  Back onto the pivot line first, which
+        # F36 measured clean at Y >= 190, and return to the look station after.
         log("      %+.1f mm off the slot -- stepping across" % dy0)
+        yield from guard(drive_straight(rb, -(PIVOT_Y + 5.0 - rb.pose[1]),
+                                        speed=200.0), 4.0)
         h = 0.0 if dy0 > 0 else 180.0
         yield from guard(turn_to(rb, h, tol=3.0), 9.0)
         yield from guard(drive_straight(rb, abs(dy0), speed=180.0), 8.0)
-        yield from guard(turn_to(rb, 270.0, tol=4.0), 9.0)
+        yield from guard(turn_to(rb, 270.0, tol=6.0), 9.0)
+        yield from guard(drive_straight(rb, rb.pose[1] - LOOK_Y, speed=200.0), 5.0)
         yield from guard(look_lab(rb), 3.0)
     lap("lined up")
 
@@ -693,6 +734,123 @@ def dock_and_post(rb, hole_x, hole_y, chute_offset, stroke=0.60, aboard=0,
     lap("departed")
 
 
+# ==================================================== MISSION 2: THE KITS
+# 80 points of swing for a driving job.  Agent A currently scores -30 on the
+# kits -- three empty destination zones at -10 each -- and the full 6/2/2
+# distribution is +50.  Nothing has to be picked up: rules g.1 let the kits
+# start ON the robot, so they are loaded into three hoppers before the match
+# and delivery is one flap per zone.
+#
+# ALL THREE ZONES OR IT IS BARELY WORTH GOING.  Measured on the referee:
+# nothing -30, hospital alone -2, hospital plus one PCC +14, the full set +50.
+# The last two kits sit in the opposite corner of the field, 943 mm away, and
+# they are worth 36 points on their own.
+#
+# The order is chosen to END in the west, because the beam phase stages there:
+# lab -> HOSPITAL -> PCC_R -> PCC_L -> beams is 2987 mm, and the obvious
+# alternative (PCC_L before PCC_R) is the same distance but finishes 943 mm
+# from where the beams start.
+# THE LABORATORY IS IN THE WAY.  A straight run from the lab pivot to the
+# hospital crosses the plate at x 759, and the robot cannot climb a 6 mm edge
+# (F11) -- measured, it spent 20.7 s going nowhere.  The loop therefore goes
+# EAST of the plate (x >= 909 clears it, and x <= 950 leaves the 185 mm swept
+# radius clear of the east wall), north, then west along the top, and comes
+# down the west side to where the beams stage.
+#
+# Every drop is made facing NORTH, which costs one turn each and is what makes
+# the landing position a property of the design rather than of the arrival
+# angle.  The station is the kit's target minus the hopper's own 78 mm offset.
+KIT_ORDER   = ("PCC_R", "HOSP", "PCC_L")
+KIT_APPROACH = (950.0, 250.0)          # the dogleg east of the laboratory
+# DROP CENTRALLY, THEN REVERSE OUT BEFORE TURNING.
+#
+# The first attempt put each station where a PIVOT was also legal.  The swept
+# radius is 185 (F44: the beam pockets run the full length, so the corners
+# cannot be chamfered below Za 60) and the corner zones are 200 mm boxes against
+# two walls, which leaves a 15 x 15 mm square in PCC_R -- and a 740 mm leg
+# arrives nowhere near that well.  Measured: the robot landed 50 mm east of it,
+# could not then pivot without grinding two walls, and the loop delivered 2 kits
+# of 10 and scored -14.
+#
+# So the two requirements are separated.  The DROP happens in the middle of the
+# zone, where a 40 mm arrival error is harmless; then the robot REVERSES 140 mm,
+# which is a straight line and needs no radius at all, and pivots from there.
+# The stations are all at y 1030 and the pivots all at y 890, which is also
+# north of the side areas the patients stand in.
+KIT_STATION = {"PCC_R": (903.0, 930.0),
+               "HOSP":  (711.5, 930.0),
+               "PCC_L": (240.0, 930.0)}
+KIT_HEADING = 90.0
+# FAR ENOUGH THAT THE PIVOT CLEARS THE KITS IT JUST DROPPED.  They land 140 mm
+# to one side, so after reversing R the robot's centre is sqrt(140^2 + R^2) from
+# them, and the swept radius is 185 plus the kit's own 18 -- so R must exceed
+# 147.  At 140 the circle clipped them and the next leg spent 13 s moving 170 mm
+# (measured, and it does the same with every cylinder removed from the field, so
+# it was never the patients).  200 also lands the pivot at y 830, just north of
+# the side areas.
+KIT_BACKOFF = 200.0
+
+
+def deliver_kits(rb, log=print, clk=None, deadline=None, order=KIT_ORDER):
+    """Drive the northern loop and open one hopper in each destination zone."""
+    t = (lambda: "") if clk is None else (lambda: "T+%5.1f  " % clk())
+    def leg(tx, ty, speed=230.0, cap=14.0, tol=32.0):
+        # Aim, run, and re-aim if the run did not land close enough.  A single
+        # turn-and-drive carries its heading error the whole way -- 3 deg over a
+        # 740 mm leg is 39 mm -- and the second pass halves whatever the first
+        # left, which is cheaper than a tight turn tolerance on the first.
+        for _ in range(2):
+            px, py, _ = rb.pose
+            d_ = np.hypot(tx-px, ty-py)
+            if d_ < tol:
+                return
+            # THE TURN TOLERANCE HAS TO SCALE WITH THE LEG, and the obvious
+            # way round is the wrong one.  A heading error is a LATERAL error
+            # multiplied by the distance: 8 deg over the 780 mm run up the east
+            # side is 108 mm, which walked the robot from x 950 to x 1009 and
+            # jammed it against the east wall with 134 mm of clearance and a
+            # 185 mm swept radius.  Ask for whatever angle keeps the miss under
+            # 25 mm, and let the second pass clean up the rest.
+            tol_ = float(np.clip(np.degrees(np.arctan2(25.0, d_)), 2.0, 10.0))
+            yield from guard(turn_to(rb, np.degrees(np.arctan2(ty-py, tx-px)),
+                                     tol=tol_), 9.0)
+            yield from guard(drive_straight(rb, d_, speed=speed), cap)
+
+    # get east of the laboratory before turning north
+    if rb.pose[1] < 320.0:
+        yield from leg(*KIT_APPROACH, speed=230.0, cap=8.0)
+    for dest in order:
+        if deadline is not None and clk is not None and clk() > deadline:
+            log(t() + "  kits: %s abandoned at the beam deadline" % dest)
+            break
+        tx, ty = KIT_STATION[dest]
+        log(t() + "  kits -> %s (%.0f, %.0f)" % (dest, tx, ty))
+        yield from leg(tx, ty)
+        # 8 deg is enough: the hopper mouth is 78 mm off the centreline, so
+        # 8 deg of heading error moves the landing point 11 mm, against zone
+        # margins of 50 mm and more.
+        yield from guard(turn_to(rb, KIT_HEADING, tol=8.0), 8.0)
+        rb.stop()
+        yield from wait(rb, 0.2)
+        n = rb.open_hopper(dest)
+        px, py, th = rb.pose
+        hx_, hy_ = M2.HOPPER[dest]
+        tr = np.radians(th)
+        kx = px + hx_*np.cos(tr) - hy_*np.sin(tr)
+        ky = py + hx_*np.sin(tr) + hy_*np.cos(tr)
+        log("      dropped %d kit(s); lip at (%.0f, %.0f)%s"
+            % (n, kx, ky, "" if _in_zone(dest, kx, ky) else "  -- OUTSIDE THE ZONE"))
+        yield from wait(rb, 0.5)
+        # Reverse out of the corner before pivoting: reversing needs no swept
+        # radius, and the kits are outboard of the track so nothing is run over.
+        yield from guard(drive_straight(rb, -KIT_BACKOFF, speed=220.0), 5.0)
+
+
+def _in_zone(dest, x, y):
+    box = {"HOSP": Field.HOSPITAL, "PCC_L": Field.PCC_L, "PCC_R": Field.PCC_R}[dest]
+    return box[0] <= x <= box[2] and box[1] <= y <= box[3]
+
+
 def mission_agent_a(rb, holes, hole_y, chute_offset, log=print, clock=None):
     # THE MATCH IS 120 s (rules g.1).  Every phase is stamped so the budget
     # is visible in the log, not discovered at the end.
@@ -784,7 +942,10 @@ def mission_agent_a(rb, holes, hole_y, chute_offset, log=print, clock=None):
     # 56 s left and then sealed the quarantine in 39.  A deadline lets the robot
     # spend every second it actually has and stop the moment the beams need it,
     # including part-way through an approach.
-    dl, est = MATCH - BEAM_BUDGET, MIN_DOCK
+    # THE LABORATORY NOW YIELDS TO TWO THINGS, NOT ONE.  A slot is worth +18.
+    # The beam seal is +70 and the kit loop is +80 of swing (-30 to +50), so
+    # both outrank it, and the deadline is what is left after both.
+    dl, est = MATCH - BEAM_BUDGET - KIT_BUDGET, MIN_DOCK
     for i, hx in enumerate(holes):
         # ...and the estimate of what a slot costs is MEASURED, not assumed.
         # Docks run 11-17 s depending on how the approach goes, and a constant
@@ -802,6 +963,14 @@ def mission_agent_a(rb, holes, hole_y, chute_offset, log=print, clock=None):
                                  deadline=dl)
         if clock is not None:
             est = max(MIN_DOCK, clock() - t0)
+    # KITS BEFORE BEAMS, and northwards from the laboratory.  The beams seal the
+    # quarantine and box the robot into the south-west corner (F44), so they are
+    # always last; the kit loop is chosen to finish at PCC_L, 723 mm from where
+    # beam 2 stages, rather than at PCC_R which is 943 mm further away.
+    log(t() + "delivering the medical kits")
+    yield from guard(deliver_kits(rb, log=log, clk=clock,
+                                  deadline=MATCH - BEAM_BUDGET),
+                     KIT_BUDGET + 8.0)
     yield from seal_quarantine(rb, log=log, clk=clock)
     rb.stop()
 

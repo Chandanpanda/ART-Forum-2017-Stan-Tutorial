@@ -1064,14 +1064,20 @@ def scene_full_match(disc_positions, robot_pose=None, rng=None, kits_aboard=True
         parts.append(beam_body(i, wx, wy, L, ph, M, z0=AgentA.CARRY_Z + 0.2))
     for i, (cx, cy, col) in enumerate(m2_layout(rng)):
         parts.append(cyl_body(i, cx, cy, col))
+    # KITS RIDE IN THREE HOPPERS, ONE PER DESTINATION.  Grouped before the
+    # match, so delivery is "open hopper X" and never a sorting problem.
+    kit_at = {}
+    for dest, idx in M2.KIT_GROUPS.items():
+        hx_, hy_ = M2.HOPPER[dest]
+        w = M2.HOPPER_WIDE[dest]
+        for k, i in enumerate(idx):
+            kit_at[i] = (hx_ + (k % w)*M2.HOPPER_PITCH, hy_,
+                         M2.HOPPER_Z + (k // w)*(Piece.KIT_Z + 3.0))
     for i in range(M2.N_KITS):
         if kits_aboard:
-            # two columns of five in the flank hoppers, above the wheels
-            side = 1 if i < M2.N_KITS//2 else -1
-            j = i % (M2.N_KITS//2)
-            lx_, ly_ = -40.0 + j*30.0, side*88.0
+            lx_, ly_, lz_ = kit_at[i]
             wx, wy = local_to_world(px, py, ph, lx_, ly_)
-            parts.append(kit_body(i, wx, wy, z=Piece.KIT_Z/2 + 78.0))
+            parts.append(kit_body(i, wx, wy, z=lz_))
         else:
             parts.append(kit_body(i, 700.0 + (i % 5)*35.0, 40.0 + (i // 5)*35.0))
     eq = ("  <equality>\n"

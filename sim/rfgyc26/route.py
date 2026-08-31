@@ -17,7 +17,7 @@ from .params import Chassis, AgentA, Field, Piece
 
 HZ = 50.0
 MATCH = 120.0            # rules g.1
-HOLE_BUDGET = 17.0       # measured cost of one reverse dock plus its post
+HOLE_BUDGET = 10.0       # measured cost of one sensed dock plus its post (F68)
 # 56, and this was measured rather than guessed.  At 44 the laboratory gets a
 # second slot -- worth +18 -- and the seal then starts 15 s later and misses:
 # over twelve seeds the mean went from +69 to about +50, with four matches
@@ -29,7 +29,12 @@ BEAM_BUDGET = 39.0       # measured cost of the two-beam seal from the lab
 # finish -- one match began its third slot at T+66, left the plate at T+84,
 # and the seal then ran 7 s past the buzzer and scored nothing.  A slot is
 # worth 18 and the seal 70; when they compete, the seal wins.
-MIN_DOCK    = 11.0       # floor on the estimate; a clean dock is 11-12 s
+MIN_DOCK    = 6.0        # floor on the estimate; an F68 dock is 6-11 s
+# How close the chassis has to be before the trim slide takes over.  The scan
+# recovers +/-22 mm to under a millimetre, so this is deliberately well inside
+# it: every millimetre of chassis error is a millimetre of trim stroke spent,
+# and the stroke also has to cover where the slot actually is.
+LAT_OK      = 14.0
 def _wrap(a): return (a + 180.0) % 360.0 - 180.0
 
 
@@ -331,6 +336,117 @@ def nearest_pivot(hole_x, hole_y):
     """
     return (hole_x, PIVOT_Y)
 
+# ================================================== F69 SEEING THE LABORATORY
+# F68 built the dock around two reflectance probes on the posting head: a servo
+# sweep to find the slot's rims, a plate-edge crossing to datum the range, and
+# a short dead-reckoned run at the end.  It worked -- +/-22 mm of capture, under
+# a millimetre of residual, 6 s a slot against 17 -- but every millimetre of it
+# was bought by MOVING something, because a reflectance sensor only answers
+# "is there anything 14 mm below this one point".
+#
+# A calibrated stereo camera answers the question the robot is actually asking.
+# From the pivot line it sees all three slots at once, in three dimensions, and
+# the sweep, the edge crossing and the world coordinates all go away.  What
+# survives is the trim slide: a differential drive still cannot move sideways.
+
+
+def reverse_track(rb, sw, trim_mm, heading, speed=150.0, stop_at=0.0, k=0.010,
+                  psi_max=14.0):
+    """Reverse onto a measured slot, steering out the lateral error on the way.
+
+    The chassis usually arrives 20-40 mm off the slot, and the trim slide only
+    has 22.  Correcting that by turning east, driving, and turning back costs
+    two pivots and 3.6 s a slot -- 11 s of a 120 s match to move 30 mm sideways.
+    But the robot is about to reverse 130 mm anyway, and a reverse with a little
+    steering in it lands somewhere else: de/dt = v*sin(psi), so 8 deg of heading
+    error held over 130 mm is 18 mm of lateral travel, for nothing.
+
+    So this steers to a heading that closes the cross-track error and then
+    straightens as the range runs out, handing the last few millimetres to the
+    trim slide, which is what the trim slide is for.  psi_max is deliberately
+    small: a big angle would land the range short and swing the bore, and the
+    goal here is not to null the error but to get it inside the slide's stroke.
+    """
+    t = np.radians(heading)
+    ux, uy = -np.cos(t), -np.sin(t)              # the reverse direction
+    while True:
+        x, y, th = rb.pose
+        rem = range_to(rb, sw, trim_mm)
+        if rem <= stop_at:
+            rb.stop(); return
+        # cross-track: where the BORE is, across the reverse line
+        bx = x + BORE_X*np.cos(np.radians(th)) - trim_mm*np.sin(np.radians(th))
+        by = y + BORE_X*np.sin(np.radians(th)) + trim_mm*np.cos(np.radians(th))
+        e = (bx - sw[0])*(-uy) + (by - sw[1])*(ux)
+        # straighten out over the last 45 mm so the bore is not still swinging
+        lim = np.radians(psi_max) * min(1.0, max(rem - 45.0, 0.0)/60.0)
+        psi_des = float(np.clip(-k*e, -lim, lim))
+        psi = np.radians(_wrap(th - heading))
+        rb.drive(-min(speed, max(35.0, 3.0*rem)),
+                 float(np.clip(np.degrees(3.2*(psi_des - psi)), -55.0, 55.0)))
+        yield
+
+
+def look_lab(rb, n=10, want=3):
+    """Average n frames and return the slots the rig can see.
+
+    Returns [(x_mm, y_mm, mode)] in the ROBOT frame at the last frame, ordered
+    by the robot's own +Ya -- which at a dock heading is the line the three
+    slots lie on.
+
+    EACH FRAME IS CONVERTED TO WORLD BEFORE IT IS AVERAGED.  Averaging in the
+    robot frame silently assumes the robot is not moving, and it is: look_lab
+    runs straight after a drive, so the chassis is still coasting.  Ten frames
+    at 50 Hz is 0.2 s, which at 170 mm/s is 34 mm of travel smeared into the
+    answer -- measured, one slot came back 9.9 mm out on a measurement whose
+    noise is about one, and that sample missed its hole.  A world-frame mean is
+    right whether the robot is moving or not, which also means the robot may
+    look WHILE it drives rather than stopping to.
+
+    Averaging is worth the fifth of a second.  Per-frame noise is independent
+    between frames and falls as 1/sqrt(n); the calibration bias does not, and is
+    not meant to -- it is the same every frame, which is why the PITCH between
+    two slots (a difference of two measurements) is good to a fifth of a
+    millimetre while their absolute position is good to about two.
+    """
+    acc = []
+    for _ in range(n):
+        x, y, th = rb.pose
+        t = np.radians(th)
+        for lx_, ly_, lz_, mode in rb.see_lab():
+            acc.append((x + lx_*np.cos(t) - ly_*np.sin(t),
+                        y + lx_*np.sin(t) + ly_*np.cos(t), mode))
+        yield
+    groups = []
+    for wx, wy, mode in acc:
+        for g in groups:
+            if np.hypot(g[0][0]-wx, g[0][1]-wy) < 35.0:
+                g.append((wx, wy, mode)); break
+        else:
+            groups.append([(wx, wy, mode)])
+    x, y, th = rb.pose
+    t = np.radians(th)
+    out = []
+    for g in groups:
+        if len(g) < max(2, n//3):          # seen in too few frames to trust
+            continue
+        mx = float(np.mean([v[0] for v in g]))
+        my = float(np.mean([v[1] for v in g]))
+        dx, dy = mx - x, my - y
+        out.append((dx*np.cos(-t) - dy*np.sin(-t),
+                    dx*np.sin(-t) + dy*np.cos(-t),
+                    "stereo" if any(v[2] == "stereo" for v in g) else "mono"))
+    out.sort(key=lambda v: v[1])
+    rb.lab_seen = out
+
+
+def pick_slot(seen, want_y):
+    """Choose the measured slot nearest a wanted lateral offset."""
+    if not seen:
+        return None
+    return min(seen, key=lambda v: abs(v[1] - want_y))
+
+
 def reseat(rb, cycles=1):
     """One stroke of the positive-feed plunger and back."""
     for _ in range(cycles):
@@ -370,79 +486,171 @@ def settle_stack(rb, cycles=2, want=None):
 import os
 
 
+# The bore's own place in the robot frame: CHUTE_X measured from the axle,
+# negative because it is behind it.
+BORE_X = AgentA.CHUTE_X - AgentA.AXLE_X
+# WHERE THE ROBOT STANDS TO LOOK.  The pivot line is 88 mm before the dock and
+# the camera cannot focus disparity closer than 104 -- so from the pivot the
+# laboratory is inside the blind cone and only the nearest slot shows, in the
+# RGB fallback.  Backing off to axle Y 158 puts the slots 133 mm away, in
+# stereo, with the nose still 17 mm clear of the south wall.  It costs 45 mm
+# out and 45 mm back: under half a second, for the difference between seeing
+# the laboratory and guessing at it.
+LOOK_Y      = 158.0
+
+
+def slot_world(rb, tgt):
+    """A measured slot, in world mm, frozen at the pose it was measured from.
+
+    Converting once and then driving to a WORLD point is what makes re-measuring
+    safe: the remaining distance is recomputed from wherever the robot now is,
+    so a look that fails leaves the previous answer still correct instead of
+    replaying a leg that has already been driven.  (Not doing this drove the
+    approach twice and put the bore 30 mm past the slot.)
+    """
+    x, y, th = rb.pose
+    t = np.radians(th)
+    return (x + tgt[0]*np.cos(t) - tgt[1]*np.sin(t),
+            y + tgt[0]*np.sin(t) + tgt[1]*np.cos(t))
+
+
+def _bore_dy(rb, sw):
+    """Lateral offset from the bore's own axis to a measured slot, robot frame."""
+    x, y, th = rb.pose
+    t = np.radians(th)
+    bx, by = x + BORE_X*np.cos(t), y + BORE_X*np.sin(t)
+    return -(sw[0]-bx)*np.sin(t) + (sw[1]-by)*np.cos(t)
+
+
+def range_to(rb, sw, trim_mm):
+    """How far to REVERSE to put the bore (at robot x=BORE_X, y=trim) on sw."""
+    x, y, th = rb.pose
+    t = np.radians(th)
+    bx = x + BORE_X*np.cos(t) - trim_mm*np.sin(t)
+    by = y + BORE_X*np.sin(t) + trim_mm*np.cos(t)
+    return -((sw[0]-bx)*np.cos(t) + (sw[1]-by)*np.sin(t))
+
+
 def dock_and_post(rb, hole_x, hole_y, chute_offset, stroke=0.60, aboard=0,
                   depart=None, log=print, clk=None, deadline=None):
-    """Reverse the chute onto a lab hole along a straight line, then meter one disc.
+    """Look at the slot, drive the vector, aim the head, meter one disc.
 
-    F10: with a 185 mm swept radius there is NO legal pivot between the south wall
-    (needs y >= 185) and the lab plate (needs y <= 175 at 351 < x < 791) -- the
-    corridor is 360 mm wide and the swept circle needs 370.  Turning there beaches
-    the chassis on the 3 mm plate with its drive wheels off the floor.
+    THE TERMINAL IS NOW ENTIRELY RELATIVE.  What the robot needs is the slot's
+    position with respect to its own bore, and that is what the camera gives it:
+    reverse by (BORE_X - sx) and trim by sy.  No world coordinate enters, so the
+    dock is no better or worse than the camera -- it does not also depend on the
+    navigation being right, which is the property that has to survive the move
+    from ground truth to SLAM.
 
-    But the dock does not require a particular heading: the chute lies on the
-    robot's own axis, so ANY heading works provided the robot is positioned to
-    suit.  So it pivots once, west of the plate, to face directly AWAY from the
-    hole -- and then simply reverses in a straight line until the chute is on it.
+    hole_x is still passed in, but only to say WHICH slot this is: the robot
+    drives to roughly the right place on the pivot line and then takes whichever
+    slot the camera reports nearest to the one it meant.
     """
     lap = (lambda w: None) if clk is None else (lambda w: log("        %-14s T+%5.1f" % (w, clk())))
     pv = nearest_pivot(hole_x, hole_y)
     lap("start")
-    # get onto the correct pivot station first (turning only where it is legal)
     if np.hypot(rb.pose[0]-pv[0], rb.pose[1]-pv[1]) > 60.0:
         px, py, _ = rb.pose
         yield from guard(turn_to(rb, np.degrees(np.arctan2(pv[1]-py, pv[0]-px))), 9.0)
-        yield from guard(pursue(rb, pv[0], pv[1], speed=220.0, tol=30.0), 35.0)
+        yield from guard(pursue(rb, pv[0], pv[1], speed=220.0, tol=20.0), 35.0)
     lap("at pivot")
-    # Two passes.  A single straight reverse leaves a few mm of lateral error that
-    # align_reverse cannot null (correcting it means rotating, and rotating swings
-    # the chute).  Pulling forward and re-aiming from closer in fixes that -- which
-    # is the job the spec's 45 deg chamfer would otherwise do (it absorbs +/-10).
-    # THREE SHORT PASSES, not two long ones.  A pass that is going to work
-    # converges in 7-14 s; one that is not will happily spend its whole guard
-    # hunting -- measured, a single approach burned all 55 s and then succeeded
-    # in 14 s on the retry, which is 40 s of a 120 s match thrown away.  Capping
-    # each pass at 20 s and allowing a third bounds the worst case AND lowers the
-    # typical case, because pulling forward and re-aiming is what actually fixes
-    # a bad approach.
-    over = (lambda: clk is not None and deadline is not None and clk() > deadline)
-    for attempt in range(3):
-        # A dock that is still hunting when the clock runs out has to stop
-        # hunting: the beam phase behind it is worth 70 points and the slot in
-        # front is worth 18.  Give up the approach, keep the departure -- the
-        # robot must still get off the plate whatever happens.
-        if over() and attempt:
-            log("      hole abandoned mid-approach at the beam deadline")
-            break
-        px, py, _ = rb.pose
-        th = np.degrees(np.arctan2(py - hole_y, px - hole_x))   # face away from hole
-        yield from guard(turn_to(rb, th, tol=1.2), 9.0)
-        # Let the chassis come to rest before the terminal.  align_reverse closes
-        # on the CHUTE, 106 mm behind the axle, so any residual yaw rate is
-        # 1.9 mm of chute movement per degree -- starting it while the robot is
-        # still settling is what made a dock that takes 15 s from rest burn three
-        # 20 s passes in the mission.
-        yield from wait(rb, 0.4)
-        yield from guard(align_reverse(rb, chute_offset, hole_x, hole_y, th,
-                                       tol=2.0, max_ticks=2600), 20.0)
+    # Square to the plate.  Loose on purpose: 4 deg of yaw is 0.2% on the range
+    # and the lateral is measured, not dead-reckoned.  Squaring to 1.5 deg cost
+    # 3.4 s of a 16 s dock and bought nothing.
+    yield from guard(turn_to(rb, 270.0, tol=4.0), 9.0)
+    yield from wait(rb, 0.15)
+    lap("squared")
+
+    # LOOK -- from far enough back that the camera can actually focus on it.
+    if rb.pose[1] > LOOK_Y + 8.0:
+        yield from guard(drive_straight(rb, rb.pose[1] - LOOK_Y, speed=200.0), 5.0)
+    yield from guard(look_lab(rb), 3.0)
+    seen = getattr(rb, "lab_seen", [])
+    if not seen:
+        log("      no slot in view -- falling back to dead reckoning")
+    lap("looked (%d)" % len(seen))
+
+    # Only step across when the reverse itself cannot absorb it.  A tracked
+    # reverse takes out 15-20 mm on the way in for free; beyond about 45 the
+    # heading angle it would need starts costing range, and a pivot is cheaper.
+    seen = getattr(rb, "lab_seen", [])
+    tgt0 = pick_slot(seen, 0.0)
+    dy0 = tgt0[1] if tgt0 else (hole_x - rb.pose[0])
+    # 32: the tracked reverse takes out about 16 mm over the 112 mm it has,
+    # and the trim slide 25.  Anything past their sum has to be walked across.
+    if abs(dy0) > 32.0:
+        log("      %+.1f mm off the slot -- stepping across" % dy0)
+        h = 0.0 if dy0 > 0 else 180.0
+        yield from guard(turn_to(rb, h, tol=3.0), 9.0)
+        yield from guard(drive_straight(rb, abs(dy0), speed=180.0), 8.0)
+        yield from guard(turn_to(rb, 270.0, tol=4.0), 9.0)
+        yield from guard(look_lab(rb), 3.0)
+    lap("lined up")
+
+    # DRIVE THE VECTOR.  Re-measuring on the way in is free and it removes the
+    # approach's own error: the slot stays in frame down to ~70 mm before the
+    # dock, by which point stereo has handed over to the RGB sensor's view of a
+    # circle whose diameter is known.
+    tgt = pick_slot(getattr(rb, "lab_seen", []), 0.0)
+    if tgt is not None:
+        sw = slot_world(rb, tgt)
+        rb.trim(float(np.clip(tgt[1], -AgentA.TRIM_Y, AgentA.TRIM_Y)))
+        # In to where the slot is about to leave the frame, then look again from
+        # close range -- where a millimetre of disparity is worth a third of a
+        # millimetre -- and finish on that.
+        # Stop at the NEAR EDGE OF THE CAMERA'S BAND, not at some round number.
+        # Below about 105 mm the robot's own tail shell cuts the near rim of the
+        # slot out of the frame, so a look taken closer than that returns
+        # nothing and the leg is wasted.
+        # THE STEERING BELONGS ON THE LONG LEG.  This one is only ~23 mm --
+        # from the look station to the near edge of the camera's band -- and
+        # putting the authority here gave 4 deg over the 112 mm that follows,
+        # which is 8 mm of correction.  Measured: a slot that wanted 33 mm of
+        # lateral got 18 and the dock landed 14.6 mm out.
+        yield from guard(reverse_track(rb, sw, rb.trim_at(), 270.0,
+                                       speed=170.0, stop_at=112.0, psi_max=5.0), 8.0)
+        yield from guard(look_lab(rb, n=6), 2.5)
+        # TRACK THE SAME SLOT.  Closer in, the nearest slot's rim leaves the
+        # frame before its neighbours' do -- so a re-look can come back with the
+        # two OUTER slots and not the one being docked, and "nearest to zero"
+        # would then cheerfully switch targets 140 mm sideways.  Match against
+        # where the slot already measured should now be.
+        t2 = pick_slot(getattr(rb, "lab_seen", []), _bore_dy(rb, sw))
+        if t2 is not None and abs(t2[1] - _bore_dy(rb, sw)) > 40.0:
+            t2 = None
+        if t2 is not None:
+            tgt, sw = t2, slot_world(rb, t2)
+        rb.trim(float(np.clip(_bore_dy(rb, sw), -AgentA.TRIM_Y, AgentA.TRIM_Y)))
+        yield from guard(reverse_track(rb, sw, rb.trim_at(), 270.0,
+                                       speed=95.0, psi_max=15.0), 9.0)
+        # AIM THE HEAD LAST.  The tracked reverse steers on purpose -- that is
+        # how it takes 16 mm of lateral error out over 112 mm -- so a trim set
+        # before it is a trim set against a pose the robot then left.  Measured
+        # with the trim set early: 2.4, 7.3 and 6.3 mm of residual on a
+        # measurement good to about one.  Set from where the robot has actually
+        # ended up, it is the measurement's own error and nothing else.
+        rb.stop()
+        rb.trim(float(np.clip(_bore_dy(rb, sw), -AgentA.TRIM_Y, AgentA.TRIM_Y)))
+        for _ in range(int(0.7*HZ)):
+            if rb.trim_settled():
+                break
+            yield
+    else:
         cx, cy = rb.chute_xy(chute_offset)
-        lap("pass %d done" % attempt)
-        if np.hypot(cx-hole_x, cy-hole_y) < 4.0 or attempt == 2:
-            break
-        yield from guard(drive_straight(rb, 90.0, speed=140.0), 10.0)
+        yield from guard(drive_straight(rb, -(hole_y - cy), speed=110.0), 12.0)
+    rb.stop()
+    yield from wait(rb, 0.2)
     cx, cy = rb.chute_xy(chute_offset)
-    log("      docked: chute(%.1f,%.1f) vs hole(%.1f,%.1f) err %.1f mm"
-        % (cx, cy, hole_x, hole_y, np.hypot(cx-hole_x, cy-hole_y)))
+    th = np.radians(rb.pose[2])
+    tr = rb.trim_at()
+    bx, by = cx - tr*np.sin(th), cy + tr*np.cos(th)
+    log("      docked: bore(%.1f,%.1f) vs hole(%.1f,%.1f) err %.1f mm  (trim %+.1f, %s)"
+        % (bx, by, hole_x, hole_y, np.hypot(bx-hole_x, by-hole_y), tr,
+           tgt[2] if tgt else "blind"))
     lap("docked")
-    # Re-seat before metering ONLY if the bore disagrees with what should be
-    # aboard.  When it already reads the full count the stack is demonstrably
-    # flat and the stroke is 1.2 s of a 120 s match for nothing -- 3.6 s over
-    # three slots, which is most of a fourth dock.
+
     if not aboard or rb.mag_count() < aboard:
         yield from reseat(rb)
-    # Escapement, sequenced (F19).  The retainer takes the column at the joint
-    # above the bottom piece so the shelf releases exactly one; with only one
-    # piece left there is no joint to enter and the retainer stays parked -- the
-    # bore rangefinder is what tells the robot which case it is in.
     n = rb.mag_count()
     if n == 0 and aboard:
         # A perched piece is INVISIBLE to the bore ray: it sits off-axis and the
@@ -453,72 +661,21 @@ def dock_and_post(rb, hole_x, hole_y, chute_offset, stroke=0.60, aboard=0,
         yield from reseat(rb, cycles=2)
         n = rb.mag_count()
     log("      magazine holds %d" % n)
-
-    def _stack(tag):
-        if not os.environ.get("ESC_DEBUG"):
-            return
-        import mujoco as _mj
-        out = []
-        for _i in range(3):
-            _b = _mj.mj_name2id(rb.m, _mj.mjtObj.mjOBJ_BODY, "disc%d" % _i)
-            if _b < 0:
-                continue
-            _p = rb.to_local(rb.d.xpos[_b])
-            out.append("d%d(%6.1f,%5.1f,%5.1f)" % (_i, _p[0], _p[1], _p[2]))
-        log("        [esc %-9s] %s" % (tag, "  ".join(out)))
-
-    _stack("before")
     rb.blade(n >= 2)
-    yield from wait(rb, 0.5)
-    _stack("blade in")
-    # HOLD THE SHELF OPEN LONG ENOUGH FOR THE PIECE TO CLEAR IT (F41).  At 0.28 s
-    # the released disc was still at Za 7.2 -- barely below the shelf line at 8 --
-    # when the shelf came back, and the returning shelf caught it and swept it
-    # 10.7 mm sideways, where it jammed half in the bore and was then dragged
-    # along by the departure.  It does not fall freely: the retainer's knife lip
-    # rests on it, so it is released rather than dropped.
+    yield from wait(rb, 0.4)
+    # Hold the leaves open long enough for the piece to clear them (F41), and
+    # leave them open until the head is off the slot (F55).  Both findings were
+    # made against a single sliding shelf, which swept a released disc 10.7 mm
+    # sideways on its return and could pinch one against the slot's countersink
+    # hard enough to bolt the robot to the laboratory.  Two leaves retracting to
+    # opposite sides apply no net side force -- measured, a released disc moves
+    # 0.11 mm laterally instead of 4.6 -- but the sequencing costs nothing.
     rb.gate(True)
     yield from wait(rb, stroke)
-    _stack("gate out")
-    # ...AND LEAVE IT OPEN UNTIL THE ROBOT HAS LEFT THE SLOT (F55).  Closing it
-    # here is what bolts the robot to the laboratory: a disc that perches on the
-    # slot's countersink instead of dropping through ends up pinched between
-    # that countersink and the returning shelf, 4 N on the shelf and 3 N on the
-    # cone, and the robot cannot then drive off in ANY direction -- rocking does
-    # not free it.  It still scores, and everything after it is lost.
-    # With the retainer in, the column is already supported without the shelf,
-    # so there is no reason to close it until the chute is clear of the slot.
-    # (On the last disc there is nothing left in the bore to hold up at all.)
-    # depart nose-out: the robot already faces away from the hole, so driving
-    # forward retraces the approach line straight back to the pivot station
     lap("posted")
-    # Depart by driving FORWARD off the plate, not by returning to the pivot
-    # station this hole was approached from.  Going back west after hole 2 only
-    # to set off east for hole 3 cost 35 s -- the whole guard, because the pursue
-    # never even arrived.  The next hole's approach picks its own station, so all
-    # that is needed here is to get the tail clear of the plate.  Forward travel
-    # is capped by the south wall: docked, the axle sits at Y ~293 and the nose
-    # is 142.5 ahead of it.
-    # Depart onto the PIVOT LINE, not past it.  Docked, the axle sits ~106 mm
-    # south of the slot; driving a fixed 130 mm put it at y 163, and turning
-    # there scrapes the south wall (clean only at y >= 190, F36), so every
-    # inter-hole turn was slow and sloppy.  Stop where the next turn is clean.
     px, py, th = rb.pose
     d_out = depart if depart is not None else max(40.0, py - PIVOT_Y)
     yield from guard(drive_straight(rb, d_out, speed=220.0), 8.0)
-    # F55.  THE ROBOT CAN BE BOLTED TO THE LABORATORY BY ITS OWN SAMPLE.  A disc
-    # that perches on a slot's countersink instead of dropping through ends up
-    # pinched between that countersink and the escapement shelf directly above
-    # it -- measured at 4 N on the shelf and 3 N on the cone -- and the robot
-    # then cannot drive off in any direction.  It still SCORES (it is inside
-    # the slot), but everything downstream is dead: one observed match lost the
-    # entire beam phase to it, and the symptom looked like a failed pivot 20 s
-    # later and half a field away.
-    #
-    # Rocking frees it.  Reversing slides the shelf off the piece the other
-    # way, and the second attempt then leaves cleanly.  Three tries, and the
-    # last of them re-aims, because if it is still stuck after that the robot
-    # is not stuck on a disc.
     for _ in range(3):
         if rb.pose[1] <= PIVOT_Y + 35.0:
             break
@@ -526,13 +683,13 @@ def dock_and_post(rb, hole_x, hole_y, chute_offset, stroke=0.60, aboard=0,
         yield from guard(drive_straight(rb, -45.0, speed=140.0), 4.0)
         yield from guard(drive_straight(rb, rb.pose[1] - PIVOT_Y + 45.0,
                                         speed=200.0), 7.0)
-    # Clear of the slot -- now it is safe to put the shelf back under the column.
+    # Clear of the slot -- safe to close under the column again, and to bring
+    # the head back to centre so the belt tail feeds the bore.
     rb.gate(False)
-    yield from wait(rb, 0.4)
-    _stack("gate back")
+    rb.trim(0.0)
+    yield from wait(rb, 0.35)
     rb.blade(False)
-    yield from wait(rb, 0.5)
-    _stack("blade out")
+    yield from wait(rb, 0.4)
     lap("departed")
 
 

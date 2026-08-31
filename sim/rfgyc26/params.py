@@ -182,6 +182,161 @@ class Chassis:
     MU_BALL         = 0.05
 
 
+# ============================================================ PERCEPTION (F69)
+class Vision:
+    """Two Pi cameras on one rigid plate at the tail: the robot's primary sensor.
+
+    WHY THIS REPLACES THE REFLECTANCE PROBES.  F68 built the laboratory dock
+    around two TCRT-class rangefinders on the posting head -- a 1.5 s servo
+    sweep to find the slot's rims, a plate-edge crossing to datum the range, and
+    a dead-reckoned run at the end.  It worked, and every millimetre of it was
+    bought by MOVING something, because a reflectance sensor answers one
+    question: "is there anything 14 mm below this one point".  A camera answers
+    the question the robot is actually asking -- where is the slot, in three
+    dimensions, relative to me -- from 140 mm away, for all three slots at once.
+
+    WHY A SELF-BUILT PAIR AND NOT A DEPTH CAMERA.  A packaged stereo module
+    (OAK-D and the like) hands over a dense depth map, and pays for it with a
+    MINIMUM RANGE: min_depth = f*B/disparity_levels, which for a 75 mm baseline
+    at 800P is 697 mm.  The corridor south of the laboratory is 360 mm wide
+    (F10), so the robot can never stand more than ~290 mm from its dock -- a
+    sensor with a 700 mm floor is blind for the entire approach.  Dropping to
+    400P and extended disparity brings it to 173 mm, and the whole design then
+    has to be arranged around a blind cone it cannot avoid.
+
+    None of that applies to a pair of cameras we mount ourselves, because the
+    robot does not need a dense depth map.  It needs ONE feature: the centre of
+    a O60 circle.  Found independently in each image and triangulated, that has
+    no disparity search and therefore no minimum range at all.
+
+    AND THE SENSOR IS NOT THE LIMIT -- the bracket is.  Worked through at
+    1280x720 and 66 deg (f = 986 px), for a slot 200 mm away spanning 296 px:
+
+        ellipse centre, few hundred boundary pixels    0.05 px -> 0.01 mm
+        triangulated range, 130 mm baseline                    -> 0.02 mm
+        range from the KNOWN O60 diameter, one camera          -> 0.03 mm
+        ---------------------------------------------------------------
+        camera-to-BORE calibration, a bracket on this robot        1.0 mm
+        mast flex at 200 mm/s over a wooden floor, 0.2 deg        0.70 mm
+        ellipse-centre perspective bias at 45 deg, uncorrected    0.46 mm
+        ...the same, corrected by conic back-projection           0.10 mm
+
+    So: spend the effort on a STIFF, SHORT mast, on both cameras being on ONE
+    plate rather than two brackets, and on calibrating to the bore rather than
+    only to each other.  Do not spend it on megapixels.  The two axes that
+    matter -- lateral, which the trim slide has to spend, and range, which
+    odometry already half knows -- are both dominated by the mount.
+
+    TWO INDEPENDENT RANGES, DELIBERATELY.  Triangulation and known-diameter are
+    different physics on the same image pair.  A competition robot that posts a
+    sample into the wrong place loses 18 points and does it confidently; two
+    measurements that must agree is what turns a wrong answer into a refusal.
+    """
+    # ---- the parts, and what is ours to choose ----
+    W, H            = 1280, 720        # processing resolution, not sensor size
+    # 102, the WIDE Camera Module 3, and the reason is coverage rather than
+    # anything to do with precision.  Measured over the whole band the corridor
+    # allows (d 140 down to 60), counting slots whose FULL RIM is in frame:
+    #
+    #     HFOV  toe        d=140 130 120 110 100 ...
+    #      66     8          3   3   2   2   0        loses the slot it is docking
+    #      66    12          2   2   2   2   0        toe alone does not fix it
+    #      78     8          3   3   3   3   0
+    #     102     8          3   3   3   3   0
+    #
+    # At 66 deg the NEAREST slot's rim leaves the frame first -- so the robot
+    # keeps the two it is not docking and loses the one it is.  78 fixes it and
+    # 102 does no better, but 78 is not a stock Pi lens and 102 is.  The cost is
+    # focal length (518 px against 986), which takes the lateral noise from
+    # 0.016 mm to 0.031 -- against a calibration bias of 1.0.  It is free.
+    HFOV            = 102.0            # deg, Camera Module 3 Wide
+    BASELINE        = 130.0            # mm; ours to pick, chassis allows 200
+    TOE             = 8.0              # deg of convergence, so both see the dock
+    FPS             = 20.0             # an ellipse fit does not need 60
+
+    # ---- what the model treats as noise -----------------------------------
+    FEAT_SIGMA_PX   = 0.08             # ellipse centre, per frame
+    DIAM_SIGMA_PX   = 0.12             # apparent diameter, per frame
+    # ---- ...and what it treats as BIAS, because that is what it is ---------
+    # Drawn once per match, not per frame.  A calibration error is the same
+    # every frame; a model that redraws it averages it away and flatters itself.
+    EXT_SIGMA       = 1.0              # mm, camera-plate-to-bore
+    EXT_ANG_SIGMA   = 0.25             # deg
+    FLEX_DEG        = 0.20             # mast flex at FLEX_REF speed
+    FLEX_REF        = 200.0            # mm/s
+    # DETECTION BIAS, and it is the one that nearly went unmodelled.
+    #
+    # A slot is a O60 hole in a 6 mm plate, seen from 45 deg.  Its FLOOR is a
+    # crescent, not a circle -- the near wall hides part of it -- so the
+    # centroid of "everything below plate level" sits off the slot's axis, by an
+    # amount that depends on where the camera is relative to that slot.
+    # Measured against actual depth renders, with the modelled calibration bias
+    # zeroed so only geometry is left:
+    #
+    #     slot straight behind the camera      -2.37 mm, at every range
+    #     slot 140 mm to the far side          +1.56 mm, at every range
+    #
+    # Constant with range and signed by the viewing offset: a bias, and one
+    # comparable to the entire rest of the budget.  THE FIX IS IN THE PIPELINE,
+    # NOT THE OPTICS: fit the TOP RIM, which is a real circle and is never
+    # occluded from above, instead of taking the centroid of what you can see
+    # through it.  DET_BIAS is what a rim fit leaves behind; the 2.4 mm above is
+    # what a naive blob centroid costs, and it is written down here so nobody
+    # re-discovers it on the field.
+    DET_BIAS        = 0.4              # mm, 1-sigma, per slot per match
+    Z_MAX           = 1200.0           # beyond this a O60 slot is under 50 px
+
+    # ---- MOUNT: on the deck, at the tail, looking back and down -----------
+    #
+    # Rearward, and that is considered rather than convenient.  The one task on
+    # the board needing millimetre vision is the laboratory, and the laboratory
+    # is a REVERSE dock -- the posting head is at Xa 36, behind the axle,
+    # because that is where the belt discharges (F17).  A forward camera would
+    # have to map the slots, turn 180 deg, and then dock on odometry through
+    # the least repeatable manoeuvre the robot performs.  Looking back, the slot
+    # is in frame for the whole approach, and the camera also sees every scoring
+    # action the robot has just taken.
+    #
+    # The binding constraint is NOT range or precision -- it is the robot's own
+    # tail.  The camera has to look over a shell 94 mm tall to see a slot 100 mm
+    # behind it, and the model's own ray casts put the slot's near rim 0.3 mm
+    # inside that shell.  Height, pitch and how far aft the plate sits are all
+    # traded against the START ENVELOPE (285 long, spec 4.2), which is why the
+    # plate is flush with the tail rather than past it.
+    CAM_X           = 24.0             # Xa of the plate's centre
+    CAM_Z           = 158.0            # Za  [VERIFY the height rule]
+    CAM_PITCH       = 45.0             # deg below horizontal, facing -Xa
+    CAM_MASS        = 12.0             # g each, Camera Module 3
+    MAST_MASS       = 60.0             # g, mast + plate
+
+    @classmethod
+    def body_half_x(cls):
+        """How far the tilted housing reaches along Xa from the plate centre."""
+        from math import cos, sin, radians
+        a = radians(cls.CAM_PITCH)
+        return 14.0*cos(a) + 18.75*sin(a)
+
+    @classmethod
+    def f_px(cls):
+        from math import tan, radians
+        return (cls.W/2.0) / tan(radians(cls.HFOV/2.0))
+
+    @classmethod
+    def sigma_lat(cls, z_mm):
+        """Lateral, from the feature's image position."""
+        return z_mm * cls.FEAT_SIGMA_PX / cls.f_px()
+
+    @classmethod
+    def sigma_z_stereo(cls, z_mm):
+        return z_mm*z_mm * cls.FEAT_SIGMA_PX * 1.414 / (cls.f_px() * cls.BASELINE)
+
+    @classmethod
+    def sigma_z_mono(cls, z_mm, diam_mm):
+        """Range from a circle of KNOWN diameter: sigma_Z/Z = sigma_d/d_px."""
+        d_px = diam_mm * cls.f_px() / z_mm
+        return z_mm * cls.DIAM_SIGMA_PX / d_px
+
+
 # ==================================================== MISSION 2 (healthcare)
 class M2:
     """Kits and triaged patients -- rules 2.2/3.2.
@@ -316,6 +471,12 @@ class AgentA:
     # either a wider bore or positive placement; 1 mm is not achievable from a drop.
     CHUTE_D         = 66.0
     CHUTE_Z0        = 11.0             # gate tip -- 8 above the 3 lab plate
+    # F70 seat taper: the bore closes to SEAT_R over the last SEAT_H, so a piece
+    # settles centred instead of anywhere in 5 mm of play.  1.75 mm of radial
+    # clearance at the seat, which a piece reaches by sliding down a 24 deg
+    # funnel rather than by being dropped into it.
+    SEAT_R          = 29.75
+    SEAT_H          = 8.0
     # Front of the bore stops at Za 30: with the tail roller now at Xa 64 (F17) a
     # O16 roller occupies Za 30..46 right above the bore's front rim, so the tube
     # is a C -- open at the front above Za 30, where the roller and the belt wrap
@@ -323,37 +484,128 @@ class AgentA:
     CHUTE_Z1        = 30.0
     CHUTE_CAP       = 8
 
-    # ESCAPEMENT (F19).  The base gate cannot be a plain shutter.  It has to slide
-    # clear of a O56 disc to release one, and by then it has released the whole
-    # column -- with a properly seated stack (which is new: they used to hang up
-    # on each other) one stroke dropped all three and two landed in the same lab
-    # hole.  So there are two blades: the SHELF carries the column, and a thin
-    # RETAINER slides in at the joint between the bottom disc and the next one.
+    # ================================================ POSTING-HEAD TRIM (F68)
     #
-    # They must be driven separately.  Built as one stepped slide -- the classic
-    # coin escapement -- the shelf arrives from one side exactly as the retainer
-    # leaves from the other, so the column is handed over in mid-drop and tips
-    # out of the bore (measured: cycle 1 clean, cycle 2 threw the last disc onto
-    # the collar at Za 32).  Two small servos, sequenced retainer-in, shelf-out,
-    # shelf-in, retainer-out, and each transfer happens onto something already
-    # in place.
+    # THE LABORATORY COSTS 53 s OF A 120 s MATCH.  Measured over six seeds:
+    # 18.6 + 17.4 + 17.0 s for three slots worth 50 points, in a match that also
+    # has to find Mission 2's 130.  The escapement is not what costs it -- 34 of
+    # 36 samples go in -- the DOCK is.
     #
-    # The retainer is a 1 mm KNIFE, not a plate: at 3 mm it straddled the joint,
-    # caught the second disc's rim and dragged it out of the bore sideways.
-    ESC_Y           = 74.0             # stroke; clears the bore and stays inboard
-    ESC_T           = 1.5              # shelf half-thickness
+    # Why the dock is expensive: the mechanism's capture window is +/-4 mm
+    # across and +/-3 mm along (measured, 23 of 81 on a +/-8 mm grid under F67's
+    # honest slot test), because a O56 disc into a O60 slot has 2.0 mm of radial
+    # clearance and nothing can widen that.  A differential-drive robot can only
+    # correct LATERAL error by turning, and turning swings a chute 106 mm behind
+    # the axle, so align_reverse hunts: three reverse passes, 11-17 s.  Measured
+    # separately, ONE turn-and-reverse takes 3.2 s and leaves the lateral error
+    # it started with, essentially untouched.
+    #
+    # So the last few millimetres are given to the HEAD instead of the chassis.
+    # One MG90S through a 15 mm Scotch yoke slides the whole posting head -- bore,
+    # collar, escapement, feed and the slot probes -- across the robot.  The
+    # chassis then only has to arrive within the slide's reach, in ONE pass.
+    #
+    # This also survives the change that is coming.  Today the route navigates on
+    # ground truth; the real robot will navigate on VIO, which does not deliver
+    # 4 mm.  A trim slide closed on the probes needs the slot's position RELATIVE
+    # TO THE HEAD, which is a local measurement, not a world coordinate.
+    #
+    # WHAT DOES NOT FIT, AND WHY THE DROP-THROUGH BORE SURVIVES.  A magazine that
+    # discharges SIDEWAYS -- push the bottom disc out through a window, as a
+    # vending machine does -- is one actuator instead of two and needs no bore.
+    # The space is not there.  A shuttle carrying a disc from the bore to a
+    # separate discharge hole needs >= 70 mm between the two O66 centres AND a
+    # plate long enough to still roof the bore at full stroke: 132 mm of plate
+    # sweeping 202 mm, inside a 191 mm shell.  Pushing the disc clear OUT of the
+    # robot does fit (177 mm swept) but puts the drop point 118 mm off the
+    # centreline, which stands the drive wheels exactly on the laboratory's 6 mm
+    # edge -- the one contact F35 says jams the robot.  A rotary carrier is
+    # worse: 180 deg of swing about an axis 35 mm off the bore needs an outer
+    # radius of 67, so it reaches Ya 102, through the beam pocket wall.
+    # 25, which is what the two-leaf escapement leaves room for: the shelf leaf
+    # reaches Ya 95 at full trim and the retainer 84, against a beam pocket wall
+    # at 95.5.  The single sliding shelf this replaced could not have afforded
+    # eight.  It is the shelf that binds, so widening the trim any further means
+    # shortening the leaves, and the leaves are already at their minimum -- a
+    # shelf that retracts short of the bore wall PERCHES the disc instead of
+    # dropping it (0 of 81 on the capture grid, measured).
+    TRIM_Y          = 25.0             # +/- lateral stroke of the posting head
+    TRIM_RATE       = 60.0             # mm/s; MG90S at 0.1 s/60 deg on a 22 mm crank
+
+    # THE REFLECTANCE PROBES ARE GONE (F69).  Rev C specified a TCRT array to
+    # find the slots, F30 sited it, F68 moved it onto the head and made it work
+    # -- and then the OAK-D made all of it pointless.  A reflectance sensor
+    # answers "is there something 14 mm below this one point", so the robot has
+    # to move to ask again, and the dock was built around asking enough times: a
+    # 1.5 s servo sweep, a plate-edge crossing to datum the range, and a blind
+    # run at the end.  A stereo camera answers the question directly, from
+    # 140 mm away, for all three slots at once.  Four sensors, their wiring and
+    # 9 mm of the escapement's lateral extent all leave the build.
+    #
+    # The one rangefinder that STAYS is a_mag, looking down the magazine bore --
+    # a 60 mm tube with a stack in it is exactly what a short-range reflectance
+    # sensor is good at, and no camera can see inside it.
+
+    # ESCAPEMENT (F19, rebuilt as a two-leaf iris by F68).
+    #
+    # The base gate cannot be a plain shutter: it has to slide clear of a O56
+    # disc to release one, and by then it has released the whole column -- one
+    # stroke dropped all three and two landed in the same lab hole.  So there
+    # are two stages: a SHELF carrying the column, and a thin RETAINER entering
+    # the joint between the bottom disc and the next one.  They must be driven
+    # separately (built as one stepped slide the column is handed over in
+    # mid-drop and tips out of the bore), and the retainer must be a 1 mm KNIFE
+    # with a rolled leading lip -- at 3 mm it straddled the joint and dragged
+    # the second disc sideways out of the bore, and square-ended it drove the
+    # second disc out the same way.  All of that stands.
+    #
+    # WHAT CHANGED IS THE SIDEWAYS EXTENT, AND IT HAD TO.
+    #
+    # A single sliding shelf must roof a O66 bore closed AND be entirely out
+    # from under a O56 disc open, so its stroke is at least 66 mm and it reaches
+    # 33 + 66 = 99 mm off the head before any trim is added.  Measured: cut it
+    # to 56 and the disc is not released, it PERCHES on the 7 mm of shelf still
+    # under its far edge and the returning shelf then scoops it back up (0 of 81
+    # on the capture grid, against 23 before).  There is no room in a 191 mm
+    # shell for that stroke plus F68's trim slide.
+    #
+    # Two leaves closing from opposite sides halve it.  Each leaf roofs half the
+    # bore and retracts 37 mm, so the far edge is 70 instead of 111 -- and the
+    # release is SYMMETRIC, which fixes something the single shelf never did:
+    # the returning shelf used to sweep a released disc sideways (10.7 mm,
+    # measured, F41) and could pinch one against the slot's countersink hard
+    # enough to bolt the robot to the laboratory (F55).  Two leaves meeting at
+    # the axis apply no net side force at all.
+    #
+    # On the real machine one pinion drives both racks, which is how the model
+    # couples them: one actuator on a fixed tendon, not two servos.
+    ESC_OVER        = 2.0              # each leaf crosses the axis by this much
+    ESC_GAP         = 2.0              # ...and clears the bore by this when open
+    ESC_Y           = CHUTE_D/2 + ESC_OVER + ESC_GAP        # leaf stroke, 37
+    ESC_HALF        = (CHUTE_D/2 + ESC_OVER)/2.0            # leaf half-length, 17.5
+    ESC_XHALF       = CHUTE_D/2 + 4.0  # shelf leaf half-width along Xa; roofs the bore
+    # The RETAINER is narrower along Xa than the shelf, and has to be: it only
+    # takes the column on a chord, so it needs to reach under a O56 disc, not
+    # roof a O66 bore -- and at the shelf's 37 it spans Xa -1..73, straight
+    # under the plate-edge probes.  Blocked, they read a constant 2.2 mm, the
+    # edge is never seen, and every dock spends its whole 14 s guard before
+    # falling back to dead reckoning.  Measured: the dock went from 17 s to 28.
+    ESC_BLADE_XHALF = Piece.DISC_D/2 + 2.0                  # 30
+    ESC_T           = 1.5              # leaf half-thickness
     ESC_BLADE_T     = 0.5              # retainer half-thickness
     ESC_BLADE_Z     = 17.3             # underside 16.8, over a disc topping at 16
-    # F47.  The retainer used to be 80 mm long on a 74 mm stroke, so PARKED it
-    # reached Ya 114 -- 16.5 mm inside the beam pocket, at exactly the height a
-    # carried beam rides.  It rubbed the beam for the whole match and dragged
-    # the placed one off station.  A blade cannot be parked clear of a O66 bore
-    # AND stay inboard of Ya 95.5 unless it is shorter: near edge on the bore
-    # rim (33) plus half-length must come to <= 95.  62 mm long on a 64 mm
-    # stroke does it, and a O56 disc only needs +/-28 of support, so nothing
-    # about the escapement's job changes.
-    ESC_BLADE_Y     = 31.0             # retainer half-length; covers the bore
-    ESC_BLADE_PARK  = 64.0             # its own stroke -- NOT the gate's 74
+    # The retainer is two leaves as well, for the same reason and with the same
+    # rolled lip.  Each reaches ESC_BLADE_Y past the axis, so the column is held
+    # on a 2*ESC_BLADE_Y chord with its centre supported.  F47 cut this from 80
+    # to 62 mm to keep it out of the beam pocket; two leaves take it to 46 and
+    # leave room for the trim slide on top.
+    ESC_BLADE_OVER  = 1.0
+    ESC_BLADE_Y     = 23.0             # each leaf reaches this far past the axis
+    ESC_BLADE_HALF  = (ESC_BLADE_Y + ESC_BLADE_OVER)/2.0
+    # Back to the geometric minimum now that F69 has retired the slot probes it
+    # used to have to park outboard of.  That is 9 mm of lateral extent given
+    # back, and the trim slide takes it.
+    ESC_BLADE_PARK  = CHUTE_D/2 + ESC_BLADE_OVER + ESC_GAP  # 36: its own stroke
     # ...and its leading edge is a rolled lip, not a square end.  Square, it met
     # the second disc's rim head-on and drove it sideways out of the bore (dy -30,
     # Za 32).  A round edge that starts BELOW the joint cams the column up
@@ -423,21 +675,6 @@ class AgentA:
     FEED_Z_UP       = 87.0             # parked: foot centre (face at 84)
     FEED_STROKE     = 58.0             # face down to Za 26, the top of a full stack
 
-    # SLOT PROBES (F30).  Two downward reflectance sensors -- the spec's TCRT
-    # array -- straddling the chute axis, mounted one bore-radius FORWARD of it so
-    # they clear the bore and the escapement.  Reversing, the chute crosses a slot
-    # first and the probes follow PROBE_DX later, so the slot can be measured
-    # after the chute has passed over it and the dock corrected from the
-    # measurement rather than from dead reckoning.
-    #
-    # This is the only laboratory feature the rulebook actually guarantees: it
-    # gives no thickness, no height and no frame, just "3 marked slots of 60 mm"
-    # in wood (rules 3.2).  Anything datumed off a plate edge or a back wall
-    # would be assuming a part nobody has specified -- the mistake F21 and F27
-    # already cost us twice.
-    PROBE_DX        = 40.0             # Xa forward of the chute axis
-    PROBE_DY        = 20.0             # +/- lateral; chord over a O60 slot is 45
-    PROBE_Z         = 20.0             # site height, below the belt underside
 
     # ---------------------------------------------------------------- BEAMS
     # F44.  The pockets are NOT boxes with an outboard wall.  They cannot be:
@@ -656,8 +893,42 @@ CHECKS = [
      _guide_ball_clearance() >= 3.0),
     ("...and stays inboard of the beam pocket wall",
      AgentA.GUIDE_FROM_W/2.0 + 0.75 <= AgentA.POCKET_IN_Y - 1.5),
-    ("the parked escapement retainer stays out of the beam pocket (F47)",
-     AgentA.ESC_BLADE_PARK + AgentA.ESC_BLADE_Y <= AgentA.POCKET_IN_Y),
-    ("...and parked it is still clear of the bore",
-     AgentA.ESC_BLADE_PARK - AgentA.ESC_BLADE_Y >= AgentA.CHUTE_D/2.0),
+    # F47 and F68 together: the retainer has to clear the beam pocket AT FULL
+    # TRIM, not just at trim zero.  Every lateral extent on the head is now
+    # spent twice, and this is the one that sits at a carried beam's height.
+    ("the parked escapement retainer stays out of the beam pocket at full trim (F47/F68)",
+     AgentA.ESC_BLADE_PARK + AgentA.ESC_BLADE_Y + AgentA.TRIM_Y <= AgentA.POCKET_IN_Y),
+    # The shelf is allowed past the pocket wall because it passes UNDER a
+    # carried beam -- but only just, so assert the clearance that makes it legal.
+    ("the escapement shelf passes under a carried beam",
+     AgentA.CHUTE_Z0 - 1.5 + AgentA.ESC_T < AgentA.CARRY_Z),
+    ("...and at full trim the shelf leaf is still clear of a carried beam's foot",
+     AgentA.CHUTE_D/2.0 + AgentA.ESC_Y + AgentA.TRIM_Y <= AgentA.POCKET_IN_Y),
+    ("the closed shelf leaves roof the whole bore, overlapping at the axis",
+     AgentA.ESC_OVER > 0 and 2*AgentA.ESC_HALF - AgentA.ESC_OVER >= AgentA.CHUTE_D/2.0),
+    # THE ONE THAT WAS MISSING, AND IT COST A ZERO.  A shelf that retracts short
+    # of the bore wall leaves the disc PERCHED on its edge instead of dropping
+    # it, and the returning shelf then scoops it back up: 0 of 81 on the capture
+    # grid, measured, when ESC_Y was cut from 74 to 56 on the old single shelf.
+    ("the open shelf leaves clear the bore entirely, so nothing perches",
+     AgentA.ESC_Y - AgentA.ESC_OVER >= AgentA.CHUTE_D/2.0),
+    ("the closed retainer leaves take the column on a chord through its centre",
+     AgentA.ESC_BLADE_Y >= Piece.DISC_D/4.0),
+    ("the parked retainer is clear of the bore",
+     AgentA.ESC_BLADE_PARK - AgentA.ESC_BLADE_OVER >= AgentA.CHUTE_D/2.0),
+    # F69: the camera is the primary sensor, so its geometry gets assertions.
+    ("a O60 slot is hundreds of pixels across where the robot measures it",
+     Field.LAB_HOLE_D * Vision.f_px() / 250.0 >= 100.0),
+    ("...so the SENSOR is nowhere near the limit -- the bracket is",
+     Vision.sigma_lat(250.0) < 0.1 and Vision.EXT_SIGMA >= 10*Vision.sigma_lat(250.0)),
+    ("both cameras fit across the chassis, inboard of the beam pockets",
+     Vision.BASELINE/2.0 + 15.0 <= AgentA.POCKET_IN_Y),
+    ("the camera housing stays inside the robot's own length",
+     Vision.CAM_X - Vision.body_half_x() >= -0.5),
+    ("...and under the design envelope's roof",
+     Vision.CAM_Z + 14.0*sin(radians(Vision.CAM_PITCH))
+                  + 18.75*cos(radians(Vision.CAM_PITCH)) <= AgentA.H + 35.0),
+    # The trim scan only works if BOTH probes can find their rim inside the
+    # slide's stroke: the left crosses at trim = SLOTP_DY - R - e, so the
+    # lateral error it can resolve is TRIM_Y - (SLOTP_DY - R) each way.
 ]

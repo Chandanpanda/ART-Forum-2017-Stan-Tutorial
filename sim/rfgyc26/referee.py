@@ -10,6 +10,26 @@ def _in(box, x, y):
     return box[0] <= x <= box[2] and box[1] <= y <= box[3]
 
 
+# F67.  "COMPLETELY INSIDE" MEANS INSIDE (rules 2.1).
+#
+# This test used to allow the disc's centre 10 mm of radial error and its centre
+# height up to LAB_PLATE_T + DISC_T.  A O56 disc lying FLAT ON TOP of a 6 mm
+# plate has its centre at Za 8.5, so it passed both -- 9 mm off the hole and not
+# in it at all, scored +15.  Every mission number in the README was flattered by
+# that, the sweeps most of all, because a near miss that skates onto the plate
+# looks exactly like a hit.
+#
+# The honest test is geometric and has no free parameters:
+#   radial  -- a disc that is physically inside a O60 bore cannot be more than
+#              (60-56)/2 = 2.0 mm off its axis.  3.0 allows for solver slop.
+#   height  -- "completely inside" means the disc's TOP is not above the plate's
+#              top: z + DISC_T/2 <= LAB_PLATE_T.  Seated on the field floor
+#              inside the bore that is z = 2.5, with 1.0 of slack for a tilt.
+SLOT_R_TOL  = 3.0
+def _slot_z_max():
+    return Field.LAB_PLATE_T - Piece.DISC_T/2.0 + 1.0
+
+
 def score_discs(disc_xyz, ruleset_wrong=WRONG_ZONE_PENALTY):
     """disc_xyz: list of (x_mm, y_mm, z_mm). Returns (points, breakdown)."""
     placed, out, in_quar = 0, 0, 0
@@ -17,9 +37,9 @@ def score_discs(disc_xyz, ruleset_wrong=WRONG_ZONE_PENALTY):
     for i, (x, y, z) in enumerate(disc_xyz):
         hole = None
         for h, hx in enumerate(Field.LAB_HOLE_X):
-            if np.hypot(x - hx, y - LAB_HOLE_Y) <= (Field.LAB_HOLE_D - Piece.DISC_D)/2 + 8:
+            if np.hypot(x - hx, y - LAB_HOLE_Y) <= SLOT_R_TOL:
                 hole = h; break
-        if hole is not None and z < Field.LAB_PLATE_T + Piece.DISC_T:
+        if hole is not None and z <= _slot_z_max():
             placed += 1; detail.append((i, "lab slot %d" % (hole+1), +15))
         elif _in(Field.QUARANTINE, x, y):
             in_quar += 1; detail.append((i, "left in quarantine", -5))

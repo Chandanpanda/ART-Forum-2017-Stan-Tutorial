@@ -2,7 +2,10 @@
 the floor onto the conveyor and stacking them in the chute-magazine."""
 import os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+import os
 import numpy as np, mujoco
+from rfgyc26.params import AgentA as _A
+_A.SEAT_H = float(os.environ.get('SEAT_H', _A.SEAT_H))
 from rfgyc26 import mjcf
 from rfgyc26.robot import AgentARobot
 from rfgyc26.params import AgentA

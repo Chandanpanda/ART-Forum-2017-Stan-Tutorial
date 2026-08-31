@@ -5,7 +5,7 @@ full-steps per second, and step loss can be injected, because the spec calls a
 skipped step 'silent' and that is the design's main odometry risk.
 """
 import numpy as np, mujoco
-from .params import Chassis, AgentA, Piece, mm
+from .params import Chassis, AgentA, Piece, Field, Vision, mm
 
 WHEEL_R = Chassis.WHEEL_D / 2000.0          # m
 HALF_TRACK = Chassis.TRACK / 2000.0         # m
@@ -35,8 +35,8 @@ class AgentARobot:
         self.s_tof = gid(mujoco.mjtObj.mjOBJ_SENSOR, "a_tof")
         self.s_gyro= gid(mujoco.mjtObj.mjOBJ_SENSOR, "a_gyro")
         self.s_mag = gid(mujoco.mjtObj.mjOBJ_SENSOR, "a_mag")
-        self.s_pl  = gid(mujoco.mjtObj.mjOBJ_SENSOR, "a_probe_l")
-        self.s_pr  = gid(mujoco.mjtObj.mjOBJ_SENSOR, "a_probe_r")
+        self.a_trim= gid(mujoco.mjtObj.mjOBJ_ACTUATOR, "a_trim")
+        self.j_trim= gid(mujoco.mjtObj.mjOBJ_JOINT, "A_trim_j")
         self.odo_steps = np.zeros(2)          # commanded steps, the robot's belief
 
     # ---------------------------------------------------------------- state
@@ -142,14 +142,17 @@ class AgentARobot:
         self.d.ctrl[self.a_feed] = -mm(AgentA.FEED_STROKE) if down else 0.0
 
     def gate(self, opened):
-        """Escapement shelf: carries the column, slides clear to release one."""
-        self.d.ctrl[self.a_gate] = mm(AgentA.ESC_Y) if opened else 0.0
+        """Escapement shelf: two leaves that carry the column and retract to
+        OPPOSITE sides to release one.  The command is the coupled tendon's
+        length, which is the sum of both leaf strokes -- one pinion, two racks
+        (F68)."""
+        self.d.ctrl[self.a_gate] = 2*mm(AgentA.ESC_Y) if opened else 0.0
 
     def blade(self, inserted):
-        """Escapement retainer: a 1 mm knife that takes the column at the joint
-        above the bottom disc, so the shelf can slide out from under just that
-        one.  Parked it is clear of the bore."""
-        self.d.ctrl[self.a_blade] = -mm(AgentA.ESC_BLADE_PARK) if inserted else 0.0
+        """Escapement retainer: two 1 mm knives that take the column at the
+        joint above the bottom disc, so the shelf can retract from under just
+        that one.  Parked they are clear of the bore."""
+        self.d.ctrl[self.a_blade] = 2*mm(AgentA.ESC_BLADE_PARK) if inserted else 0.0
 
     def cradle(self, which, carry):
         """Beam cradle 1 (pocket R, beam 1) or 2 (pocket L, beam 2).
@@ -174,22 +177,23 @@ class AgentARobot:
         full = AgentA.CARRY_Z + AgentA.CRADLE_DROP
         return self.d.qpos[self.m.jnt_qposadr[j]]*1000.0 > full - tol
 
-    def probe_mm(self):
-        """Raw slot-probe ranges, mm.  -1 means no return at all."""
-        l = self.d.sensordata[self.m.sensor_adr[self.s_pl]]
-        r = self.d.sensordata[self.m.sensor_adr[self.s_pr]]
-        return (-1.0 if l < 0 else l*1000.0, -1.0 if r < 0 else r*1000.0)
+    # ------------------------------------------------------------- trim slide
+    def trim(self, y_mm):
+        """Aim the posting head.  +y is the robot's LEFT (F68)."""
+        if self.a_trim < 0:
+            return
+        self.d.ctrl[self.a_trim] = mm(float(np.clip(y_mm, -AgentA.TRIM_Y,
+                                                    AgentA.TRIM_Y)))
 
-    def over_slot(self, ref_mm, step_mm=0.5):
-        """(left, right) -- is each probe looking into a slot?
+    def trim_at(self):
+        """Where the slide actually IS, mm -- a servo's own feedback pot."""
+        if self.j_trim < 0:
+            return 0.0
+        return self.d.qpos[self.m.jnt_qposadr[self.j_trim]]*1000.0
 
-        `ref_mm` is the range the probe reads over the laboratory SURFACE, which
-        the robot learns on the way in rather than assuming: the rulebook gives
-        the laboratory no thickness, so the step into a slot is not a number we
-        are entitled to know in advance.
-        """
-        l, r = self.probe_mm()
-        return (l < 0 or l > ref_mm + step_mm, r < 0 or r > ref_mm + step_mm)
+    def trim_settled(self, tol=0.25):
+        want = self.d.ctrl[self.a_trim]*1000.0 if self.a_trim >= 0 else 0.0
+        return abs(self.trim_at() - want) < tol
 
     def mag_count(self):
         """Pieces in the magazine, from the bore rangefinder.  Empty reads the
@@ -200,9 +204,150 @@ class AgentARobot:
         top = 70.0 - r*1000.0            # site is at Za 70 looking down
         return int(max(0.0, round((top - AgentA.CHUTE_Z0) / Piece.DISC_T)))
 
+    # ------------------------------------------------------------ perception
+    def _cam(self):
+        if not hasattr(self, "_cam_id"):
+            self._cam_id = [mujoco.mj_name2id(self.m, mujoco.mjtObj.mjOBJ_CAMERA,
+                                              "A_cam_%s" % t) for t in ("l", "r")]
+            # THE EXTRINSIC IS A BIAS, NOT NOISE.  Where the camera plate sits
+            # relative to the bore is a bracket on a robot that gets driven into
+            # walls on purpose; it is wrong by the same amount all match, and a
+            # model that redraws it every frame averages it away and flatters
+            # itself.  Drawn once, at construction, from the match's own seed.
+            self._ext = self.rng.normal(0.0, Vision.EXT_SIGMA, 3)
+            self._ext_a = np.radians(self.rng.normal(0.0, Vision.EXT_ANG_SIGMA))
+            # Per-SLOT detection bias: a rim fit's residual is a property of
+            # that slot's marking and the angle it is seen from, so it is the
+            # same all match for a given slot and different between slots.
+            self._det = self.rng.normal(0.0, Vision.DET_BIAS,
+                                        (len(Field.LAB_HOLE_X), 2))
+        return self._cam_id
+
+    def cam_frame(self, i=0):
+        """(origin_world_mm, R) for one camera.  MuJoCo's camera looks down its
+        own -z with +x right and +y up, which is also how a rectified pair is
+        described, so the columns of R are the image axes."""
+        c = self._cam()[i]
+        return self.d.cam_xpos[c]*1000.0, self.d.cam_xmat[c].reshape(3, 3)
+
+    def _project(self, p_world_mm, i=0):
+        """(u, v, z) in pixels and mm along the view axis, or None if behind."""
+        o, R = self.cam_frame(i)
+        cam = R.T @ (np.asarray(p_world_mm, float) - o)
+        z = -cam[2]
+        if z <= 1e-6:
+            return None
+        f = Vision.f_px()
+        return (f*cam[0]/z, f*cam[1]/z, z)
+
+    def _visible(self, p_world_mm, i=0):
+        """In frame AND in line of sight, for camera i.
+
+        Occlusion is cast with mj_ray rather than argued about: the robot's own
+        tail shell, the mast, a carried beam and the laboratory's lip are all in
+        the model, so the honest test is whether the ray gets there.
+        """
+        uv = self._project(p_world_mm, i)
+        if uv is None:
+            return None
+        u, v, z = uv
+        if abs(u) > Vision.W/2 or abs(v) > Vision.H/2 or z > Vision.Z_MAX:
+            return None
+        o, _ = self.cam_frame(i)
+        vec = np.asarray(p_world_mm, float) - o
+        rng = np.linalg.norm(vec)/1000.0
+        u3 = vec/np.linalg.norm(vec)
+        # START THE RAY OUTSIDE THE HOUSING.  Cast from the optical centre it
+        # hits the camera's own plate a few mm out and every slot reads
+        # occluded.  45 mm clears the plate and the mast, and everything that
+        # could really be in the way -- the tail shell, a carried beam, the
+        # posting head -- is further out than that.
+        SKIN = 0.045
+        gid = np.zeros(1, np.int32)
+        hit = mujoco.mj_ray(self.m, self.d, o/1000.0 + u3*SKIN, u3, None, 1, -1, gid)
+        if hit >= 0 and hit < rng - SKIN - 0.0015:
+            return None
+        return (u, v, z)
+
+    def _sees_slot(self, p, i):
+        """Is the WHOLE rim of a slot centred at p in camera i's frame?
+
+        Checked against an actual depth render: a blob that runs off the edge of
+        the image has no centroid worth having, and the model was reporting
+        those as measurements.  Four rim points catch it and cost nothing.
+        """
+        if self._visible(p, i) is None:
+            return None
+        r = Field.LAB_HOLE_D/2.0
+        for o_ in ((r, 0, 0), (-r, 0, 0), (0, r, 0), (0, -r, 0)):
+            if self._visible(p + np.array(o_), i) is None:
+                return None
+        return self._visible(p, i)
+
+    def see_lab(self, plate_top=None):
+        """Measure the laboratory's slots.  Returns [(x, y, z, mode)] in the
+        ROBOT frame, for the slots the rig can actually see.
+
+        Two modes, and they are different physics on the same pair of images:
+
+          * 'stereo' -- the slot is in BOTH frames, so its centre triangulates.
+            No disparity search, therefore no minimum range: this is why a
+            self-built pair beats a depth-map module here, whose 173-697 mm
+            floor would blind it for the whole approach.
+          * 'mono'   -- only one camera has it, but the slot is a circle of
+            KNOWN diameter (rules 3.2 give 60 mm), so its range comes from the
+            apparent size instead.  Lateral is unaffected; range costs a factor
+            of two, and lateral is the axis the trim slide spends.
+
+        The error that survives either way is the plate-to-bore calibration and
+        the mast's flex, which is why both are modelled as bias rather than
+        noise -- see Vision.
+        """
+        self._cam()
+        top = Field.LAB_PLATE_T if plate_top is None else plate_top
+        out = []
+        x, y, th = self.pose
+        t = np.radians(th)
+        speed = float(np.linalg.norm(self.d.qvel[0:2]))*1000.0
+        flex = np.radians(Vision.FLEX_DEG * min(speed/Vision.FLEX_REF, 2.0))
+        for si, hx in enumerate(Field.LAB_HOLE_X):
+            p = np.array([hx, _LAB_HOLE_Y(), top])
+            vis = [self._sees_slot(p, i) for i in (0, 1)]
+            if vis[0] is None and vis[1] is None:
+                continue
+            i = 0 if vis[0] is not None else 1
+            u, v, z = vis[i]
+            both = vis[0] is not None and vis[1] is not None
+            sl = Vision.sigma_lat(z)
+            sz = (Vision.sigma_z_stereo(z) if both
+                  else Vision.sigma_z_mono(z, Field.LAB_HOLE_D))
+            # flex tilts the whole rig, so it moves the answer by range*angle
+            sz = np.hypot(sz, z*flex)
+            sl = np.hypot(sl, z*flex)
+            f = Vision.f_px()
+            o, R = self.cam_frame(i)
+            m = np.array([(u*z/f) + self.rng.normal(0, sl) + self._det[si, 0],
+                          (v*z/f) + self.rng.normal(0, sl) + self._det[si, 1],
+                          -(z + self.rng.normal(0, sz))])
+            ca, sa = np.cos(self._ext_a), np.sin(self._ext_a)
+            m = np.array([ca*m[0] - sa*m[1], sa*m[0] + ca*m[1], m[2]]) + self._ext
+            w = o + R @ m
+            dx, dy = w[0] - x, w[1] - y
+            out.append((dx*np.cos(-t) - dy*np.sin(-t),
+                        dx*np.sin(-t) + dy*np.cos(-t),
+                        w[2], "stereo" if both else "mono"))
+        return out
+
     # ------------------------------------------------------------ stallguard
     def stalled(self, thresh=0.42):
         """TMC2209 StallGuard stand-in: both drivers at torque saturation.
         Unreliable below ~0.1 m/s, exactly as the real part is."""
         return (abs(self.d.actuator_force[self.a_l]) > thresh and
                 abs(self.d.actuator_force[self.a_r]) > thresh)
+
+
+def _LAB_HOLE_Y():
+    """The laboratory's slot line.  Imported lazily so robot.py does not depend
+    on mjcf.py at import time (mjcf imports params, params imports nothing)."""
+    from .mjcf import LAB_HOLE_Y
+    return LAB_HOLE_Y

@@ -6,11 +6,11 @@ standalone in MuJoCo's simulate.exe.
 Agent A local frame:  +x forward, +y left, +z up, origin at the drive-axle
 centre projected onto the floor.  local_x = Xa - 142.5,  local_y = Ya - 117.5.
 """
-from math import cos, sin, radians, pi, atan2, degrees
+from math import cos, sin, radians, pi, atan, atan2, degrees
 
 def degrees_atan(rise, run):
     return degrees(atan2(rise, run))
-from .params import Field, Piece, Chassis, AgentA, M2, mm, BELT_TOP_TAIL_A
+from .params import Field, Piece, Chassis, AgentA, M2, Vision, mm, BELT_TOP_TAIL_A
 
 # R11 (new): the Explainer's hole centre Y 372 puts a O60 hole 18 mm outside a
 # plate spanning Y 360-510.  400 is the nearest value that keeps the bore fully
@@ -430,14 +430,18 @@ def agent_a_body(name="agentA", pose=None, with_beams=False):
                      euler=(0, hinc, 0)).replace(
                      '/>', ' friction="0.10 0.002 0.0001"/>'))
 
-    # ---- chute-magazine + slide gate -------------------------------------
+    # ---- chute-magazine, on the F68 trim slide ---------------------------
+    # Everything from here to the lead-in belongs to the POSTING HEAD, which is
+    # a body of its own on a lateral slide -- so it is collected in `head`, not
+    # in the chassis's own geom list.
+    head = []
     cx = lx(AgentA.CHUTE_X)
     # Full bore now: its top (Za 41) sits below the belt underside (47.5), so a
     # disc tips off the tail and falls in from ABOVE.  While the bore extended past
     # the belt the ring blocked discs still riding it; with the front left open
     # instead, discs landed on the gate and rolled straight back out.
-    o += _ring_gap("A_chute", cx, 0, mm(AgentA.CHUTE_Z0), mm(AgentA.CHUTE_Z1),
-                   mm(AgentA.CHUTE_D/2), mm(5), "0.17 0.58 0.79 1")
+    head += _ring_gap("A_chute", cx, 0, mm(AgentA.CHUTE_Z0), mm(AgentA.CHUTE_Z1),
+                      mm(AgentA.CHUTE_D/2), mm(5), "0.17 0.58 0.79 1")
     # 45 deg lead-in at the bore MOUTH.  A disc tipping off the belt tail lands up
     # to ~11 mm off-axis when the magazine is partly full; against a bare rim it
     # simply sat there (the third disc never stacked, and shook loose in transit).
@@ -448,11 +452,27 @@ def agent_a_body(name="agentA", pose=None, with_beams=False):
     # half is the half that has to catch them anyway.
     # raised rear collar: the piece's aft stop, and what centres it (see params)
     if AgentA.CHUTE_Z2 > AgentA.CHUTE_Z1:
-        o += _ring_gap("A_collar", cx, 0, mm(AgentA.CHUTE_Z1), mm(AgentA.CHUTE_Z2),
-                       mm(AgentA.CHUTE_D/2), mm(AgentA.CHUTE_COLLAR_T),
-                       "0.17 0.58 0.79 1", skip_deg=AgentA.LEAD_SKIP)
+        head += _ring_gap("A_collar", cx, 0, mm(AgentA.CHUTE_Z1), mm(AgentA.CHUTE_Z2),
+                          mm(AgentA.CHUTE_D/2), mm(AgentA.CHUTE_COLLAR_T),
+                          "0.17 0.58 0.79 1", skip_deg=AgentA.LEAD_SKIP)
+    # SEAT TAPER (F70).  The bore is O66 for a O56 disc -- 5 mm of play, which
+    # F9 put there because a disc tipping off the belt tail into a O58 bore
+    # overshoots and jams on the rim.  That clearance is spent twice: once
+    # catching the piece, and again at the dock, where the piece lands wherever
+    # it happens to be sitting rather than on the bore's axis.  Measured at the
+    # instant the escapement fires: 1.5, 3.9 and 4.6 mm off the axis, on top of
+    # whatever the dock itself is off by.
+    #
+    # A taper in the LAST 8 mm gets both: O66 where the piece arrives, closing
+    # to O59.5 where it rests, so a disc settles onto the shelf centred and
+    # stays there.  It is a funnel, and it is the reason a funnel exists.
+    if AgentA.SEAT_H > 0:
+        head += cone("A_seat", cx, 0, mm(AgentA.CHUTE_Z0),
+                     mm(AgentA.SEAT_R), mm(AgentA.CHUTE_D/2),
+                     "0.17 0.58 0.79 1", cls="robot",
+                     height=mm(AgentA.SEAT_H), thick=0.0008)
     if AgentA.LEAD_H > 0:
-        o += cone("A_chutelead", cx, 0, mm(max(AgentA.CHUTE_Z1, AgentA.CHUTE_Z2)),
+        head += cone("A_chutelead", cx, 0, mm(max(AgentA.CHUTE_Z1, AgentA.CHUTE_Z2)),
                   mm(AgentA.CHUTE_D/2), mm(AgentA.LEAD_R),
                   "0.17 0.58 0.79 1", cls="robot", skip_deg=AgentA.LEAD_SKIP,
                   height=mm(AgentA.LEAD_H), thick=0.0005)
@@ -619,44 +639,84 @@ def agent_a_body(name="agentA", pose=None, with_beams=False):
             f'rgba="0.85 0.55 0.2 1"/>',
             '  </body>']
 
-    # ---- positive feed: plunger on the bore axis (see params, F18) --------
+    # ---- POSTING HEAD on its lateral trim slide (F68) ---------------------
+    # Bore, collar, escapement, feed plunger and the slot probes are ONE body
+    # that slides +/-TRIM_Y across the robot.  Nothing about the drop changes --
+    # every F9/F15/F16/F17/F19/F41/F55 finding is about what happens inside this
+    # head, and the head is unchanged; what moves is where it is aimed.
+    esc  = mm(AgentA.ESC_Y)
+    bpk  = mm(AgentA.ESC_BLADE_PARK)
+    half = mm(AgentA.ESC_HALF)
+    trim = mm(AgentA.TRIM_Y)
+    body += [f'  <body name="A_trim" pos="0 0 0">',
+             f'    <joint name="A_trim_j" type="slide" axis="0 1 0" '
+             f'range="{-trim:.5f} {trim:.5f}" damping="0.20"/>']
+    body += ["    " + gm for gm in head]
     body += [
-        f'  <body name="A_feed" pos="{lx(AgentA.FEED_X):.5f} 0 '
+        # positive feed: plunger on the bore axis (see params, F18)
+        f'    <body name="A_feed" pos="{lx(AgentA.FEED_X):.5f} 0 '
         f'{mm(AgentA.FEED_Z_UP):.5f}">',
-        f'    <joint name="A_feed_j" type="slide" axis="0 0 1" '
+        f'      <joint name="A_feed_j" type="slide" axis="0 0 1" '
         f'range="{-mm(AgentA.FEED_STROKE):.5f} 0" damping="0.06"/>',
-        f'    <geom name="A_feed_g" class="robot" type="cylinder" '
+        f'      <geom name="A_feed_g" class="robot" type="cylinder" '
         f'size="{mm(AgentA.FEED_D/2):.5f} {mm(1.5):.5f}" mass="0.012" '
         f'friction="0.10 0.002 0.0001" rgba="0.90 0.55 0.20 1"/>',
-        '  </body>']
-
-    # ---- chute base gate: slides to the left flank to release one disc ----
-
-    esc = mm(AgentA.ESC_Y)
-    bpk = mm(AgentA.ESC_BLADE_PARK)
-    half = mm(AgentA.CHUTE_D/2 + 4)
-    body += [
-        f'  <body name="A_gate" pos="{cx:.5f} 0 {mm(AgentA.CHUTE_Z0-1.5):.5f}">',
-        f'    <joint name="A_gate_j" type="slide" axis="0 1 0" '
-        f'range="0 {esc:.5f}" damping="0.05"/>',
-        f'    <geom name="A_gate_g" class="robot" type="box" '
-        f'size="{half:.5f} {half:.5f} {mm(AgentA.ESC_T):.5f}" '
-        f'mass="0.008" rgba="0.9 0.35 0.2 1"/>',
-        '  </body>',
-        # retainer: parked clear of the bore at +ESC_Y, driven to 0 to hold the
-        # column while the shelf is out from under it
-        f'  <body name="A_blade" pos="{cx:.5f} {bpk:.5f} '
+        '    </body>',
+        # ESCAPEMENT, two leaves per stage (F68).  Leaf L closes to +y, leaf R
+        # to -y; they overlap at the axis so there is no slit for a disc to
+        # find.  Opening, they retract in opposite directions -- which is why
+        # a released disc goes straight down instead of being swept sideways.
+        f'    <body name="A_gate_l" pos="{cx:.5f} '
+        f'{mm(AgentA.ESC_HALF - AgentA.ESC_OVER):.5f} {mm(AgentA.CHUTE_Z0-1.5):.5f}">',
+        f'      <joint name="A_gate_l_j" type="slide" axis="0 1 0" '
+        f'range="0 {mm(AgentA.ESC_Y):.5f}" damping="0.05"/>',
+        f'      <geom name="A_gate_l_g" class="robot" type="box" '
+        f'size="{mm(AgentA.ESC_XHALF):.5f} {mm(AgentA.ESC_HALF):.5f} '
+        f'{mm(AgentA.ESC_T):.5f}" mass="0.005" rgba="0.9 0.35 0.2 1"/>',
+        '    </body>',
+        f'    <body name="A_gate_r" pos="{cx:.5f} '
+        f'{-mm(AgentA.ESC_HALF - AgentA.ESC_OVER):.5f} {mm(AgentA.CHUTE_Z0-1.5):.5f}">',
+        f'      <joint name="A_gate_r_j" type="slide" axis="0 -1 0" '
+        f'range="0 {mm(AgentA.ESC_Y):.5f}" damping="0.05"/>',
+        f'      <geom name="A_gate_r_g" class="robot" type="box" '
+        f'size="{mm(AgentA.ESC_XHALF):.5f} {mm(AgentA.ESC_HALF):.5f} '
+        f'{mm(AgentA.ESC_T):.5f}" mass="0.005" rgba="0.9 0.35 0.2 1"/>',
+        '    </body>',
+        # retainer leaves: parked clear of the bore, driven IN to hold the
+        # column at the joint while the shelf is out from under it.  Each
+        # carries the F47 rolled lip on its leading edge -- square, it met the
+        # second disc's rim head-on and drove it out of the bore.
+        f'    <body name="A_blade_l" pos="{cx:.5f} '
+        f'{mm(AgentA.ESC_BLADE_HALF - AgentA.ESC_BLADE_OVER + AgentA.ESC_BLADE_PARK):.5f} '
         f'{mm(AgentA.ESC_BLADE_Z):.5f}">',
-        f'    <joint name="A_blade_j" type="slide" axis="0 1 0" '
-        f'range="{-bpk:.5f} 0" damping="0.05"/>',
-        f'    <geom name="A_blade_g" class="robot" type="box" '
-        f'size="{half:.5f} {mm(AgentA.ESC_BLADE_Y):.5f} '
-        f'{mm(AgentA.ESC_BLADE_T):.5f}" mass="0.005" rgba="0.9 0.55 0.2 1"/>',
-        f'    <geom name="A_blade_lip" class="robot" type="cylinder" '
-        f'zaxis="1 0 0" pos="0 {mm(AgentA.ESC_BLADE_Y):.5f} '
+        f'      <joint name="A_blade_l_j" type="slide" axis="0 -1 0" '
+        f'range="0 {mm(AgentA.ESC_BLADE_PARK):.5f}" damping="0.05"/>',
+        f'      <geom name="A_blade_l_g" class="robot" type="box" '
+        f'size="{mm(AgentA.ESC_BLADE_XHALF):.5f} {mm(AgentA.ESC_BLADE_HALF):.5f} '
+        f'{mm(AgentA.ESC_BLADE_T):.5f}" mass="0.003" rgba="0.9 0.55 0.2 1"/>',
+        f'      <geom name="A_blade_l_lip" class="robot" type="cylinder" '
+        f'zaxis="1 0 0" pos="0 {-mm(AgentA.ESC_BLADE_HALF):.5f} '
         f'{mm(AgentA.ESC_LIP_Z - AgentA.ESC_BLADE_Z):.5f}" '
-        f'size="{mm(AgentA.ESC_LIP_R):.5f} {half:.5f}" mass="0.001" '
+        f'size="{mm(AgentA.ESC_LIP_R):.5f} {mm(AgentA.ESC_BLADE_XHALF):.5f}" mass="0.001" '
         f'rgba="0.9 0.55 0.2 1"/>',
+        '    </body>',
+        f'    <body name="A_blade_r" pos="{cx:.5f} '
+        f'{-mm(AgentA.ESC_BLADE_HALF - AgentA.ESC_BLADE_OVER + AgentA.ESC_BLADE_PARK):.5f} '
+        f'{mm(AgentA.ESC_BLADE_Z):.5f}">',
+        f'      <joint name="A_blade_r_j" type="slide" axis="0 1 0" '
+        f'range="0 {mm(AgentA.ESC_BLADE_PARK):.5f}" damping="0.05"/>',
+        f'      <geom name="A_blade_r_g" class="robot" type="box" '
+        f'size="{mm(AgentA.ESC_BLADE_XHALF):.5f} {mm(AgentA.ESC_BLADE_HALF):.5f} '
+        f'{mm(AgentA.ESC_BLADE_T):.5f}" mass="0.003" rgba="0.9 0.55 0.2 1"/>',
+        f'      <geom name="A_blade_r_lip" class="robot" type="cylinder" '
+        f'zaxis="1 0 0" pos="0 {mm(AgentA.ESC_BLADE_HALF):.5f} '
+        f'{mm(AgentA.ESC_LIP_Z - AgentA.ESC_BLADE_Z):.5f}" '
+        f'size="{mm(AgentA.ESC_LIP_R):.5f} {mm(AgentA.ESC_BLADE_XHALF):.5f}" mass="0.001" '
+        f'rgba="0.9 0.55 0.2 1"/>',
+        '    </body>',
+        # bore rangefinder and the two slot probes ride WITH the head -- that is
+        # the whole point: what they measure is the slot relative to the bore.
+        f'    <site name="A_mag" pos="{cx:.5f} 0 {mm(70):.4f}" zaxis="0 0 -1"/>',
         '  </body>']
 
     # ---- beam cradles (F44/F46) -------------------------------------------
@@ -690,20 +750,52 @@ def agent_a_body(name="agentA", pose=None, with_beams=False):
                 f'{mm(AgentA.HOOK_H):.5f}" mass="0.006" rgba="0.95 0.62 0.15 1"/>')
         body.append('  </body>')
 
-    body += [f'  <site name="A_probe_l" '
-             f'pos="{lx(AgentA.CHUTE_X + AgentA.PROBE_DX):.5f} '
-             f'{mm(AgentA.PROBE_DY):.5f} {mm(AgentA.PROBE_Z):.5f}" zaxis="0 0 -1"/>',
-             f'  <site name="A_probe_r" '
-             f'pos="{lx(AgentA.CHUTE_X + AgentA.PROBE_DX):.5f} '
-             f'{-mm(AgentA.PROBE_DY):.5f} {mm(AgentA.PROBE_Z):.5f}" zaxis="0 0 -1"/>',
-             f'  <site name="A_mag" pos="{cx:.5f} 0 {mm(70):.4f}" zaxis="0 0 -1"/>',
-             f'  <site name="A_imu" pos="0 0 {mm(60):.4f}"/>',
+    # ---- OAK-D on the tail mast (F69) -------------------------------------
+    # A post from the deck carrying the camera over the tail, looking back and
+    # down.  Modelled with mass and bulk because it is 136 g at Za 155 -- the
+    # highest mass on the robot, and it moves the centre of gravity aft, which
+    # is the direction that matters when the tail overhangs the laboratory.
+    #
+    # The MuJoCo camera stands for the depth map's frame.  DepthAI aligns depth
+    # to the rectified LEFT mono by default, so one camera at the left sensor's
+    # pose is the honest model of what the Pi receives; the right sensor exists
+    # only inside the device.
+    mx, mz = lx(Vision.CAM_X), mm(Vision.CAM_Z)
+    hb = mm(Vision.BASELINE/2.0)
+    body += [
+        f'  <geom name="A_mast" class="robot" type="box" pos="{mx:.5f} 0 '
+        f'{mm((96.5 + Vision.CAM_Z)/2):.5f}" size="{mm(6):.5f} {mm(30):.5f} '
+        f'{mm((Vision.CAM_Z - 96.5)/2):.5f}" mass="{Vision.MAST_MASS/1000.0:.4f}" '
+        f'rgba="0.35 0.35 0.38 1"/>',
+        # ONE plate, two cameras: what makes the pair's own calibration hold is
+        # that the baseline is a single laser-cut part, not two brackets that
+        # can move relative to each other.
+        f'  <geom name="A_camplate" class="robot" type="box" pos="{mx:.5f} 0 '
+        f'{mz:.5f}" euler="0 {Vision.CAM_PITCH:.1f} 0" '
+        f'size="{mm(3):.5f} {mm(Vision.BASELINE/2 + 14):.5f} {mm(16):.5f}" '
+        f'mass="{2*Vision.CAM_MASS/1000.0:.4f}" rgba="0.85 0.55 0.10 1"/>']
+    for sy, tag in ((1, "l"), (-1, "r")):
+        # toed IN, so both cameras keep the dock zone in frame at close range
+        yaw = -sy*Vision.TOE
+        cp, sp = cos(radians(Vision.CAM_PITCH)), sin(radians(Vision.CAM_PITCH))
+        cy_, sy_ = cos(radians(yaw)), sin(radians(yaw))
+        # image +x is the robot's LEFT, image +y is up-image; MuJoCo looks -z
+        xax = (-sy_, cy_, 0.0)
+        yax = (-sp*cy_, -sp*sy_, cp)
+        body.append(
+            f'  <camera name="A_cam_{tag}" pos="{mx:.5f} {sy*hb:.5f} {mz:.5f}" '
+            f'xyaxes="{xax[0]:.5f} {xax[1]:.5f} {xax[2]:.5f} '
+            f'{yax[0]:.5f} {yax[1]:.5f} {yax[2]:.5f}" '
+            f'fovy="{2*degrees(atan((Vision.H/2)/Vision.f_px())):.4f}"/>')
+
+    body += [f'  <site name="A_imu" pos="0 0 {mm(60):.4f}"/>',
              f'  <site name="A_tof" pos="{lx(AgentA.L):.5f} 0 {mm(45):.4f}" zaxis="1 0 0"/>',
              f'  <camera name="A_chase" pos="{-mm(560):.4f} 0 {mm(420):.4f}" xyaxes="0 -1 0 0.6 0 0.8"/>',
              '</body>']
 
     fs = -mm(AgentA.FEED_STROKE)
     nesc = -bpk
+    esc2, bpk2 = 2*esc, 2*bpk           # a tendon of two joints reads twice the stroke
     crn = mm(AgentA.CARRY_Z + AgentA.CRADLE_DROP)
     act = f"""
     <velocity name="a_drive_l" joint="A_w_l" kv="5.0" ctrlrange="-30 30" forcerange="-0.5 0.5"/>
@@ -716,8 +808,19 @@ def agent_a_body(name="agentA", pose=None, with_beams=False):
     <!-- brush roller: velocity servo capped at the N20's stall torque -->
     <velocity name="a_roller" joint="A_drum_j" kv="0.010"
               ctrlrange="0 60" forcerange="{-AgentA.ROLL_TORQUE} {AgentA.ROLL_TORQUE}"/>
-    <position name="a_gate" joint="A_gate_j" kp="900" kv="12" ctrlrange="0 {esc:.5f}" forcerange="-25 25"/>
-    <position name="a_blade" joint="A_blade_j" kp="600" kv="10" ctrlrange="{nesc:.5f} 0" forcerange="-12 12"/>
+    <!-- F68 trim slide: one MG90S through a Scotch yoke, carrying the whole
+         posting head.  kv is high because the head must ARRIVE and stay put --
+         a slide still ringing when the shelf opens is the same error the
+         chassis used to make. -->
+    <position name="a_trim" joint="A_trim_j" kp="400" kv="30"
+              ctrlrange="{-trim:.5f} {trim:.5f}" forcerange="-14 14"/>
+    <!-- One pinion drives both racks, so ONE actuator drives both leaves
+         through a fixed tendon.  That is the real coupling, not two servos
+         asked to agree. -->
+    <position name="a_gate" tendon="A_gate_t" kp="900" kv="12"
+              ctrlrange="0 {esc2:.5f}" forcerange="-25 25"/>
+    <position name="a_blade" tendon="A_blade_t" kp="600" kv="10"
+              ctrlrange="0 {bpk2:.5f}" forcerange="-12 12"/>
     <position name="a_feed" joint="A_feed_j" kp="120" kv="5" ctrlrange="{fs:.5f} 0" forcerange="-4.0 4.0"/>
     <position name="a_cradle1" joint="A_cr1_j" kp="600" kv="20" ctrlrange="0 {crn:.5f}" forcerange="-16 16"/>
     <position name="a_cradle2" joint="A_cr2_j" kp="600" kv="20" ctrlrange="0 {crn:.5f}" forcerange="-16 16"/>"""
@@ -735,18 +838,25 @@ def agent_a_body(name="agentA", pose=None, with_beams=False):
          per piece is how the robot knows how many are left, and so whether the
          escapement needs its retainer at all. -->
     <rangefinder name="a_mag"  site="A_mag" noise="0.0005"/>
-    <!-- The TCRT slot probes.  Modelled as rangefinders because MuJoCo has no
-         reflectance sensor: over the laboratory surface they read its top face,
-         over a slot they read whatever is below it.  A real TCRT keys on the
-         printed marking and the shadow rather than on depth, so it has MORE
-         margin than this model, not less -- see F30. -->
-    <rangefinder name="a_probe_l" site="A_probe_l" noise="0.0003"/>
-    <rangefinder name="a_probe_r" site="A_probe_r" noise="0.0003"/>
+    <!-- The TCRT slot and plate-edge probes are GONE (F69): the OAK-D measures
+         the laboratory directly.  What is left below is the one rangefinder a
+         camera cannot replace -- a_mag looks down a 60 mm tube. -->
     <jointvel    name="a_wvel_l" joint="A_w_l"/>
     <jointvel    name="a_wvel_r" joint="A_w_r"/>
     <actuatorfrc name="a_frc_l" actuator="a_drive_l"/>
     <actuatorfrc name="a_frc_r" actuator="a_drive_r"/>"""
-    return "\n".join(body), act, sen
+    ten = f"""
+  <tendon>
+    <fixed name="A_gate_t">
+      <joint joint="A_gate_l_j" coef="1"/>
+      <joint joint="A_gate_r_j" coef="1"/>
+    </fixed>
+    <fixed name="A_blade_t">
+      <joint joint="A_blade_l_j" coef="1"/>
+      <joint joint="A_blade_r_j" coef="1"/>
+    </fixed>
+  </tendon>"""
+    return "\n".join(body), act + "\n@@TENDON@@" + ten, sen
 
 
 # ------------------------------------------------------------------ pieces
@@ -819,6 +929,18 @@ def contact_pairs(agent="A", n_discs=3):
     # both pairings are masked out -- the real contacts are silent brushes.
     out.append(f'    <exclude body1="agentA" body2="A_shim"/>')
     out.append(f'    <exclude body1="A_shim" body2="A_drum"/>')
+    # F68.  The posting head is a body now, so its bore ring and the escapement
+    # riding on it would collide with the shell they live inside -- geometry
+    # that was silent while they were all one body.  The shell's plates are
+    # there to meet the FIELD; the mechanism inside them is clearance the CAD
+    # owns, and CHECKS asserts the two extents that actually matter (the
+    # retainer against the beam pocket, the shelf under a carried beam).
+    _HEAD = ("A_trim", "A_gate_l", "A_gate_r", "A_blade_l", "A_blade_r", "A_feed")
+    for _b in _HEAD:
+        out.append(f'    <exclude body1="agentA" body2="{_b}"/>')
+    for _i, _b in enumerate(_HEAD):
+        for _c in _HEAD[_i+1:]:
+            out.append(f'    <exclude body1="{_b}" body2="{_c}"/>')
     for i in range(4):
         out.append(f'    <pair geom1="{agent}_ball{i}" geom2="floor" '
                    f'friction="{Chassis.MU_BALL} {Chassis.MU_BALL} 0.0001 0.0001 0.0001" '
@@ -832,7 +954,8 @@ def contact_pairs(agent="A", n_discs=3):
         out.append(f'    <pair geom1="{agent}_feed_g" geom2="disc{i}_g" '
                    f'friction="0.06 0.06 0.0005 0.0001 0.0001" '
                    f'solref="0.004 1" solimp="0.95 0.99 0.001"/>')
-        for gg in ("gate_g", "blade_g", "blade_lip"):
+        for gg in ("gate_l_g", "gate_r_g", "blade_l_g", "blade_r_g",
+                   "blade_l_lip", "blade_r_lip"):
             out.append(f'    <pair geom1="{agent}_{gg}" geom2="disc{i}_g" '
                        f'friction="0.04 0.04 0.0005 0.0001 0.0001" '
                        f'solref="0.004 1" solimp="0.95 0.99 0.001"/>')
@@ -868,13 +991,19 @@ FIELD_CAMS = """
 
 def scene(name, bodies, actuators="", sensors="", timestep=0.001, contacts="",
           equality=""):
+    # agent_a_body returns its <tendon> block glued to the actuators behind a
+    # marker, because a tendon is a top-level section but is only ever written
+    # by whoever writes the actuators that pull on it.
+    tendons = ""
+    if "@@TENDON@@" in actuators:
+        actuators, tendons = actuators.split("@@TENDON@@", 1)
     return f"""<mujoco model="{name}">
 {preamble(timestep)}
   <worldbody>{FIELD_CAMS}
 {chr(10).join('    ' + b for b in bodies)}
   </worldbody>
 {contacts}
-{equality}
+{equality}{tendons}
   <actuator>{actuators}
   </actuator>
   <sensor>{sensors}

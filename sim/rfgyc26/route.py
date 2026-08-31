@@ -760,8 +760,26 @@ def dock_and_post(rb, hole_x, hole_y, chute_offset, stroke=0.60, aboard=0,
 # Every drop is made facing NORTH, which costs one turn each and is what makes
 # the landing position a property of the design rather than of the arrival
 # angle.  The station is the kit's target minus the hopper's own 78 mm offset.
+# ORDER AND TRAVERSE: NEVER DRIVE ALONG THE LATITUDE YOU JUST UNLOADED ON.
+#
+# Every hopper discharges over a flank, so each drop lands ~140 mm to one SIDE
+# of its station -- and all three stations sit on the same y 930 line.  Driving
+# straight from one station to the next therefore runs the robot along the very
+# latitude it has just covered in kits.  Measured on the old route: HOSP's six
+# land correctly at (592, 923), inside the zone; the robot reverses 200, runs
+# the diagonal to PCC_L, and at T+70 its north-west corner sweeps the pile from
+# (589, 925) to (397, 1022) -- 74 mm outside.  Two kits every match, and with
+# them the +20 for the 6/2/2 distribution.  The spec's own walk-over audit
+# forbids exactly this: "no path over a placed piece".
+#
+# Reordering does not fix it -- any east-west traverse at y 930 crosses some
+# drop -- so the TRAVERSE moves instead.  The robot already reverses 200 mm out
+# of each zone before pivoting; it now stays down there, runs to the next
+# station's longitude at y 730, and only then turns north.  An L instead of a
+# diagonal.  At y 730 the body spans 587-872, clear of every drop at y >= 920.
 KIT_ORDER   = ("PCC_R", "HOSP", "PCC_L")
 KIT_APPROACH = (950.0, 250.0)          # the dogleg east of the laboratory
+KIT_LOOP_Y   = 730.0                   # = station y - KIT_BACKOFF: the traverse
 # DROP CENTRALLY, THEN REVERSE OUT BEFORE TURNING.
 #
 # The first attempt put each station where a PIVOT was also legal.  The swept
@@ -777,8 +795,15 @@ KIT_APPROACH = (950.0, 250.0)          # the dogleg east of the laboratory
 # which is a straight line and needs no radius at all, and pivots from there.
 # The stations are all at y 1030 and the pivots all at y 890, which is also
 # north of the side areas the patients stand in.
+# HOSP SITS 35 mm FURTHER NORTH THAN THE OTHER TWO.  Its hopper discharges
+# level with the axle (local x 0..56) while the PCCs' sit forward of it
+# (x 84..112), so a HOSP kit lands ~10 mm BEHIND the station and a PCC kit
+# ~84 mm ahead.  The hospital's south edge is at y 901, so at a 930 station the
+# six-kit scatter reached 896 -- five millimetres out, and it cost the +20
+# distribution bonus.  At 965 the same scatter lands 30 mm inside, and the
+# robot's north edge is still 74 mm clear of the top wall.
 KIT_STATION = {"PCC_R": (903.0, 930.0),
-               "HOSP":  (711.5, 930.0),
+               "HOSP":  (711.5, 965.0),
                "PCC_L": (240.0, 930.0)}
 KIT_HEADING = 90.0
 # FAR ENOUGH THAT THE PIVOT CLEARS THE KITS IT JUST DROPPED.  They land 140 mm
@@ -825,6 +850,9 @@ def deliver_kits(rb, log=print, clk=None, deadline=None, order=KIT_ORDER):
             break
         tx, ty = KIT_STATION[dest]
         log(t() + "  kits -> %s (%.0f, %.0f)" % (dest, tx, ty))
+        # Traverse SOUTH of the drops, then turn up into the zone.
+        if abs(rb.pose[0] - tx) > 60.0:
+            yield from leg(tx, KIT_LOOP_Y, cap=10.0)
         yield from leg(tx, ty)
         # 8 deg is enough: the hopper mouth is 78 mm off the centreline, so
         # 8 deg of heading error moves the landing point 11 mm, against zone

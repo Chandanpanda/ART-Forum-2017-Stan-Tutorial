@@ -1187,11 +1187,25 @@ def scene_full_match(disc_positions, robot_pose=None, rng=None, kits_aboard=True
         for k, i in enumerate(idx):
             kit_at[i] = (hx_ + (k % w)*M2.HOPPER_PITCH, hy_,
                          M2.HOPPER_Z + (k // w)*(Piece.KIT_Z + 3.0))
+    # ONLY THE DESTINATIONS THIS ROBOT SERVES RIDE ON IT (F80).  The rest start
+    # in the deployment box, which is where the second robot sits and where the
+    # rules require every robot and every kit to begin.  They are still on the
+    # field and the referee still scores them, so the two PCCs read as empty
+    # until the second robot is modelled -- that is honest, not a free pass.
+    mine = set()
+    for dest in M2.KIT_AGENT_A:
+        mine.update(M2.KIT_GROUPS.get(dest, ()))
+    spare = 0
     for i in range(M2.N_KITS):
-        if kits_aboard:
+        if kits_aboard and i in mine:
             lx_, ly_, lz_ = kit_at[i]
             wx, wy = local_to_world(px, py, ph, lx_, ly_)
             parts.append(kit_body(i, wx, wy, z=lz_))
+        elif kits_aboard:
+            bx0, by0, bx1, _ = Field.DEPLOY_BOX
+            parts.append(kit_body(i, bx0 + 40.0 + (spare % 4)*32.0,
+                                  by0 + 40.0 + (spare // 4)*32.0))
+            spare += 1
         else:
             parts.append(kit_body(i, 700.0 + (i % 5)*35.0, 40.0 + (i // 5)*35.0))
     eq = ("  <equality>\n"
@@ -1200,7 +1214,7 @@ def scene_full_match(disc_positions, robot_pose=None, rng=None, kits_aboard=True
                     for i in (1, 2))
           + "".join('    <weld name="kit%d_hold" body1="agentA" body2="kit%d" '
                     'solref="0.004 1" solimp="0.98 0.999 0.001"/>\n' % (i, i)
-                    for i in range(M2.N_KITS) if kits_aboard)
+                    for i in range(M2.N_KITS) if kits_aboard and i in mine)
           + "  </equality>")
     return scene("rfgyc26_full_match", parts, act, sen,
                  contacts=contact_pairs(n_discs=len(disc_positions), n_cyls=n_cyl), equality=eq)

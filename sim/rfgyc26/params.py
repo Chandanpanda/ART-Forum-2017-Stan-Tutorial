@@ -23,15 +23,17 @@ class Field:
 
     QUARANTINE      = (0.0,   0.0,   280.0,  280.0)     # x0,y0,x1,y1
     LAB_PLATE       = (351.5, 360.0, 791.5,  510.0)
-    # F32.  1.0 IS KNOWN TO BE WRONG and is kept only because the robot cannot
-    # yet cope with the right value.  The rules require a sample to end up
-    # "completely inside" a slot (2.1) and a sample is a 5 mm disc, so a real
-    # laboratory is at least 5 mm thick.  At 1 mm the disc drops through until it
-    # rests on the floor and stands 4 mm PROUD of the surface -- not inside
-    # anything, and knocked straight out again as the robot departs, which is
-    # visible in the viewer.  Set this to 6.0 to see the real problem: the
-    # mission collapses to one sample or none.  That is the top open risk.
-    LAB_PLATE_T     = 6.0
+    # 5.0, FROM THE RULEBOOK'S OWN DRAWINGS, no longer an inference (F81).
+    # The laboratory is a separate wooden structure laid on the board, 5 mm
+    # thick, with the three O60 slots cut clean through it -- so its outer edge
+    # is a 5 mm step and each slot is a 5 mm deep hole down to the board.  A
+    # 5 mm sample dropped in sits exactly flush, which is what "completely
+    # inside" means, and a sample cannot be SLID in: it has to clear a 5 mm
+    # edge and drop.  That settles the belt-and-magazine question -- the one
+    # piece on this robot that has to leave the floor is the sample, and it is
+    # the bore that requires it.
+    # (We had 6.0 here, inferred from "completely inside" plus a 5 mm disc.)
+    LAB_PLATE_T     = 5.0
     # The plate collides with the ROBOT, not just with game pieces.
     #
     # F24 WAS WRONG AND IS WITHDRAWN.  It claimed Agent A climbs a square 3 mm
@@ -370,6 +372,16 @@ class M2:
     # PCC is +14, and the full 6/2/2 is +50.  The last two kits, in the far
     # corner, are worth 36 points on their own.
     KIT_GROUPS      = {"HOSP": tuple(range(6)), "PCC_L": (6, 7), "PCC_R": (8, 9)}
+    # WHICH DESTINATIONS THIS ROBOT SERVES (F80).  The match is decided by the
+    # clock, not by whether a task is possible, and the kit loop is the only
+    # job on Agent A that another robot can take whole: the kits may start on
+    # any robot (rules g.1), so a hopper is a hopper wherever it rides.
+    # Handing the two PCCs to the second robot removes the entire east-west
+    # traverse -- two stations, two dressings and ~17 s -- and leaves Agent A
+    # the hospital's six, which is the run it is already standing next to when
+    # it leaves the laboratory.  The four PCC kits then start in the deployment
+    # box, which is where the second robot sits.
+    KIT_AGENT_A     = ("HOSP", "PCC_L", "PCC_R")
     # Hopper discharge points in the ROBOT frame (x from the axle, y, and the
     # height the kit leaves at).
     #
@@ -912,6 +924,22 @@ class AgentA:
     # own end reach the wall together, so nothing has to be trimmed off the
     # intake to give the beam a lead.  (At -147.5 the shell stalled 11.5 mm
     # early and beam 1 finished 12 mm off the wall.)
+    # BEAM 1 MUST LEAD THE NOSE, OR THE NOSE STALLS FIRST (F79).
+    #
+    # At -137.5 the beam's west end sits at local x 140.4 -- 2.1 mm BEHIND the
+    # robot's 142.5 nose -- so on the run-in the CHASSIS hits the west wall and
+    # the beam never can.  Add the stall's own residual (measured: the axle
+    # settles 5.1 mm short of its station) and the beam lands 7-9 mm out before
+    # the withdrawal has touched it.  Referee tolerance is 6.  Measured over
+    # twelve seeds: beam 1 placed in 5, and every single failure reads SHORT --
+    # 9, 10, 11, 21, 21 mm off the wall, never long.  That is not scatter, it
+    # is a fixed offset with noise on top.
+    #
+    # -127.5 stands the beam 10 mm proud of the nose, so the BEAM is what
+    # stalls on the wall.  The robot then keeps pushing and the beam is driven
+    # back against this stop -- which makes the placement self-aligning: the
+    # wall sets where the beam ends up, and the stop sets where the robot ends
+    # up relative to it, instead of the chassis deciding both.
     STOP1_X         = -137.5           # pocket L, REAR: pushes beam 1 west
     STOP2_X         =  107.5           # pocket R, FRONT: pushes beam 2 south
     STOP_T          = 2.0

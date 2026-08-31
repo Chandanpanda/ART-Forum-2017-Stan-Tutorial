@@ -1,13 +1,26 @@
 """Agent A end-to-end, on the WHOLE 250-point board.
 
 Sweeps the quarantine, collects three sample discs onto the conveyor, docks the
-laboratory on camera and posts one disc into each slot, drives the northern loop
-delivering ten medical kits into three destination zones, and seals the
-quarantine with both beams -- all inside the 120 s match.
+laboratory on camera and posts one disc into each slot, delivers the hospital's
+medical kits, and seals the quarantine with both beams -- all inside 120 s.
 
-The scene is `scene_full_match`: samples, beams, ten kits aboard and twelve
-patients on the field.  The patients are NOT yet collected (that is the open
-80 points); they are in the model so the route has to drive around them.
+The scene is `scene_full_match`, and it is the CURRENT model in every respect:
+
+  * knife shim faced with UHMW/PTFE tape (mu 0.12) -- the samples are no longer
+    picked up by being shoved against the west wall
+  * brush roller at Xa 260 / Za 31.4, silicone tubes on a O20 hub, finger tips
+    on the shell line and clear of their own ramp
+  * laboratory plate 5 mm, per the rulebook drawings: the slots are cut clean
+    through, so a sample has to clear a 5 mm edge and drop in
+  * only the destinations in M2.KIT_AGENT_A ride on this robot; the rest start
+    in the deployment box, which is where the second robot sits
+  * twelve patients on the field, NOT this robot's job -- they belong to the
+    second robot, and they are here so the route has to drive around them
+
+What you should see: the knife lifts for every transit and drops for the sweep;
+the brush spins only with the knife down; the magazine fills and posts one disc
+per slot; the kits fall out of a side hopper; both beams are set down against a
+wall and the robot backs away from them.
 
     python scripts/demo_pick_place.py [--seed N] [--video] [--gui]
 """

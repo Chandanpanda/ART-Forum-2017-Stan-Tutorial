@@ -468,7 +468,22 @@ class AgentA:
     # passive shim.  Measured: creeping at 2 mm/s, forever).
     SHIM_HINGE_Z    = 11.25            # plate mid-plane at the hinge
     SHIM_T          = 0.5              # spring steel; the presented step
-    SHIM_MU         = 0.30            # knife face against a piece [VERIFY]
+    # UHMW OR PTFE TAPE ON THE KNIFE FACE, AND IT IS LOAD-BEARING (F78).
+    #
+    # The wedge law: a piece resting on the field is held only by mu_field*W, so
+    # the knife slides under it rather than shoving it only while
+    #       ramp angle + atan(mu_knife)  <=  atan(mu_field) = 31.0 deg
+    # Bare steel at 0.30 gives 20.1 + 16.7 = 36.8 -- the knife LOSES, and the
+    # measurement says so: 10 of 15 samples are captured hard against the west
+    # wall (disc centre at x 28, west edge on the wall, wall_w in the contact
+    # list), and on a bench in open field a disc is bulldozed 0 of 5.  The
+    # mission works because the sweep drives everything west into a real 65 mm
+    # field wall, which the rules do guarantee -- but a mechanism that only
+    # works against a backstop cannot pick up what the sweep has already
+    # shoved past it.
+    # 0.12 is UHMW or PTFE tape, 0.1 mm, on a 0.5 mm shim: 20.1 + 6.8 = 26.9,
+    # inside 31.0 with 4.1 deg of margin, and it costs about two pounds.
+    SHIM_MU         = 0.12            # UHMW/PTFE tape on the knife  [VERIFY]
     SHIM_DROOP      = 6.0              # deg past nominal the servo presses (preload)
     SHIM_LIFT       = 35.0             # deg tip-up for transit (short shim needs more)
     ROLL_AXIS_X     = 262.0            # drum axis at rest

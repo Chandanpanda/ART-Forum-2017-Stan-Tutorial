@@ -109,6 +109,32 @@ class AgentARobot:
             self.d.ctrl[self.a_roller] = 0.0
             self.d.ctrl[self.a_shim]   = -np.radians(AgentA.SHIM_LIFT)
 
+    # ------------------------------------------------------------ mission 2
+    def _find_kits(self):
+        if not hasattr(self, "_kit_eq"):
+            self._kit_eq = []
+            for i in range(64):
+                e = mujoco.mj_name2id(self.m, mujoco.mjtObj.mjOBJ_EQUALITY,
+                                      "kit%d_hold" % i)
+                if e < 0: break
+                self._kit_eq.append(e)
+        return self._kit_eq
+
+    def kits_aboard(self):
+        eq = self._find_kits()
+        return sum(1 for e in eq if self.d.eq_active[e])
+
+    def drop_kits(self, n):
+        """Release n kits.  The rules let kits start ON the robot (g.1), so the
+        only verb Mission 2 needs for them is this one -- open a flap and roll
+        on.  Physically it is a weld going inactive; the kit then falls under
+        gravity and the referee reads where it lands, exactly as for a beam."""
+        eq = self._find_kits()
+        live = [e for e in eq if self.d.eq_active[e]]
+        for e in live[:n]:
+            self.d.eq_active[e] = 0
+        return min(n, len(live))
+
     def feed(self, down):
         """Positive-feed plunger.  Parked its face is 33 mm above the highest a
         piece ever reaches, so the drop path stays clear; one stroke presses the

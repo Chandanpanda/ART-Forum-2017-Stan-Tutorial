@@ -10,7 +10,7 @@ from math import cos, sin, radians, pi, atan2, degrees
 
 def degrees_atan(rise, run):
     return degrees(atan2(rise, run))
-from .params import Field, Piece, Chassis, AgentA, mm, BELT_TOP_TAIL_A
+from .params import Field, Piece, Chassis, AgentA, M2, mm, BELT_TOP_TAIL_A
 
 # R11 (new): the Explainer's hole centre Y 372 puts a O60 hole 18 mm outside a
 # plate spanning Y 360-510.  400 is the nearest value that keeps the bore fully
@@ -767,6 +767,40 @@ def cyl_body(i, x, y, colour):
             f'size="{mm(Piece.CYL_D/2):.5f} {mm(Piece.CYL_H/2):.5f}" '
             f'mass="{Piece.CYL_M/1000.0:.4f}" rgba="{rgba}"/></body>')
 
+def kit_body(i, x, y, z=None):
+    """A medical kit.  Rules g.1 let these start ON the robot, so the mission
+    never picks one up -- the only verb is release."""
+    z = Piece.KIT_Z/2 + 0.5 if z is None else z
+    return (f'<body name="kit{i}" pos="{mm(x):.5f} {mm(y):.5f} {mm(z):.5f}">'
+            f'<freejoint name="kit{i}_f"/>'
+            f'<geom name="kit{i}_g" class="piece" type="box" '
+            f'size="{mm(Piece.KIT_X/2):.5f} {mm(Piece.KIT_Y/2):.5f} {mm(Piece.KIT_Z/2):.5f}" '
+            f'mass="{Piece.KIT_M/1000.0:.4f}" rgba="0.93 0.93 0.95 1"/></body>')
+
+
+def m2_layout(rng=None):
+    """Twelve patients on their stickers, four of each colour, six per side.
+
+    WHERE THEY STAND IS AN ASSUMPTION (M2.SIDE_L/SIDE_R) -- the rulebook gives
+    no coordinates, only "two side areas... six cylinders on each side".  Senior
+    randomises the arrangement every match, so the layout is drawn per seed and
+    the colour order is shuffled: a route that only works for one colour order
+    is a route that has not been tested.
+    """
+    import numpy as _np
+    rng = rng or _np.random.default_rng(0)
+    cols = list(M2.COLOURS) * 4
+    rng.shuffle(cols)
+    out, k = [], 0
+    for box in (M2.SIDE_L, M2.SIDE_R):
+        x0, y0, x1, y1 = box
+        for j in range(6):
+            fx = 0.25 if j % 2 == 0 else 0.75
+            fy = (j // 2 + 0.5) / 3.0
+            out.append((x0 + fx*(x1-x0), y0 + fy*(y1-y0), cols[k])); k += 1
+    return out
+
+
 def beam_body(i, x, y, length, heading_deg, mass, z0=0.5):
     return (f'<body name="beam{i}" pos="{mm(x):.5f} {mm(y):.5f} {mm(Piece.BEAM_H/2+z0):.5f}" '
             f'euler="0 0 {heading_deg}">'
@@ -876,6 +910,50 @@ def scene_pick_place(disc_positions, robot_pose=None, with_beams=False):
                         for i in (1, 2))
               + "  </equality>")
     return scene("rfgyc26_pick_place", parts, act, sen,
+                 contacts=contact_pairs(n_discs=len(disc_positions)), equality=eq)
+
+
+def scene_full_match(disc_positions, robot_pose=None, rng=None, kits_aboard=True):
+    """The whole 250-point board: 3 samples, 2 beams, 10 kits, 12 patients.
+
+    KITS START ABOARD by default, which is not a liberty -- rules g.1 say the
+    kits "may be placed on the board, ON THE ROBOT, or incorporated into its
+    mechanism".  That is what makes Mission 2 cheap: the robot never picks a kit
+    up, it only opens a flap.  Stacked two-high in the flanks above the wheels,
+    where the route plan puts the hoppers.
+    """
+    import numpy as _np
+    rng = rng or _np.random.default_rng(0)
+    body, act, sen = agent_a_body(pose=robot_pose, with_beams=True)
+    parts = field_body() + [body]
+    for i, (x, y) in enumerate(disc_positions):
+        parts.append(disc_body(i, x, y))
+    px, py, ph = robot_pose or AgentA.START_POSE
+    for i, (loc, L, M) in enumerate(((AgentA.BEAM1_LOCAL, Piece.BEAM1_L, Piece.BEAM1_M),
+                                     (AgentA.BEAM2_LOCAL, Piece.BEAM2_L, Piece.BEAM2_M)), 1):
+        wx, wy = local_to_world(px, py, ph, loc[0], loc[1])
+        parts.append(beam_body(i, wx, wy, L, ph, M, z0=AgentA.CARRY_Z + 0.2))
+    for i, (cx, cy, col) in enumerate(m2_layout(rng)):
+        parts.append(cyl_body(i, cx, cy, col))
+    for i in range(M2.N_KITS):
+        if kits_aboard:
+            # two columns of five in the flank hoppers, above the wheels
+            side = 1 if i < M2.N_KITS//2 else -1
+            j = i % (M2.N_KITS//2)
+            lx_, ly_ = -40.0 + j*30.0, side*88.0
+            wx, wy = local_to_world(px, py, ph, lx_, ly_)
+            parts.append(kit_body(i, wx, wy, z=Piece.KIT_Z/2 + 78.0))
+        else:
+            parts.append(kit_body(i, 700.0 + (i % 5)*35.0, 40.0 + (i // 5)*35.0))
+    eq = ("  <equality>\n"
+          + "".join('    <weld name="beam%d_hold" body1="agentA" body2="beam%d" '
+                    'solref="0.004 1" solimp="0.98 0.999 0.001"/>\n' % (i, i)
+                    for i in (1, 2))
+          + "".join('    <weld name="kit%d_hold" body1="agentA" body2="kit%d" '
+                    'solref="0.004 1" solimp="0.98 0.999 0.001"/>\n' % (i, i)
+                    for i in range(M2.N_KITS) if kits_aboard)
+          + "  </equality>")
+    return scene("rfgyc26_full_match", parts, act, sen,
                  contacts=contact_pairs(n_discs=len(disc_positions)), equality=eq)
 
 

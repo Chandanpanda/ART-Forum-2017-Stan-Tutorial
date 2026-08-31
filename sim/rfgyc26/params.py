@@ -182,6 +182,32 @@ class Chassis:
     MU_BALL         = 0.05
 
 
+# ==================================================== MISSION 2 (healthcare)
+class M2:
+    """Kits and triaged patients -- rules 2.2/3.2.
+
+    130 of the 250 points on the board live here, and Agent A currently scores
+    NONE of it: three kit destination zones left empty is -30 before anything
+    else is counted (Senior table).  So the honest Mission-1-only score is +90,
+    not +120.
+    """
+    N_KITS          = 10
+    KIT_PLAN        = {"HOSP": 6, "PCC_L": 2, "PCC_R": 2}   # the +20 distribution
+    # Twelve cylinders, four of each colour, six per side area.
+    N_CYL           = 12
+    COLOURS         = ("red", "yellow", "green")
+    CYL_DEST        = {"red": "HOSP", "green": "RECOVERY"}  # yellow splits PCC_L/R
+    # WHERE THE CYLINDERS START IS AN ASSUMPTION.  The rulebook says only "two
+    # side areas of the field... six cylinders on each side" and gives no
+    # coordinates (rules 2.2).  Modelled as mid-field left and right strips.
+    # This is a [VERIFY] of the same class as F21 and F32 -- both of which cost
+    # us a rebuild -- so it is one parameter, not a number sprinkled through the
+    # code.  Sweep time is the second-tightest constraint in the route plan.
+    SIDE_L          = (40.0,  480.0, 200.0, 820.0)          # x0,y0,x1,y1
+    SIDE_R          = (943.0, 480.0, 1103.0, 820.0)
+    STICKER_D       = 40.0
+
+
 # ==================================================== AGENT A station schedule
 class AgentA:
     L, W, H         = 285.0, 235.0, 175.0

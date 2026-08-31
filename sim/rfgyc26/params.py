@@ -474,9 +474,15 @@ class AgentA:
     ROLL_AXIS_X     = 262.0            # drum axis at rest
     ROLL_AXIS_Z     = 25.5             # rest height: collision drum bottom at 3.5
     ROLL_DRUM_R     = 22.0             # collision proxy: hub 10 + fingers at working squish
-    ROLL_TIP_R      = 25.0             # visual finger tips (D50 swept)
+    ROLL_TIP_R      = 25.0             # = FING_HUB_R + FING_TUBE_L, asserted below
     ROLL_W          = 128.0            # across the mouth, inside the guide walls
     ROLL_RPM        = 300.0            # N20 nominal; sweep 200-500
+    # The DRIVER'S ceiling, not a modelling constant.  It was hard-coded at
+    # 60 rad/s (573 rpm) in the actuator, so every sweep above that was
+    # silently clipped and 600, 900 and 1200 rpm all ran at 573 -- which is
+    # exactly why those rows came out identical.  The N20 has an encoder and
+    # a PWM driver, so rpm is a CONTROL we can set per piece if it helps.
+    ROLL_RPM_MAX    = 1200.0           # driver ceiling
     ROLL_TORQUE     = 0.098            # N*m -- 1.0 kg*cm N20 stall, the honest cap
     ARM_SPRUNG      = True            # False = axis bolted down, tubes do it all
     ARM_PIVOT_X     = 205.0            # swing-arm pivot
@@ -504,13 +510,36 @@ class AgentA:
     # 159 N/m, so 0.036 N*m/rad about the root and 0.38 g of finger.  0.3 N at
     # the tip bends it 7 degrees; 1 N bends it 24.
     # [VERIFY: press one finger against a gram scale and read the deflection.]
+    # MEASURED, ON THE BENCH RIG (F74).  Robot held still, piece placed on the
+    # ramp 12 mm forward of the axis, five lateral offsets, honest torque for
+    # each speed (an N20 three times faster has a third of the stall torque):
+    #
+    #   roller                rpm   N*m     samples  upright  on side
+    #   rigid drum O44        300  0.098      5/5      5/5      0/5
+    #   rigid drum O44        600  0.049      5/5      0/5      0/5
+    #   rigid drum O44        900  0.033      5/5      0/5      0/5
+    #   tubes O20 hub, 20 mm  300  0.098      5/5      4/5      5/5
+    #
+    # For a O56 x 5 SAMPLE the two are identical -- every roller, every speed,
+    # 5 of 5.  There is nothing to win there.  For a O20 PATIENT the tubes win
+    # outright, and the drum's only route to matching (spin faster) costs the
+    # torque it needs to do it.  A drum on its sprung arm does take an UPRIGHT
+    # patient -- it rides up over it and puts it on the belt in 0.2 s -- but it
+    # never once took one lying down.
+    #
+    # Speed is a control, not a constant (N20 + encoder + PWM driver), and the
+    # tubes have a NARROW optimum: 150 rpm gives 0 of 10 on patients, 300 gives
+    # 9 of 10, 600 and 900 give 0 of 10.  Fast tubes strike and reject.
     ROLL_FINGERS    = True             # False restores the F64 rigid drum
     FING_ROWS       = 5                # across the drum's width
     FING_AROUND     = 8                # per row, staggered half a pitch row to row
-    FING_K          = 0.036            # N*m/rad at the root, derived above
     FING_DAMP       = 0.0006
     FING_MASS       = 0.00038          # kg
-    FING_TUBE_R     = 3.0              # O6 silicone tube
+    FING_TUBE_OD    = 6.0              # the ordered tube
+    FING_TUBE_ID    = 3.0
+    FING_TUBE_R     = FING_TUBE_OD/2.0
+    FING_TUBE_L     = 15.0             # free length; 20 measured better [VERIFY]
+    FING_E          = 3.0e6            # Pa, shore A 40 silicone  [VERIFY]
     FING_HUB_R      = 10.0
 
     # UPPER ROLLER (F71) -- the patients.
@@ -980,6 +1009,40 @@ ROLL_GAP_A   = (AgentA.ROLL_AXIS_Z - AgentA.ROLL_TIP_R
 # The sweep leg's speed, which the belt has to beat (route.sweep_line).
 SWEEP_SPEED_A = 140.0
 
+# How far the finger tips must press into a piece to drive it, not graze it.
+ROLL_BITE_A  = 2.0
+
+# THE TUBE'S STIFFNESS IS THE TUBE'S, not a number that was tuned until the
+# simulation behaved.  A cantilever of second moment I bent about its root:
+#     I     = pi/64 * (OD^4 - ID^4)
+#     k_rad = 3EI / L        N*m per radian at the root
+# so changing the tube length changes the stiffness, as it does on the bench.
+FING_I_A  = 3.14159265358979/64.0 * ((AgentA.FING_TUBE_OD/1000.0)**4
+                                     - (AgentA.FING_TUBE_ID/1000.0)**4)
+FING_K_A  = 3.0 * AgentA.FING_E * FING_I_A / (AgentA.FING_TUBE_L/1000.0)
+AgentA.FING_K = FING_K_A
+
+
+def _arm_lift(deg=40.0):
+    """How far the sprung arm can carry the drum up before it hits its stop."""
+    if not AgentA.ARM_SPRUNG:
+        return 0.0
+    dx = AgentA.ROLL_AXIS_X - AgentA.ARM_PIVOT_X
+    dz = AgentA.ROLL_AXIS_Z - AgentA.ARM_PIVOT_Z
+    t = radians(-deg)
+    return (-dx*sin(t) + dz*cos(t)) - dz
+
+
+# THE HEIGHT DIFFERENCE THE ROLLER HAS TO ABSORB.  Its rigid part must clear a
+# 20 mm patient while its working surface presses down on a 5 mm sample -- a
+# 17 mm swing, with the bite.  Only two things can give it: tube length (the
+# tips reach below the hub) or arm travel (the whole drum lifts).  A BOLTED
+# rigid roller has neither, and no height exists that takes both pieces.
+# Measured: on its sprung arm a rigid drum with 3 mm of static clearance rides
+# up over an upright patient and puts it on the belt in 0.2 s.
+ROLL_ACCOM_A = ((AgentA.ROLL_TIP_R - AgentA.FING_HUB_R if AgentA.ROLL_FINGERS else 0.0)
+                + _arm_lift())
+
 # discharge throw: piece leaves the tail at BELT_SPEED, falls BELT_TOP_TAIL
 DROP_TIME_A  = sqrt(2 * (BELT_TOP_TAIL_A / 1000.0) / 9.81)
 THROW_A      = Chassis.BELT_SPEED * DROP_TIME_A                   # ~6.2 mm
@@ -1149,6 +1212,25 @@ CHECKS = [
      ROLL_GAP_A >= 0.0),
     ("...and its finger tips stay inside the shell",
      AgentA.ROLL_AXIS_X + AgentA.ROLL_TIP_R <= AgentA.L),
+    # ONE ROLLER, TWO PIECE HEIGHTS -- and it decides rigid vs brush outright.
+    # The roller's RIGID part must pass over the tallest piece:
+    #       Za - r_hub  >=  surface + CYL_H
+    # and its tips must reach down onto the flattest one:
+    #       Za - r_tip  <=  surface + DISC_T - bite
+    # Subtract, and the surface and the height cancel:
+    #       r_tip - r_hub  >=  CYL_H - DISC_T + bite
+    # A rigid drum has r_tip == r_hub, so the left side is ZERO and no height
+    # exists that takes both.  That is not a tuning result, it is arithmetic:
+    # a single hard roller can never admit a 5 mm sample and a 20 mm patient.
+    # A brush can, and the tube length is exactly how much margin it has.
+    # Built: 25 - 10 = 15 against 20 - 5 + 2 = 17.  Three millimetres short.
+    ("a single roller can take BOTH piece heights",
+     ROLL_ACCOM_A >= Piece.CYL_H - Piece.DISC_T + ROLL_BITE_A),
+    ("the roller's commanded speed is inside the driver's range",
+     AgentA.ROLL_RPM <= AgentA.ROLL_RPM_MAX),
+    ("the finger tip circle is the hub plus the tube, not a separate number",
+     (not AgentA.ROLL_FINGERS) or
+     abs(AgentA.ROLL_TIP_R - (AgentA.FING_HUB_R + AgentA.FING_TUBE_L)) < 1e-9),
     # F69: the camera is the primary sensor, so its geometry gets assertions.
     ("a O60 slot is hundreds of pixels across where the robot measures it",
      Field.LAB_HOLE_D * Vision.f_px() / 250.0 >= 100.0),

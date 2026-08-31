@@ -939,7 +939,8 @@ def agent_a_body(name="agentA", pose=None, with_beams=False):
               forcerange="-0.02 0.02"/>
     <!-- brush roller: velocity servo capped at the N20's stall torque -->
     <velocity name="a_roller" joint="A_drum_j" kv="0.010"
-              ctrlrange="0 60" forcerange="{-AgentA.ROLL_TORQUE} {AgentA.ROLL_TORQUE}"/>
+              ctrlrange="0 {2*pi*AgentA.ROLL_RPM_MAX/60.0:.4f}"
+              forcerange="{-AgentA.ROLL_TORQUE} {AgentA.ROLL_TORQUE}"/>
     {UPACT}
     <!-- F68 trim slide: one MG90S through a Scotch yoke, carrying the whole
          posting head.  kv is high because the head must ARRIVE and stay put --

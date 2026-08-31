@@ -719,53 +719,6 @@ def agent_a_body(name="agentA", pose=None, with_beams=False):
         '    </body>',
         '  </body>']
 
-    # ---- the plough (F75: the patients, without ingesting them) ------------
-    # Sorts by height and has no actuator: a 5 mm sample goes UNDER it to the
-    # knife, a 20 mm patient is caught below its centre of mass and pushed.
-    # conaffinity 0 so it can only ever be felt by something that carries bit 2
-    # in its own conaffinity -- the pieces -- and never by the field, the walls
-    # or the robot's own sweeper fingers.
-    if AgentA.PLOUGH:
-        body.append(
-            f'  <geom name="A_plough" type="cylinder" zaxis="0 1 0" contype="4" '
-            f'conaffinity="0" condim="3" friction="0.35 0.005 0.0001" '
-            f'pos="{lx(AgentA.TRIP_X):.5f} 0 {mm(AgentA.TRIP_Z):.5f}" '
-            f'size="{mm(AgentA.TRIP_R):.5f} {mm(AgentA.TRIP_W/2):.5f}" '
-            f'mass="0.006" rgba="0.85 0.85 0.30 1"/>')
-        wd = radians(AgentA.PLOUGH_WING_DEG)
-        for s_ in (1, -1):
-            wy = AgentA.TRIP_W/2 + AgentA.PLOUGH_WING/2*cos(wd)
-            wx = AgentA.TRIP_X - AgentA.PLOUGH_WING/2*sin(wd)
-            body.append(
-                f'  <geom name="A_plough_w{"l" if s_>0 else "r"}" type="capsule" '
-                f'contype="4" conaffinity="0" condim="3" '
-                f'friction="0.35 0.005 0.0001" '
-                f'pos="{lx(wx):.5f} {s_*mm(wy):.5f} {mm(AgentA.TRIP_Z):.5f}" '
-                f'euler="0 90 {s_*AgentA.PLOUGH_WING_DEG:.1f}" '
-                f'size="{mm(AgentA.TRIP_R):.5f} {mm(AgentA.PLOUGH_WING/2):.5f}" '
-                f'mass="0.004" rgba="0.85 0.85 0.30 1"/>')
-
-    # ---- upper roller (F71: the patients) ----------------------------------
-    # Fixed axis, not sprung: it only has to be there when a tall piece arrives,
-    # and a second swing arm would have to be tuned against the first.  Same
-    # collision mask as the lower drum -- pieces only (bit 2) -- so it cannot
-    # touch the floor, the shim or the chassis.
-    if AgentA.UP_ROLL:
-        up_f = _finger_set(AgentA.UP_TIP_R, AgentA.UP_W, "u", "0.25 0.65 0.85 0.9",
-                           indent="    ")
-        body += [
-            f'  <body name="A_up" pos="{lx(AgentA.UP_AXIS_X):.5f} 0 '
-            f'{mm(AgentA.UP_AXIS_Z):.5f}">',
-            f'    <joint name="A_up_j" type="hinge" axis="0 1 0" limited="false" '
-            f'damping="0.0001"/>',
-            f'    <geom name="A_up_g" type="cylinder" zaxis="0 1 0" contype="4" '
-            f'conaffinity="4" condim="3" friction="0.90 0.02 0.0002" '
-            f'solref="0.008 1" solimp="0.90 0.95 0.002" '
-            f'size="{mm(AgentA.FING_HUB_R if AgentA.ROLL_FINGERS else AgentA.UP_DRUM_R):.5f} '
-            f'{mm(AgentA.UP_W/2):.5f}" '
-            f'mass="0.050" rgba="0.20 0.45 0.60 0.35"/>',
-        ] + up_f + ['  </body>']
-
     # ---- sweeper fingers ---------------------------------------------------
     for s, tag in ((1, "l"), (-1, "r")):
         body += [
@@ -939,9 +892,6 @@ def agent_a_body(name="agentA", pose=None, with_beams=False):
              f'  <camera name="A_chase" pos="{-mm(560):.4f} 0 {mm(420):.4f}" xyaxes="0 -1 0 0.6 0 0.8"/>',
              '</body>']
 
-    UPACT = ('<velocity name="a_uproll" joint="A_up_j" kv="0.010" ctrlrange="0 60" '
-             'forcerange="%.4f %.4f"/>' % (-AgentA.UP_TORQUE, AgentA.UP_TORQUE)
-             ) if AgentA.UP_ROLL else ""
     fs = -mm(AgentA.FEED_STROKE)
     nesc = -bpk
     esc2, bpk2 = 2*esc, 2*bpk           # a tendon of two joints reads twice the stroke
@@ -958,7 +908,6 @@ def agent_a_body(name="agentA", pose=None, with_beams=False):
     <velocity name="a_roller" joint="A_drum_j" kv="0.010"
               ctrlrange="0 {2*pi*AgentA.ROLL_RPM_MAX/60.0:.4f}"
               forcerange="{-AgentA.ROLL_TORQUE} {AgentA.ROLL_TORQUE}"/>
-    {UPACT}
     <!-- F68 trim slide: one MG90S through a Scotch yoke, carrying the whole
          posting head.  kv is high because the head must ARRIVE and stay put --
          a slide still ringing when the shelf opens is the same error the
@@ -1085,10 +1034,6 @@ def contact_pairs(agent="A", n_discs=3, n_cyls=0):
     # both pairings are masked out -- the real contacts are silent brushes.
     out.append(f'    <exclude body1="agentA" body2="A_shim"/>')
     out.append(f'    <exclude body1="A_shim" body2="A_drum"/>')
-    if AgentA.UP_ROLL:
-        out.append(f'    <exclude body1="agentA" body2="A_up"/>')
-        out.append(f'    <exclude body1="A_shim" body2="A_up"/>')
-        out.append(f'    <exclude body1="A_drum" body2="A_up"/>')
     # F68.  The posting head is a body now, so its bore ring and the escapement
     # riding on it would collide with the shell they live inside -- geometry
     # that was silent while they were all one body.  The shell's plates are

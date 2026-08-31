@@ -542,87 +542,25 @@ class AgentA:
     FING_E          = 3.0e6            # Pa, shore A 40 silicone  [VERIFY]
     FING_HUB_R      = 10.0
 
-    # UPPER ROLLER (F71) -- the patients.
+    # THE CYLINDERS ARE NOT THIS ROBOT'S JOB (F76).
     #
-    # The F64 intake is geometrically specific to a 5 mm flat disc, and the
-    # simulator said so the first time it was asked: 10 patients of 10 were
-    # BULLDOZED along the floor, upright and on their sides, at every offset
-    # across the mouth.  A O20 x 20 cylinder standing on the floor is 20 tall,
-    # and the drum's axis is at Za 25.5 -- so the fingers meet it near its TOP,
-    # 5.5 mm below the axis, and push it over forwards instead of sweeping it
-    # back onto the knife.  A 5 mm disc is only ever touched on its top face,
-    # which is why the same roller carries it perfectly.
+    # Three mechanisms lived here and all three were built to make a O20 x 20
+    # patient go up a knife sized for a O56 x 5 sample: an UPPER ROLLER (F71, an
+    # over-under pair), a TRIP BAR to lay a standing cylinder down (F71), and a
+    # PLOUGH to push them across the floor without ingesting them at all (F75).
+    # Measured, in order: the upper roller cost 12 points and dropped the
+    # laboratory from 30 samples of 36 to 26; the trip bar took 0 of 5 standing
+    # and made the lying case worse; the plough pushed 6 of 6 into PCC_R at ~5 s
+    # each but BLOCKED THE SAMPLES, 35 of 36 swept down to 14.
     #
-    # An OVER-UNDER pair fixes it, and is what game-piece intakes do: a second
-    # roller above, so a tall piece is caught between the two and driven up the
-    # knife by both.  Sized so a disc passes underneath UNTOUCHED -- the lower
-    # gap is 12 mm against a 5 mm disc -- so nothing about the validated disc
-    # intake changes.  One more N20 and one more silicone tube.
-    # OFF.  Measured over twelve matches with it fitted: mean +113.2 against
-    # +125.1 without, and the laboratory dock fell from 30 samples of 36 to 26.
-    # It buys nothing until the patient question is settled on a bench, and it
-    # is not free -- a second roller in the mouth disturbs the disc path that
-    # F64 spent a rebuild getting right.  Parameterised so it costs one line to
-    # try again once there is a reason to.
-    UP_ROLL         = False
-    # Swept: Xa 252 / Za 49 takes a patient lying down 5 times in 5; every
-    # other position in the grid managed 0-3.
-    UP_AXIS_X       = 252.0
-    UP_AXIS_Z       = 49.0             # fingers reach to Za 24 = 12 above a disc
-    UP_DRUM_R       = 22.0
-    UP_TIP_R        = 25.0
-    UP_W            = 128.0
-    UP_RPM          = 300.0
-    UP_TORQUE       = 0.098
+    # The last of those is the general result and it is why all three are gone:
+    # anything that reaches across the mouth to catch a 20 mm cylinder is in the
+    # way of a 5 mm disc, and the intake cannot serve both.  So this robot's
+    # intake serves the samples, which is what it was designed around and what
+    # it does well, and the patients go to a second, smaller robot that has no
+    # samples to protect.  The plough's geometry and its measured numbers are
+    # preserved in the F75 commit for that robot to inherit.
 
-    # TRIP BAR (F71) -- a bent rod across the mouth, and the cheapest part on
-    # the robot after the hold-down strip.
-    #
-    # A patient LYING DOWN goes in 5 times out of 5 once the upper roller is
-    # sited (swept).  Standing up it goes in 1 time in 5, and the reason is not
-    # the gap: a O20 x 20 cylinder has a 1:1 aspect ratio and its centre of mass
-    # 10 mm up, so anything that pushes it above 10 rotates it instead of moving
-    # it, and the knife's 0.2 mm edge WEDGES UNDER the base and stands it on the
-    # ramp, where it topples sideways out of the mouth (measured: they finish
-    # 80 mm off the lane).
-    #
-    # So do not try to convey it standing -- lay it down first.  A blunt bar at
-    # Za 6-9 meets the cylinder BELOW its centre of mass and trips it over
-    # towards the robot; a 5 mm sample passes underneath with a millimetre to
-    # spare, so the disc intake is untouched and the bar needs no actuator.
-    # OFF, for the same reason: it was built to lay a standing patient down and
-    # it does not (0 of 5, and it made the lying case worse).  Kept because the
-    # REASONING is worth preserving even though the part is not.
-    # THE PLOUGH (F75).  A patient is scored on WHERE IT ENDS UP ON THE FLOOR --
-    # "Placing one triaged patient inside the correct destination zone +5", and
-    # -3 for one left outside it.  Nothing in the rules asks for it to be
-    # lifted, carried or stood up.  Twelve of them start on stickers in the side
-    # areas, so a robot that ignores them scores -36, and the swing to a full
-    # sort is +116: the largest single item on the board, and the intake has
-    # nothing to do with it.
-    #
-    # So: a bar across the nose that sorts BY HEIGHT and has no actuator.
-    # Underside at 6.5 mm -- a O56 x 5 sample passes under it into the knife
-    # exactly as now, and a O20 x 20 patient is caught at 6.5-9.5, below its
-    # centre of mass at 10, so it is pushed rather than tipped.  Wings at 30 deg
-    # keep a pushed cylinder from rolling off the ends on a turn.
-    # OFF, AND THE REASON IS MEASURED.  A bar spanning the mouth blocks the
-    # SAMPLES: the sweep fell from 35 of 36 to 14 of 36 at 6.5 mm and 11 of 36
-    # at 9.5 mm, so raising it does not help -- anything across the mouth is in
-    # the samples' way.  The push itself works (6 of 6 into PCC_R, ~5 s each),
-    # so the plough is right and its MOUNTING is wrong.  Two ways out, both
-    # actuator-free: put the bars on the flanks outside the 148 mm mouth, or
-    # couple the bar to the knife servo through a bell-crank so that knife DOWN
-    # (sweeping samples) lifts the plough and knife UP (transit, pushing
-    # patients) drops it.  The second is better: full width, and the two jobs
-    # are already mutually exclusive in the route.
-    PLOUGH          = False
-    TRIP_X          = 285.0            # at the shell line, ahead of the knife
-    TRIP_Z          = 11.0             # centre; O3 rod spans 9.5-12.5
-    TRIP_R          = 1.5
-    TRIP_W          = 130.0            # straight span across the mouth
-    PLOUGH_WING     = 45.0             # each wing, swept back
-    PLOUGH_WING_DEG = 30.0
     # The knife is NARROWER than the mouth on purpose.  The sweeper fingers
     # occupy z 2..27 wherever they swing (raked, their structure reaches in to
     # |y| ~56), and a lifted knife rotates its corners up through that plane --
@@ -1207,21 +1145,18 @@ CHECKS = [
     ("the knife can get UNDER a piece rather than shoving it",
      SHIM_ANGLE_A + degrees(atan(AgentA.SHIM_MU))
      <= degrees(atan(Chassis.MU_PIECE))),
-    # ...AND THEN HOLD IT.  A piece SHORTER than the ramp ends up entirely on
-    # the ramp with no floor contact left, and slides straight back down unless
-    #       atan(mu_w) >= a
-    # A O56 sample never gets here -- it bridges ramp to floor the whole way --
-    # but a O20 patient does, twenty millimetres in.  The two conditions bound
-    # the ramp at a <= min(phi_w, 31 - phi_w), best at mu_w 0.28.
-    ("...and hold one shorter than the ramp instead of dropping it back out",
-     degrees(atan(AgentA.SHIM_MU)) >= SHIM_ANGLE_A or
-     Piece.CYL_H > SHIM_RUN_A),
-    # THE THROAT.  Everything the intake swallows goes down one channel.  The
-    # hold-down clamp was sized for a 5 mm disc (F16) and is 8 mm at the tail:
-    # a 20 mm patient cannot enter the belt run at all, over 170 mm of it, and
-    # no roller position, speed or finger count can change that.
-    ("the throat passes the TALLEST piece, not just the flattest",
-     min(AgentA.HOLD_GAP0, AgentA.HOLD_GAP1) >= Piece.CYL_H + 2.0),
+    # ...AND THEN CARRY IT ACROSS THE RAMP.  A piece SHORTER than the ramp ends
+    # up entirely on it with no floor contact left, and is then dragged forward
+    # by the ramp itself.  A O56 sample never gets there -- it bridges ramp to
+    # floor the whole way -- and that is now a REQUIREMENT, not an observation,
+    # because the samples are the only thing this intake carries.
+    ("a sample bridges the ramp to the floor and is never stranded on it",
+     Piece.DISC_D > SHIM_RUN_A),
+    # THE THROAT.  Everything the intake swallows goes down one channel, and
+    # since F76 that is samples only: the hold-down clamp (F16) is sized for a
+    # 5 mm disc and stays that way.
+    ("the throat passes a sample with room to spare",
+     min(AgentA.HOLD_GAP0, AgentA.HOLD_GAP1) >= Piece.DISC_T + 2.0),
     # THE BELT MUST OUTRUN THE ROBOT.  A piece is stationary in the WORLD and
     # every surface of the intake is moving forward at the sweep speed.  A belt
     # running aft at v gives its surface a world speed of (sweep - v): positive
@@ -1237,20 +1172,11 @@ CHECKS = [
      ROLL_GAP_A >= 0.0),
     ("...and its finger tips stay inside the shell",
      AgentA.ROLL_AXIS_X + AgentA.ROLL_TIP_R <= AgentA.L),
-    # ONE ROLLER, TWO PIECE HEIGHTS -- and it decides rigid vs brush outright.
-    # The roller's RIGID part must pass over the tallest piece:
-    #       Za - r_hub  >=  surface + CYL_H
-    # and its tips must reach down onto the flattest one:
-    #       Za - r_tip  <=  surface + DISC_T - bite
-    # Subtract, and the surface and the height cancel:
-    #       r_tip - r_hub  >=  CYL_H - DISC_T + bite
-    # A rigid drum has r_tip == r_hub, so the left side is ZERO and no height
-    # exists that takes both.  That is not a tuning result, it is arithmetic:
-    # a single hard roller can never admit a 5 mm sample and a 20 mm patient.
-    # A brush can, and the tube length is exactly how much margin it has.
-    # Built: 25 - 10 = 15 against 20 - 5 + 2 = 17.  Three millimetres short.
-    ("a single roller can take BOTH piece heights",
-     ROLL_ACCOM_A >= Piece.CYL_H - Piece.DISC_T + ROLL_BITE_A),
+    # THE BRUSH BITES A SAMPLE.  Its tips have to press into a 5 mm disc lying
+    # on the ramp under the axis, or they only graze it:
+    #       Za - r_tip <= surface + DISC_T - bite
+    ("the finger tips bite into a sample rather than grazing it",
+     ROLL_GAP_A <= Piece.DISC_T - ROLL_BITE_A),
     ("the roller's commanded speed is inside the driver's range",
      AgentA.ROLL_RPM <= AgentA.ROLL_RPM_MAX),
     ("the finger tip circle is the hub plus the tube, not a separate number",

@@ -183,10 +183,12 @@ def main():
     roofs = roof_profile(m, d, rb, XS)
     tight = min(((r - s, x, n) for x, s, r, n in roofs
                  if s is not None and r is not None), default=(999, 0, "-"))
-    check("the throat passes the TALLEST piece past every RIGID thing",
-          tight[0] >= Piece.CYL_H,
-          "tightest %.1f mm at Xa %.0f (%s); a patient is %.0f"
-          % (tight[0], tight[1], tight[2], Piece.CYL_H))
+    # SAMPLES ONLY, since F76.  The patients go to a second robot, so the
+    # throat is sized for a 5 mm disc and nothing else has to fit.
+    check("the throat passes a sample past every RIGID thing",
+          tight[0] >= Piece.DISC_T + 2.0,
+          "tightest %.1f mm at Xa %.0f (%s); a sample is %.0f"
+          % (tight[0], tight[1], tight[2], Piece.DISC_T))
 
     gaps = [x for x, z, _ in prof if z is None]
     check("the conveying surface is continuous from knife tip to belt tail",
@@ -223,16 +225,12 @@ def main():
     hub = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_GEOM, "A_drum_g")
     hub_lo = lowest_z(m, d, hub)
     surf_here = ramp_here if ramp_here is not None else 0.0
-    # STATICALLY OR BY LIFTING.  A rigid drum with 3 mm of static clearance
-    # still takes an upright patient, because the sprung arm rides up over it
-    # (traced: on the belt in 0.2 s).  So the question is not the standing gap
-    # but whether the roller can OPEN to the tallest piece at all.
     lift = P._arm_lift()
-    check("the roller can open far enough to admit the tallest piece",
-          hub_lo + lift - surf_here >= Piece.CYL_H,
+    check("the roller can open far enough to admit a sample",
+          hub_lo + lift - surf_here >= Piece.DISC_T,
           "hub bottom %.1f + %.1f of arm travel over a %.1f surface = %.1f; "
-          "a patient is %.0f" % (hub_lo, lift, surf_here,
-                                 hub_lo + lift - surf_here, Piece.CYL_H))
+          "a sample is %.0f" % (hub_lo, lift, surf_here,
+                                hub_lo + lift - surf_here, Piece.DISC_T))
     check("...and its driver can reach the speed it is commanded",
           AgentA.ROLL_RPM <= AgentA.ROLL_RPM_MAX,
           "%.0f rpm commanded, driver ceiling %.0f" % (AgentA.ROLL_RPM,

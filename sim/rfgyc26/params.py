@@ -567,16 +567,53 @@ class Robot2:
     # labcone1_20); planning at 95 would have shut the pinches instead.
     # 70 mm of reach keeps both: the pinch has 51 mm of slack and the
     # pocket still swallows a 20 mm puck to a 36 mm depth.
+    # THE THROAT ADMITS ONE PATIENT, NOT TWO (F108).  At 44 mm it passed a
+    # 40 mm pair side by side -- and two pucks wedged in the throat is a
+    # pocket that cannot be cleared without a reverse-and-shake it has no
+    # reason to attempt.  34 mm leaves a single puck 14 mm of slop and
+    # excludes a pair outright; the flares grow to hold the MOUTH at the
+    # same +-38 mm, because the mouth is the approach tolerance and that is
+    # the number the capture actually spends.
     STOP_X          = 14.0                   # back stop, ahead of centre
     POCKET_D        = 36.0                   # parallel walls run STOP_X..+D
-    POCKET_W        = 44.0                   # gap: a O20 puck with slop
-    FLARE_L         = 26.0                   # funnel mouth
+    POCKET_W        = 34.0                   # gap: one O20 puck with slop
+    FLARE_L         = 34.0                   # funnel mouth
     FLARE_ANG       = 38.0                   # degrees out from the walls
     PLOW_W          = 120.0                  # overall, flare tip to tip
     PLOW_H          = 26.0
     PLOW_CLEAR      = 5.0
     # where a captured puck's centre sits, ahead of the axle
     CAPTURE_X       = STOP_X + 12.0
+
+    # THE POCKET HAS TO BE EMPTY (F108).  It was not.  The chassis deck ran
+    # from x -55 to x +95 at z 9..15 -- twenty-five millimetres PAST the
+    # flare tips, straight through the height band a 21 mm patient occupies
+    # -- and the mass block (x +-38, z 14..38) sat in the same band behind
+    # it.  So the funnel opened onto a wall.  Measured in the chassis frame,
+    # every patient stopped dead at x = 105.0 and stayed there while the
+    # robot kept driving: 95 mm of deck plus a 10 mm puck radius, exactly.
+    # The pocket could never take anything, on any board, from the moment it
+    # was built -- which is the whole of "capture missed, 12 of 12".
+    #
+    # So the pocket's clear volume is now a DECLARED INVARIANT, and
+    # check_r2_pocket.py asserts no chassis geom enters it:
+    #
+    #     x in [STOP_X, tip_x + 12]   |y| <= 40   z in [0, 24]
+    #
+    # The deck stops behind the back stop and the plow is cantilevered off
+    # its front edge (which is what a bolted-on aluminium plow IS); the
+    # block moves aft and the tray stacks on top of it; the two front
+    # casters move outboard of the flare tips so they cannot foul a puck
+    # sliding down the funnel.  Traction pays for it -- the CoM moves from
+    # +9 to -28, so the drive wheels carry 54% of the weight instead of 85%
+    # -- and that is the right trade: 2.2 N of tractive force is ample for a
+    # 30 g puck, and no amount of traction helps a pocket that is welded shut.
+    DECK_FRONT      = 10.0                   # deck ends BEHIND the back stop
+    DECK_REAR       = -78.0
+    BLOCK_X         = -24.0                  # front face lands on STOP_X
+    BLOCK_Z         = 27.0                   # floor 15..39, under the tray
+    CASTER_FX       = 58.0
+    CASTER_FY       = 46.0                   # outboard of the flare tips (38)
 
     # THE TRAY.  The two PCC_R kits ride in a shallow recess, floor tilted
     # 3 degrees down toward the tail, a 2.5 mm lip on the open tail edge:

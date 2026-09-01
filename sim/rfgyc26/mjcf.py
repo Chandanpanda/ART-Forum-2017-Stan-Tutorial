@@ -1176,13 +1176,21 @@ def robot2_body(pose=None):
         f'<body name="robot2" pos="{mm(px):.5f} {mm(py):.5f} {mm(z0):.5f}" '
         f'euler="0 0 {ph:.2f}">',
         f'  <freejoint name="r2_f"/>',
-        # chassis plate + motor block carry the mass, low
+        # chassis deck + mass block, both BEHIND the pocket (F108).  The deck
+        # used to run to x +95 at puck height, 25 mm past the flare tips, so
+        # the funnel opened onto the robot's own floor plate and no patient
+        # ever got closer than x 105.  The deck now stops at DECK_FRONT,
+        # behind the back stop, and the plow is cantilevered off its front
+        # edge.  params.Robot2 states the clear volume; check_r2_pocket.py
+        # asserts it.
         f'  <geom name="r2_plate" class="robot" type="box" '
-        f'pos="{mm(-R2.AXLE_X + R2.AXLE_X + 20.0):.5f} 0 {mm(12.0 - z0):.5f}" '
-        f'size="{mm(R2.L/2):.5f} {mm(R2.W/2 - 5.0):.5f} {mm(3.0):.5f}" '
+        f'pos="{mm((R2.DECK_FRONT + R2.DECK_REAR)/2.0):.5f} 0 '
+        f'{mm(12.0 - z0):.5f}" '
+        f'size="{mm((R2.DECK_FRONT - R2.DECK_REAR)/2.0):.5f} '
+        f'{mm(R2.W/2 - 5.0):.5f} {mm(3.0):.5f}" '
         f'mass="{0.16:.3f}" rgba="0.25 0.28 0.33 1"/>',
         f'  <geom name="r2_block" class="robot" type="box" '
-        f'pos="0 0 {mm(26.0 - z0):.5f}" '
+        f'pos="{mm(R2.BLOCK_X):.5f} 0 {mm(R2.BLOCK_Z - z0):.5f}" '
         f'size="{mm(38.0):.5f} {mm(34.0):.5f} {mm(12.0):.5f}" '
         f'mass="{0.20:.3f}" rgba="0.30 0.33 0.38 1"/>',
         # THE CAPTURE POCKET (F106): a back stop, two parallel walls and a
@@ -1239,9 +1247,12 @@ def robot2_body(pose=None):
         f'size="{mm(R2.MARKER_MM/2):.5f} {mm(R2.MARKER_MM/2):.5f} 0.0005" '
         f'mass="0.001" rgba="0.05 0.05 0.05 1"/>',
     ]
-    # casters: one tail, two under the plow root
-    for nm, (cx, cy) in {"t": (-62.0, 0.0), "fl": (58.0, 34.0),
-                         "fr": (58.0, -34.0)}.items():
+    # casters: one tail, two on the plow bracket OUTBOARD of the flare tips
+    # (F108) -- at y +-34 they stood inside the funnel's own mouth, where a
+    # puck sliding down the flare would foul them.
+    for nm, (cx, cy) in {"t": (-62.0, 0.0),
+                         "fl": (R2.CASTER_FX, R2.CASTER_FY),
+                         "fr": (R2.CASTER_FX, -R2.CASTER_FY)}.items():
         parts.append(
             f'  <geom name="r2_ball_{nm}" class="ball" type="sphere" '
             f'pos="{mm(cx):.5f} {mm(cy):.5f} {mm(5.0 - z0):.5f}" '

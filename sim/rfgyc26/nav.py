@@ -384,11 +384,13 @@ def plan(cmap, start, goal, inscribed, circumscribed, t0=0.0, speed=280.0,
 PUSH_HEADINGS = 16
 PUSH_DISTS = (60.0, 120.0, 200.0, 300.0, 420.0, 560.0, 700.0)
 PLOW_REACH = 92.0            # centre to just behind the pocket mouth
-# the CAPTURE POCKET IS PART OF THE BODY (F107): its flare tips reach 93 mm
+# the CAPTURE POCKET IS PART OF THE BODY (F107): its flare tips reach 77 mm
 # ahead of the axle, and a planner that stops the footprint at 78 routes a
 # robot 15 mm shorter than the one that has to fit.
-BODY_PTS = [(-78.0, 55.0), (-78.0, -55.0), (78.0, 55.0), (78.0, -55.0),
-            (70, 38), (70, -38), (70, 0.0), (0.0, 0.0)]
+# check_r2_pocket.py asserts these points contain every collidable geom, so
+# this list can no longer drift away from the robot it claims to describe.
+BODY_PTS = [(-78.0, 55.0), (-78.0, -55.0), (79.0, 55.0), (79.0, -55.0),
+            (79.0, 40.0), (79.0, -40.0), (79.0, 0.0), (0.0, 0.0)]
 
 
 def body_masks(cmap, n_head=PUSH_HEADINGS):

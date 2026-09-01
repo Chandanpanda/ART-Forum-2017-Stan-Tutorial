@@ -22,6 +22,7 @@ cd path\to\ART-Forum-2017-Stan-Tutorial\sim
 python scripts\check_geometry.py     # 1. no physics: derived geometry + assertions
 python scripts\check_model.py        # 1b. the BUILT model, with physics (20 checks)
 python scripts\check_hal.py          # 1c. the sim/hardware interface contract (15)
+python scripts\check_perception.py   # 1d. the pixel pipeline vs rendered truth (10)
 python scripts\demo_belt.py          # 2. the conveyor, isolated (fast, ~10 s)
 python scripts\demo_capture.py       # 3. the "pick" half: 3 discs -> magazine
 python scripts\demo_post.py          # 4. the "place" half: gate -> 3 lab holes

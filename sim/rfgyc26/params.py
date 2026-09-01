@@ -335,6 +335,28 @@ class Vision:
         return (cls.W/2.0) / tan(radians(cls.HFOV/2.0))
 
     @classmethod
+    def cam_pose(cls, side):
+        """One eye's pose in the ROBOT frame (x nose, y left, z up from the
+        floor, mm): (pos, x_axis, y_axis).  side +1 = left eye, -1 = right.
+
+        THE single statement of the mount: mjcf.py emits the <camera> from it
+        and perception.py builds the calibration from it, so the model and
+        the pipeline cannot disagree about where the cameras are.  MuJoCo's
+        camera convention: looks down its own -z, image +x along x_axis
+        (the robot's LEFT flank), image +y along y_axis (up-image).
+        """
+        from math import sin, cos, radians
+        yaw = -side*cls.TOE                  # toed IN toward the centreline
+        cp, sp = cos(radians(cls.CAM_PITCH)), sin(radians(cls.CAM_PITCH))
+        cy_, sy_ = cos(radians(yaw)), sin(radians(yaw))
+        # x is axle-relative: the robot frame's origin is the axle (AXLE_X),
+        # which is also the free joint's origin in the model.
+        pos = (cls.CAM_X - AgentA.AXLE_X, side*cls.BASELINE/2.0, cls.CAM_Z)
+        xax = (-sy_, cy_, 0.0)
+        yax = (-sp*cy_, -sp*sy_, cp)
+        return pos, xax, yax
+
+    @classmethod
     def sigma_lat(cls, z_mm):
         """Lateral, from the feature's image position."""
         return z_mm * cls.FEAT_SIGMA_PX / cls.f_px()

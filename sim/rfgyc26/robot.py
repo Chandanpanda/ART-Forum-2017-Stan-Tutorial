@@ -21,10 +21,17 @@ STEP_RAD = 2 * np.pi / Chassis.STEPS_PER_REV
 
 
 class AgentARobot(hal.DriveHAL, hal.DeviceHAL):
-    def __init__(self, model, data, step_loss=0.0, rng=None):
+    def __init__(self, model, data, step_loss=0.0, rng=None, vision="model"):
         self.m, self.d = model, data
         self.rng = rng or np.random.default_rng(0)
         self.step_loss = step_loss
+        # "model": the synthetic camera (geometry + the Vision error budget,
+        # fast -- the regression double).  "render": real frames through
+        # mujoco.Renderer into perception.LabPipeline -- the same pixels-in
+        # pipeline the Pi cameras feed, and the one that gates releases.
+        # Headless machines need MUJOCO_GL=osmesa (or egl) for "render".
+        self.vision_mode = vision
+        self._pix = None
         gid = lambda t, n: mujoco.mj_name2id(model, t, n)
         self.bid   = gid(mujoco.mjtObj.mjOBJ_BODY, "agentA")
         self.a_l   = gid(mujoco.mjtObj.mjOBJ_ACTUATOR, "a_drive_l")
@@ -353,7 +360,16 @@ class AgentARobot(hal.DriveHAL, hal.DeviceHAL):
         The error that survives either way is the plate-to-bore calibration and
         the mast's flex, which is why both are modelled as bias rather than
         noise -- see Vision.
+
+        vision="render" swaps this synthetic model for the real thing: the
+        frames are rendered and perception.LabPipeline measures them, with
+        the same output contract.  (The rendered path carries the mount bias
+        through its calibration; mast flex stays model-only for now -- the
+        camplate is welded in the MJCF -- and the budget carries it as
+        margin.)
         """
+        if self.vision_mode == "render":
+            return self._see_lab_px()
         self._cam()
         top = Field.LAB_PLATE_T if plate_top is None else plate_top
         out = []
@@ -389,6 +405,20 @@ class AgentARobot(hal.DriveHAL, hal.DeviceHAL):
                         w[2], "stereo" if both else "mono"))
         return out
 
+    def _see_lab_px(self):
+        """The rendered path: frames from the tail cameras, measurements from
+        perception.LabPipeline.  Built lazily so the model-camera path never
+        pays for a GL context -- and never consumes the rng draws the bias
+        needs, keeping model-camera runs bit-identical with or without this
+        code existing."""
+        if self._pix is None:
+            from . import perception
+            cams = SimCameras(self.m, self.d, rng=self.rng)
+            self._pix = (cams, perception.LabPipeline(cams.calib()))
+        cams, pipe = self._pix
+        imgL, imgR, _ = cams.frames()
+        return pipe.slots(imgL, imgR)
+
     # ------------------------------------------------------------ stallguard
     def stalled(self, thresh=0.42):
         """TMC2209 StallGuard stand-in: both drivers at torque saturation.
@@ -422,3 +452,35 @@ class SimClock(hal.Clock):
     def tick(self):
         for _ in range(self.decim):
             mujoco.mj_step(self.m, self.d)
+
+
+class SimCameras(hal.CameraHAL):
+    """The tail pair, rendered: the simulator's CameraHAL.
+
+    frames() renders both eyes offscreen at the perception resolution; the
+    physics is untouched (rendering reads d, never writes it).  calib() is
+    built from Vision.cam_pose -- the same statement the MJCF emits the
+    <camera> tags from -- plus, when an rng is given, the per-match mounting
+    bias, folded into the calibration rather than the render: the world does
+    not move when a bracket is bent, the robot's belief does.
+    """
+    def __init__(self, model, data, rng=None):
+        self.m, self.d = model, data
+        self._r = None
+        from . import perception
+        self._calib = perception.sim_calib(rng)
+
+    def _renderer(self):
+        if self._r is None:
+            self._r = mujoco.Renderer(self.m, Vision.H, Vision.W)
+        return self._r
+
+    def frames(self):
+        r = self._renderer()
+        r.update_scene(self.d, camera="A_cam_l")
+        imgL = r.render().copy()
+        r.update_scene(self.d, camera="A_cam_r")
+        return imgL, r.render(), float(self.d.time)
+
+    def calib(self):
+        return self._calib

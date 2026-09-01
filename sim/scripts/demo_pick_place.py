@@ -56,6 +56,11 @@ def main():
     # A_chase), Esc returns to the free camera, Tab toggles the side panel.
     ap.add_argument("--timeout", type=float, default=240.0)
     ap.add_argument("--step-loss", type=float, default=0.0)
+    ap.add_argument("--vision", choices=("model", "render"), default="model",
+                    help="'render': the dock measures REAL frames from the tail "
+                         "cameras through perception.LabPipeline (the pipeline "
+                         "the Pi will run); 'model': the fast synthetic camera. "
+                         "Headless boxes need MUJOCO_GL=osmesa for 'render'.")
     ap.add_argument("--xray", action="store_true",
                     help="start with the chassis plates transparent; press X in "
                          "the viewer to toggle")
@@ -74,7 +79,7 @@ def main():
     open(path, "w").write(xml)
     m = mujoco.MjModel.from_xml_string(xml)
     d = mujoco.MjData(m)
-    rb = AgentARobot(m, d, step_loss=a.step_loss, rng=rng)
+    rb = AgentARobot(m, d, step_loss=a.step_loss, rng=rng, vision=a.vision)
     rb.fingers(True); rb.gate(False); rb.intake(False)
     rb.cradle(1, True); rb.cradle(2, True)      # beams carried clear of the field
 

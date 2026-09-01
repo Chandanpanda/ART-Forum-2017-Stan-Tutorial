@@ -125,6 +125,10 @@ def preamble(timestep=0.001):
     <headlight ambient="0.45 0.45 0.45" diffuse="0.65 0.65 0.65"/>
     <quality shadowsize="2048"/>
     <map znear="0.01" zfar="30"/>
+    <!-- offscreen framebuffer at the PERCEPTION resolution (Vision.W x H):
+         the tail cameras are rendered through mujoco.Renderer and fed to the
+         same pixel pipeline the Pi cameras will feed.  Rendering only. -->
+    <global offwidth="{Vision.W}" offheight="{Vision.H}"/>
   </visual>
   <default>
     <default class="static">
@@ -874,15 +878,13 @@ def agent_a_body(name="agentA", pose=None, with_beams=False):
         f'size="{mm(3):.5f} {mm(Vision.BASELINE/2 + 14):.5f} {mm(16):.5f}" '
         f'mass="{2*Vision.CAM_MASS/1000.0:.4f}" rgba="0.85 0.55 0.10 1"/>']
     for sy, tag in ((1, "l"), (-1, "r")):
-        # toed IN, so both cameras keep the dock zone in frame at close range
-        yaw = -sy*Vision.TOE
-        cp, sp = cos(radians(Vision.CAM_PITCH)), sin(radians(Vision.CAM_PITCH))
-        cy_, sy_ = cos(radians(yaw)), sin(radians(yaw))
-        # image +x is the robot's LEFT, image +y is up-image; MuJoCo looks -z
-        xax = (-sy_, cy_, 0.0)
-        yax = (-sp*cy_, -sp*sy_, cp)
+        # toed IN, so both cameras keep the dock zone in frame at close range.
+        # Pose and axes come from Vision.cam_pose -- the ONE statement of the
+        # mount, shared with perception.py's calibration (image +x is the
+        # robot's LEFT, image +y is up-image; MuJoCo looks down its own -z).
+        (px_, py_, pz_), xax, yax = Vision.cam_pose(sy)
         body.append(
-            f'  <camera name="A_cam_{tag}" pos="{mx:.5f} {sy*hb:.5f} {mz:.5f}" '
+            f'  <camera name="A_cam_{tag}" pos="{mm(px_):.5f} {mm(py_):.5f} {mm(pz_):.5f}" '
             f'xyaxes="{xax[0]:.5f} {xax[1]:.5f} {xax[2]:.5f} '
             f'{yax[0]:.5f} {yax[1]:.5f} {yax[2]:.5f}" '
             f'fovy="{2*degrees(atan((Vision.H/2)/Vision.f_px())):.4f}"/>')

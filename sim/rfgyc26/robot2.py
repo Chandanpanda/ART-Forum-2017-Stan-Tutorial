@@ -696,11 +696,20 @@ def mission_robot2(ctl, m, d=None, log=print, clock=None):
                 done.add(i)
                 continue
             cm = _board_map(board, skip=i)
-            # leave-clean: never park a patient where robot 1 still has to go
+            # leave-clean: never park a patient where robot 1 still has to
+            # go -- EXCEPT in a destination zone (F102).  Robot 1's kit
+            # corridor runs straight through the hospital, so an unqualified
+            # mask forbade delivering a red to its own zone and robot 2 then
+            # declared the whole board undeliverable and quit at T+49 with
+            # sixty seconds in hand.  A scored patient is not an obstacle.
             avoid = np.zeros((cm.nx, cm.ny), dtype=bool)
             for mask, w0, w1 in cm._windows:
                 if w1 > now():
                     avoid |= mask
+            for zx0, zy0, zx1, zy1 in ZONES.values():
+                gx, gy = cm._grid_xy()
+                avoid &= ~((gx >= zx0 - 30.0) & (gx <= zx1 + 30.0) &
+                           (gy >= zy0 - 30.0) & (gy <= zy1 + 30.0))
             legs, secs = nav.plan_push(cm, (x, y), z, robot=ctl.pose[:2],
                                        avoid=avoid)
             if legs is None:
@@ -709,8 +718,16 @@ def mission_robot2(ctl, m, d=None, log=print, clock=None):
             if best is None or secs < best[1]:
                 best = (i, secs, legs, cm, (x, y))
         if best is None:
-            log(t() + "nothing deliverable from here")
-            break
+            # NOT a reason to stop: reservations expire, and the board keeps
+            # changing under robot 1's wheels.  Wait for the next window and
+            # look again -- quitting here threw away sixty seconds.
+            if now() > 104.0:
+                break
+            log(t() + "nothing deliverable yet; waiting")
+            for _ in range(int(3.0 * hal.Clock.HZ)):
+                ctl.tick()
+                yield
+            continue
         i, secs, legs, cm, p0 = best
         if now() + secs > 112.0:
             log(t() + "%.0f s of work left, %.0f s of clock -- stopping"
@@ -738,7 +755,10 @@ def mission_robot2(ctl, m, d=None, log=print, clock=None):
             sx, sy = px - ux * 250.0, py - uy * 250.0
             ok = yield from ctl.goto(sx, sy, v_max=330.0, tol=70.0,
                                      tries=2, strict=True)
-            if not ok and np.hypot(ctl.pose[0] - sx, ctl.pose[1] - sy) > 190.0:
+            # 300, not 190: the straight close below covers the rest, and
+            # abandoning from inside a chassis-length of the staging point
+            # is throwing away a delivery that was nearly made
+            if not ok and np.hypot(ctl.pose[0] - sx, ctl.pose[1] - sy) > 300.0:
                 failed = True
                 break
             yield from ctl.face(hd, tol=6.0)

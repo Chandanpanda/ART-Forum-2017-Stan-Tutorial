@@ -63,6 +63,15 @@ class DriveHAL(ABC):
         simulator's actuator force.  Unreliable below ~0.1 m/s on both
         machines; callers gate it on distance covered (see stall_drive)."""
 
+    @abstractmethod
+    def gyro_z(self):
+        """Yaw rate, deg/s, CCW positive -- the IMU on the deck (the model's
+        A_imu gyro; an MPU6050-class part on the real robot).  Wheels scrub
+        in a pivot (efficiency 0.71 measured), so heading integrates THIS,
+        never the wheels.  The backend owns the sensor's imperfection: a
+        per-match bias plus per-read noise, drawn like every calibration
+        error in this project -- once, not averaged away."""
+
 
 class DeviceHAL(ABC):
     """Every mechanism that is not a wheel.  One verb per mechanism.

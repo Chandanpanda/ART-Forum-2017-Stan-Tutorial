@@ -237,85 +237,6 @@ def sweep_line(rb, y, x_to, speed=140.0, want=None):
     rb.intake(False)
 
 
-def align_reverse(rb, chute_offset, tx, ty, heading, tol=2.5, max_ticks=900):
-    """Back the CHUTE onto a target, steering on its measured cross-track error.
-
-    Docking cannot be dead-reckoned here: the rear ball transfers ride up the
-    3 mm lab plate (the spec's own [VERIFY 10.2] question), which pitches the
-    chassis and walks the chute several mm.  Disc-in-hole radial clearance is
-    only 2 mm, so the terminal has to close on the chute's actual position.
-    """
-    import os
-    _dbg = os.environ.get("DOCK_DEBUG")
-    _n = 0
-    for _ in range(max_ticks):
-        _n += 1
-        px, py, th = rb.pose
-        cx, cy = rb.chute_xy(chute_offset)
-        t = np.radians(th)
-        # error of the CHUTE, in the robot frame: +fore is toward the nose
-        ex, ey = tx - cx, ty - cy
-        fore =  ex*np.cos(t) + ey*np.sin(t)
-        left = -ex*np.sin(t) + ey*np.cos(t)
-        # Only accept the dock when the chassis is actually STOPPED.  Accepting
-        # mid-coast books an error the robot is about to move away from.
-        if abs(fore) < tol and abs(left) < tol and \
-                np.linalg.norm(rb.d.qvel[:2])*1000.0 < 3.0:
-            rb.stop(); return True
-        herr = _wrap(heading - th)
-        # Two regimes.  Coarse: reverse fast holding the commanded heading.
-        # Endgame: the chute is 106.5 mm behind the axle, so 1 deg of yaw swings it
-        # 1.9 mm sideways -- far more lateral authority than the heading term needs.
-        # Fighting both at once settles into an equilibrium ~15 mm off (hole 3), so
-        # once we are close, null the lateral error and let the heading float.
-        # DO NOT raise these to save time.  Tried: threshold 18, w +/-22, endgame
-        # 55 mm/s and 15 deg/s.  Dock error went 1.9 -> 3.8 mm against a 2 mm
-        # posting budget, and hole 3 stopped converging at all (240 s timeout).
-        # The endgame is slow because it has to be.
-        if abs(fore) > 25.0:
-            w = np.clip(1.4*herr - 1.2*left, -18, 18)
-            cap = 140.0 if abs(fore) > 60.0 else 60.0
-            v = np.clip(fore*2.5, -cap, cap)
-        else:
-            # CREEP AND SETTLE, not continuous control.  The drive is a pair of
-            # steppers -- position devices -- and the chassis carries enough
-            # momentum that commanding 5 mm/s still leaves it coasting at 13,
-            # so a continuous terminal hunts around the target and never lands
-            # inside 2 mm.  Move in short bursts and let it stop between them:
-            # the error is then measured on a stationary robot, which is the
-            # only way a 2 mm budget is meetable.
-            w = np.clip(-3.2*left, -10, 10)
-            v = np.clip(fore*2.0, -35, 35) if abs(fore) > tol else 0.0
-            # Creep only in the LAST few millimetres.  Applied across the whole
-            # endgame the duty cycle spends 60% of the time stopped, which fixed
-            # the seeds that were hunting and pushed the marginal ones over the
-            # match clock instead.
-            if abs(fore) < 8.0 and abs(left) < 8.0 and _n % 16 >= 9:
-                v, w = 0.0, 0.0
-        if _dbg and _n % 25 == 0:
-            import mujoco as _mj, numpy as _np
-            hits, _f = {}, _np.zeros(6)
-            for _c in range(rb.d.ncon):
-                _co = rb.d.contact[_c]
-                n1 = _mj.mj_id2name(rb.m, _mj.mjtObj.mjOBJ_GEOM, _co.geom1) or ""
-                n2 = _mj.mj_id2name(rb.m, _mj.mjtObj.mjOBJ_GEOM, _co.geom2) or ""
-                for a, b in ((n1, n2), (n2, n1)):
-                    if a.startswith("A_") and not b.startswith("A_") and b != "floor":
-                        _mj.mj_contactForce(rb.m, rb.d, _c, _f)
-                        hits[(a, b)] = max(hits.get((a, b), 0.0), abs(_f[0]))
-            _b3 = _mj.mj_name2id(rb.m, _mj.mjtObj.mjOBJ_GEOM, "A_ball3")
-            _by = rb.d.geom_xpos[_b3][1]*1000 if _b3 >= 0 else 0.0
-            print("        [dock] fore=%7.1f left=%7.1f herr=%6.1f v=%6.1f w=%6.1f "
-                  "|vel|=%5.2f ball3_y=%6.1f  %s"
-                  % (fore, left, herr, v, w, _np.linalg.norm(rb.d.qvel[:2])*1000, _by,
-                     ", ".join("%s/%s %.0fN" % (a, b, f) for (a, b), f in
-                               sorted(hits.items(), key=lambda kv: -kv[1])[:3]) or "-"))
-        rb.drive(v, w)
-        yield
-    rb.stop()
-    return False
-
-
 # The only stations that clear the south wall (>=185), the side walls and the lab
 # plate rectangle by more than the 185 mm swept radius.  There is no legal pivot
 # directly south of the plate: that corridor is 360 mm wide and needs 370.
@@ -390,7 +311,9 @@ def reverse_track(rb, sw, trim_mm, heading, speed=150.0, stop_at=0.0, k=0.010,
     t = np.radians(heading)
     ux, uy = -np.cos(t), -np.sin(t)              # the reverse direction
     while True:
-        x, y, th = rb.pose
+        # ODOMETRY frame throughout: sw was frozen in it, and a camera fix
+        # jumping the map frame mid-reverse must not yank the target.
+        x, y, th = rb.pose_odo
         rem = range_to(rb, sw, trim_mm)
         if rem <= stop_at:
             rb.stop(); return
@@ -431,7 +354,7 @@ def look_lab(rb, n=10, want=3):
     """
     acc = []
     for _ in range(n):
-        x, y, th = rb.pose
+        x, y, th = rb.pose_odo
         t = np.radians(th)
         for lx_, ly_, lz_, mode in rb.see_lab():
             acc.append((x + lx_*np.cos(t) - ly_*np.sin(t),
@@ -444,7 +367,7 @@ def look_lab(rb, n=10, want=3):
                 g.append((wx, wy, mode)); break
         else:
             groups.append([(wx, wy, mode)])
-    x, y, th = rb.pose
+    x, y, th = rb.pose_odo
     t = np.radians(th)
     out = []
     for g in groups:
@@ -528,7 +451,7 @@ def slot_world(rb, tgt):
     replaying a leg that has already been driven.  (Not doing this drove the
     approach twice and put the bore 30 mm past the slot.)
     """
-    x, y, th = rb.pose
+    x, y, th = rb.pose_odo
     t = np.radians(th)
     return (x + tgt[0]*np.cos(t) - tgt[1]*np.sin(t),
             y + tgt[0]*np.sin(t) + tgt[1]*np.cos(t))
@@ -536,7 +459,7 @@ def slot_world(rb, tgt):
 
 def _bore_dy(rb, sw):
     """Lateral offset from the bore's own axis to a measured slot, robot frame."""
-    x, y, th = rb.pose
+    x, y, th = rb.pose_odo
     t = np.radians(th)
     bx, by = x + BORE_X*np.cos(t), y + BORE_X*np.sin(t)
     return -(sw[0]-bx)*np.sin(t) + (sw[1]-by)*np.cos(t)
@@ -544,7 +467,7 @@ def _bore_dy(rb, sw):
 
 def range_to(rb, sw, trim_mm):
     """How far to REVERSE to put the bore (at robot x=BORE_X, y=trim) on sw."""
-    x, y, th = rb.pose
+    x, y, th = rb.pose_odo
     t = np.radians(th)
     bx = x + BORE_X*np.cos(t) - trim_mm*np.sin(t)
     by = y + BORE_X*np.sin(t) + trim_mm*np.cos(t)
@@ -1038,7 +961,7 @@ def stall_drive(rb, v, hold_heading, max_mm=400.0, thresh=0.30, settle=0.35,
         gone = np.hypot(x-x0, y-y0)
         if gone > max_mm:
             rb.stop(); return False
-        moving = np.linalg.norm(rb.d.qvel[:2])*1000.0
+        moving = rb.speed()
         # A robot accelerating from rest is ALSO at torque saturation with a
         # near-zero velocity, so StallGuard reads "stalled" the instant it is
         # asked to move.  The real chip has the same blind spot -- the datasheet

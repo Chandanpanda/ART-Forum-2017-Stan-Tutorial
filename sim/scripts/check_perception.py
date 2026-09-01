@@ -157,7 +157,7 @@ def main():
     # ------------------------------------------------------------- colours
     teleport(m, d, jadr, 350.0, 650.0, 0.0)           # tail toward SIDE_L
     imgL, imgR, _ = cams.frames()
-    pose = rb.pose
+    pose = rb.pose_truth
     seen, wrong = 0, []
     for i in range(M2.N_CYL):
         b = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "cyl%d" % i)

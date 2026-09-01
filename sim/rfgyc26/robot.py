@@ -18,10 +18,16 @@ from .params import Chassis, AgentA, Piece, Field, Vision, M2, mm
 WHEEL_R = Chassis.WHEEL_D / 2000.0          # m
 HALF_TRACK = Chassis.TRACK / 2000.0         # m
 STEP_RAD = 2 * np.pi / Chassis.STEPS_PER_REV
+# The IMU's imperfection, owned by the backend (hal.DriveHAL.gyro_z): an
+# MPU6050-class gyro after the pre-match still-calibration keeps a residual
+# bias, drawn ONCE per match, plus white noise per read.  deg/s.
+GYRO_BIAS_SD  = 0.04
+GYRO_NOISE_SD = 0.08
 
 
 class AgentARobot(hal.DriveHAL, hal.DeviceHAL):
-    def __init__(self, model, data, step_loss=0.0, rng=None, vision="model"):
+    def __init__(self, model, data, step_loss=0.0, rng=None, vision="model",
+                 nav="truth"):
         self.m, self.d = model, data
         self.rng = rng or np.random.default_rng(0)
         self.step_loss = step_loss
@@ -32,6 +38,30 @@ class AgentARobot(hal.DriveHAL, hal.DeviceHAL):
         # Headless machines need MUJOCO_GL=osmesa (or egl) for "render".
         self.vision_mode = vision
         self._pix = None
+        # nav="est": .pose is the ESTIMATOR's belief -- odometry + gyro +
+        # camera fixes, the only pose the real robot will ever have.  The
+        # simulator's oracle stays available as .pose_truth for the referee,
+        # the checks, and the estimator's own error report.  nav="truth" is
+        # the A/B control and never touches the imu rng, so truth-mode runs
+        # are bit-identical to the pre-estimator baseline.
+        #
+        # TRUTH IS STILL THE DEFAULT, deliberately (F85).  The estimator is
+        # built and measured (check_estimator), but the hand-written route
+        # was tuned for months around oracle navigation and measurably
+        # cannot ride a 30 mm belief: 12 seeds went +93.2 -> -2.5 when the
+        # flip was tried -- open-loop legs, blind loop exits, cascading
+        # deadlines.  Hardening THAT route against honest navigation is the
+        # planner and tracker's whole job (design doc steps 4-5); the
+        # default flips to "est" when they land, not before.
+        self.nav = nav
+        self.est = None
+        if nav == "est":
+            # spawn: derives an independent stream WITHOUT advancing the
+            # match rng, so vision-model noise draws stay aligned across
+            # nav modes.
+            self._rng_imu = self.rng.spawn(1)[0]
+            self._gyro_bias = float(self._rng_imu.normal(0.0, GYRO_BIAS_SD))
+            self._imu_th = None                 # set on the first flush
         gid = lambda t, n: mujoco.mj_name2id(model, t, n)
         self.bid   = gid(mujoco.mjtObj.mjOBJ_BODY, "agentA")
         self.a_l   = gid(mujoco.mjtObj.mjOBJ_ACTUATOR, "a_drive_l")
@@ -61,19 +91,64 @@ class AgentARobot(hal.DriveHAL, hal.DeviceHAL):
         self._odo_mm = np.zeros(2)
         self._odo_t  = data.time
 
-    # ------------------------- ground truth (sim only; not in the HAL) -----
-    # The referee and check suites read these freely.  Mission code still
-    # does too, pending step 3 (the estimator); check_hal.py pins its reads.
+    # --------------------------------------------------------- where am I
     @property
-    def pose(self):
-        """(x_mm, y_mm, heading_deg) ground truth."""
+    def pose_truth(self):
+        """(x_mm, y_mm, heading_deg) ground truth.  SIM ONLY: the referee,
+        the checks, and the estimator's error report.  Mission code gets
+        .pose, which in nav="est" is the belief."""
         p = self.d.xpos[self.bid]
         q = self.d.qpos[3:7]
         th = np.degrees(np.arctan2(2*(q[0]*q[3]+q[1]*q[2]), 1-2*(q[2]**2+q[3]**2)))
         return p[0]*1000.0, p[1]*1000.0, th
 
+    def _est(self):
+        """The estimator, born on first use from the hand-placed start pose
+        (the team sets the robot against its jig; that is knowledge).  Read
+        from qpos, not xpos: qpos is valid straight from the XML, while
+        xpos is zeros until the first mj_forward -- initialising from it
+        once started the belief a metre away and the mission navigated to
+        nowhere all match."""
+        if self.est is None:
+            from .estimator import Estimator
+            jadr = self.m.jnt_qposadr[self.m.body_jntadr[self.bid]]
+            q = self.d.qpos[jadr+3:jadr+7]
+            th = np.degrees(np.arctan2(2*(q[0]*q[3]+q[1]*q[2]),
+                                       1-2*(q[2]**2+q[3]**2)))
+            self.est = Estimator(self.d.qpos[jadr]*1000.0,
+                                 self.d.qpos[jadr+1]*1000.0, th)
+        return self.est
+
+    @property
+    def pose(self):
+        """(x_mm, y_mm, heading_deg) -- what the MISSION navigates on.
+        nav="est": the estimator's belief, the only pose real hardware has.
+        nav="truth": the oracle (A/B control, pre-estimator baseline)."""
+        if self.nav == "est":
+            return self._est().pose
+        return self.pose_truth
+
+    @property
+    def pose_odo(self):
+        """The jump-free ODOMETRY frame -- what terminals (the dock's
+        relative machinery) track in, so a camera fix landing mid-approach
+        cannot yank a frozen target (see estimator).  nav="truth": the
+        oracle, which never jumps anyway."""
+        if self.nav == "est":
+            return self._est().odo_pose
+        return self.pose_truth
+
+    def speed(self):
+        """Believed speed, mm/s -- frozen to zero while stalled, which is
+        what makes stall_drive's is-it-moving test honest on both machines.
+        nav="truth" reads the oracle so baseline behaviour is unchanged."""
+        if self.nav == "est":
+            return self._est().speed()
+        return float(np.linalg.norm(self.d.qvel[0:2]))*1000.0
+
     def to_local(self, world_xyz):
-        x, y, th = self.pose
+        """TRUTH-frame world->robot -- a rig/check measurement helper."""
+        x, y, th = self.pose_truth
         t = np.radians(th)
         dx, dy = world_xyz[0]*1000.0 - x, world_xyz[1]*1000.0 - y
         return (dx*np.cos(-t) - dy*np.sin(-t), dx*np.sin(-t) + dy*np.cos(-t), world_xyz[2]*1000.0)
@@ -90,11 +165,46 @@ class AgentARobot(hal.DriveHAL, hal.DeviceHAL):
 
     # ------------------------------------------------------------ actuation
     def _odo_flush(self):
-        """Book the command in force since the last flush."""
+        """Book the command in force since the last flush -- and hand the
+        same interval to the estimator: wheels, gyro, stall flag.  One
+        source, two consumers; they can never disagree."""
         t = self.d.time
         if t > self._odo_t:
-            self._odo_mm += self._odo_v * (t - self._odo_t)
+            dt = t - self._odo_t
+            d_mm = self._odo_v * dt
+            self._odo_mm += d_mm
+            if self.nav == "est":
+                # THE GYRO IS RATE-INTEGRATING.  Sampling gyro_z() once per
+                # 20 ms flush and rectangle-integrating aliased every fast
+                # transient -- a P-controlled pivot's decaying rate lost
+                # 1-2 deg PER PIVOT and a contact-rich sweep jittered whole
+                # degrees more; measured, heading drifted 7-11 deg by the
+                # beam phase and took 250 mm of position with it.  A real
+                # IMU integrates internally at kHz, so the honest model of
+                # the DELTA it reports is the true yaw increment plus the
+                # bias and noise we own.
+                tt = self.pose_truth[2]
+                if self._imu_th is None:
+                    self._imu_th = tt
+                dth = (tt - self._imu_th + 180.0) % 360.0 - 180.0
+                self._imu_th = tt
+                dth += self._gyro_bias*dt + \
+                    float(self._rng_imu.normal(0.0, GYRO_NOISE_SD))*np.sqrt(dt)
+                # 0.30, the threshold stall_drive itself trusts; the
+                # estimator, not this flag, decides when steps are fiction.
+                self._est().predict(float(d_mm[0]), float(d_mm[1]),
+                                    dth, dt, stall_raw=self.stalled(0.30))
         self._odo_t = t
+
+    def gyro_z(self):
+        """Yaw rate, deg/s (hal.DriveHAL): the A_imu gyro, plus the
+        per-match bias and per-read noise the contract demands.  nav="truth"
+        reads it clean -- that mode is the oracle A/B control and draws
+        nothing from any rng."""
+        w = np.degrees(self.d.sensordata[self.m.sensor_adr[self.s_gyro] + 2])
+        if self.nav == "est":
+            w += self._gyro_bias + float(self._rng_imu.normal(0.0, GYRO_NOISE_SD))
+        return float(w)
 
     def drive(self, v_mm_s, omega_deg_s):
         """Differential drive.  Wheel speeds are quantised to whole steps/s."""
@@ -369,11 +479,15 @@ class AgentARobot(hal.DriveHAL, hal.DeviceHAL):
         margin.)
         """
         if self.vision_mode == "render":
-            return self._see_lab_px()
+            return self._feed_est(self._see_lab_px())
         self._cam()
         top = Field.LAB_PLATE_T if plate_top is None else plate_top
         out = []
-        x, y, th = self.pose
+        # TRUTH pose: this block GENERATES the measurement, and a camera
+        # measures relative geometry -- the physics does not care what the
+        # robot believes.  The belief enters where it does on hardware: in
+        # the estimator that consumes the measurement (_feed_est).
+        x, y, th = self.pose_truth
         t = np.radians(th)
         speed = float(np.linalg.norm(self.d.qvel[0:2]))*1000.0
         flex = np.radians(Vision.FLEX_DEG * min(speed/Vision.FLEX_REF, 2.0))
@@ -403,6 +517,15 @@ class AgentARobot(hal.DriveHAL, hal.DeviceHAL):
             out.append((dx*np.cos(-t) - dy*np.sin(-t),
                         dx*np.sin(-t) + dy*np.cos(-t),
                         w[2], "stereo" if both else "mono"))
+        return self._feed_est(out)
+
+    def _feed_est(self, out):
+        """Every slot measurement is also an absolute fix: the slots' world
+        positions are map knowledge.  Fed here, transparently, so route code
+        neither knows nor cares that looking IS localising."""
+        if self.nav == "est" and out:
+            hy = _LAB_HOLE_Y()
+            self._est().slot_fix(out, [(hx, hy) for hx in Field.LAB_HOLE_X])
         return out
 
     def _see_lab_px(self):

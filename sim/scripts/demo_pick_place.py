@@ -56,6 +56,11 @@ def main():
     # A_chase), Esc returns to the free camera, Tab toggles the side panel.
     ap.add_argument("--timeout", type=float, default=240.0)
     ap.add_argument("--step-loss", type=float, default=0.0)
+    ap.add_argument("--nav", choices=("truth", "est"), default="truth",
+                    help="'est': navigate on the estimator (odometry + gyro + "
+                         "camera fixes) -- the honest mode the planner rebuild "
+                         "targets; 'truth': the oracle the current route was "
+                         "tuned for (default, see F85).")
     ap.add_argument("--vision", choices=("model", "render"), default="model",
                     help="'render': the dock measures REAL frames from the tail "
                          "cameras through perception.LabPipeline (the pipeline "
@@ -79,7 +84,7 @@ def main():
     open(path, "w").write(xml)
     m = mujoco.MjModel.from_xml_string(xml)
     d = mujoco.MjData(m)
-    rb = AgentARobot(m, d, step_loss=a.step_loss, rng=rng, vision=a.vision)
+    rb = AgentARobot(m, d, step_loss=a.step_loss, rng=rng, vision=a.vision, nav=a.nav)
     rb.fingers(True); rb.gate(False); rb.intake(False)
     rb.cradle(1, True); rb.cradle(2, True)      # beams carried clear of the field
 
@@ -133,7 +138,7 @@ def main():
         viewer = _mjv.launch_passive(m, d, key_callback=on_key)
         rig["cam"] = view.CameraRig(
             viewer, m,
-            follow=lambda: (rb.pose[0]/1000.0, rb.pose[1]/1000.0, 0.06))
+            follow=lambda: (rb.pose_truth[0]/1000.0, rb.pose_truth[1]/1000.0, 0.06))
         print("  viewer: X toggles the chassis transparent")
         print(view.HELP)
 

@@ -10,9 +10,10 @@ actually honours it.  Three kinds of check:
     accuracy, and a pivot's scrub is VISIBLE as commanded-over-actual, which
     is the estimator's process noise, not a bug.  If either stops being
     true the drive model changed and step 3's estimator design is stale.
-  * THE RATCHET -- route.py's remaining ground-truth reads (rb.pose, rb.d)
-    are pinned at today's count.  They may shrink (step 3 shrinks them to
-    zero) but a NEW one fails here, so the debt cannot silently grow.
+  * THE RATCHET -- mission code's ground-truth reads are pinned at ZERO
+    (step 3): no rb.d, no rb.m, no pose_truth anywhere in route.py.  .pose
+    is the ESTIMATOR's belief there, and its count is pinned too so pose
+    consumption is at least deliberate.  A new oracle read fails here.
 
     python3 sim/scripts/check_hal.py [-v]
 """
@@ -79,7 +80,7 @@ def main():
 
     # -------------------------------------------------------------- odometry
     rb.odometry()                            # zero the accumulator
-    x0, y0, th0 = rb.pose
+    x0, y0, th0 = rb.pose_truth
     for _ in range(int(2.0 * hal.Clock.HZ)):
         rb.drive(200.0, 0.0)
         clk.tick()
@@ -87,7 +88,7 @@ def main():
     for _ in range(10):
         clk.tick()
     dl, dr = rb.odometry()
-    x1, y1, th1 = rb.pose
+    x1, y1, th1 = rb.pose_truth
     truth = float(np.hypot(x1-x0, y1-y0))
     odo = 0.5*(dl+dr)
     check("straight run: odometry within 3% of ground truth",
@@ -103,7 +104,7 @@ def main():
 
     # A pivot: commanded travel over-reads the true arc (wheel scrub).  The
     # RATIO is the number the estimator's process noise is built on.
-    th0 = rb.pose[2]
+    th0 = rb.pose_truth[2]
     for _ in range(int(1.2 * hal.Clock.HZ)):
         rb.drive(0.0, 120.0)
         clk.tick()
@@ -112,7 +113,7 @@ def main():
         clk.tick()
     dl, dr = rb.odometry()
     dth_odo = np.degrees((dr - dl) / Chassis.TRACK)
-    dth_true = (rb.pose[2] - th0 + 180.0) % 360.0 - 180.0
+    dth_true = (rb.pose_truth[2] - th0 + 180.0) % 360.0 - 180.0
     check("pivot: odometry heading never under-reads the true turn",
           dth_true > 30.0 and dth_odo >= 0.95*dth_true,
           "odo %.1f deg vs truth %.1f deg (efficiency %.2f)"
@@ -136,17 +137,19 @@ def main():
           n.recv() is None)
 
     # ------------------------------------------------------------- the ratchet
-    # Step 3 retires these; until then they may only shrink.  A new direct
-    # read of ground truth in mission code fails HERE, by name, on purpose.
+    # Step 3 landed: mission code reads NO ground truth.  .pose there is the
+    # estimator's belief (nav="est"), so its count is pinned rather than
+    # banned; the oracle (pose_truth, rb.d, rb.m) is banned outright.
     src = open(os.path.join(os.path.dirname(__file__), "..",
                             "rfgyc26", "route.py")).read()
-    PINNED = {r"rb\.d\b": 7,       # qvel in align_reverse + stall_drive, and
-                                   # the DOCK_DEBUG contact dump
-              r"rb\.m\b": 4,       # the same debug dump
-              r"\.pose\b": 57}     # navigation on ground truth, step 3's job
+    PINNED = {r"rb\.d\b": 0,          # the oracle's data -- referee/checks only
+              r"rb\.m\b": 0,
+              r"pose_truth": 0,       # the oracle pose, banned in mission code
+              r"\.pose\b": 50,        # the map-frame BELIEF (transit)
+              r"pose_odo": 6}         # the odometry frame (dock terminals)
     for pat, cap in PINNED.items():
         got = len(re.findall(pat, src))
-        check("route.py ground-truth reads pinned: %s <= %d" % (pat, cap),
+        check("route.py ground-truth ratchet: %s <= %d" % (pat, cap),
               got <= cap, "found %d" % got)
 
     # --------------------------------------------------------------- summary

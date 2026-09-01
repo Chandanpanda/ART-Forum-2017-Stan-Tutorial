@@ -853,8 +853,16 @@ def _in_zone(dest, x, y):
 
 
 SWEEP_REACH = 52.0          # a sample this far off the lane is still taken
-SWEEP_LANE_MIN = 120.0      # south of this the mouth rides the wall
-SWEEP_LANE_MAX = 235.0      # north of this a pass shoves pieces OUT (F59)
+# THE PROVEN BAND (F101).  130 and 215 were not arbitrary -- they were tuned
+# against 24 randomised samples, and the sweep's SHOVING behaviour is tuned
+# with them: below ~130 the mouth rides the south wall, above ~215 a pass
+# pushes pieces out of the quarantine entirely (F59).  Measured A/B, 12 seeds:
+# survey lanes placed anywhere in 120..235 dropped full-mark sweeps from 10
+# seeds to 4 -- while the time they saved bought back an equal amount in
+# beams and kits.  So the survey still chooses, but only INSIDE the band the
+# behaviour was tuned for.
+SWEEP_LANE_MIN = 130.0
+SWEEP_LANE_MAX = 215.0
 
 
 def sweep_lanes(discs, reach=SWEEP_REACH):
@@ -885,8 +893,11 @@ def sweep_lanes(discs, reach=SWEEP_REACH):
     # not to cover the survey.  The survey PLACES the lanes; it never removes
     # the recovery.
     if len(lanes) < 2:
-        lanes.append(float(np.clip(lanes[0] + 85.0, SWEEP_LANE_MIN,
-                                   SWEEP_LANE_MAX)))
+        # the recovery lane is the FAR proven one, not "primary + 85": with
+        # a primary already at the north end that rule produced two lanes
+        # 15 mm apart, which is a wasted pass, not a recovery
+        far = SWEEP_LANE_MAX if lanes[0] < 172.0 else SWEEP_LANE_MIN
+        lanes.append(far)
     return sorted(lanes)
 
 

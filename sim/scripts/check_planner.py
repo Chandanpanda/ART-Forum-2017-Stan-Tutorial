@@ -45,9 +45,12 @@ def brute_best(t0, at="SWEEP", done=()):
                 if any(planner.RANK[order[i]] > planner.RANK[order[i+1]]
                        for i in range(len(order)-1)):
                     continue           # the proven topology is one-way
-                t, prev, ok = t0, at, True
+                t, prev, ok, seal_start = t0, at, True, None
                 for name in order:
-                    t += planner.TRAVEL.get((prev, name), 8.0) + planner.DUR[name]
+                    t += planner.TRAVEL.get((prev, name), 8.0)
+                    if name == "BEAMS":
+                        seal_start = t
+                    t += planner.DUR[name]
                     if t > planner.MATCH_END + 1e-6:
                         ok = False
                         break
@@ -56,6 +59,11 @@ def brute_best(t0, at="SWEEP", done=()):
                     continue
                 v = planner._value(list(order) + list(done)) \
                     - planner._value(list(done))
+                # the seal is priced by WHEN IT STARTS (F117): begun after
+                # BEAM_FULL_BY it banks beam 2 alone and beam 1 is refused
+                if seal_start is not None and \
+                        seal_start > planner.BEAM_FULL_BY + 1e-9:
+                    v -= planner.BEAM1_VALUE
                 if v > best_v + 1e-9 or (abs(v - best_v) < 1e-9 and t < best_t):
                     best_v, best_t = v, t
     return best_v
@@ -121,9 +129,20 @@ def main():
     p_full.observe("L", 8.7)
     p_full.complete("L2", 24.5 + 20.5)
     back = dropped & {n for n, _, _ in p_full.tasks}
-    check("...and fast docks buy a dropped station back",
-          not dropped or bool(back),
-          "dropped %s, returned %s" % (sorted(dropped), sorted(back)))
+    # ...UNLESS BUYING IT BACK WOULD COST THE SEAL ITS SECOND BEAM (F117).
+    # A returned station pushes everything after it later, and once the
+    # seal starts past BEAM_FULL_BY it banks 25 instead of 70.  An 18-point
+    # slot does not pay for a 45-point beam, so a planner that still bought
+    # it back would be wrong; what has to hold is that the time IS found
+    # and spent on the most valuable thing available.
+    seal = {n: t for n, t, _ in p_full.tasks}.get("BEAMS")
+    check("...and fast docks buy a dropped station back, unless it would "
+          "cost beam 1",
+          bool(back) or (seal is not None and
+                         seal + planner.DUR["L3"] + 1.0 > planner.BEAM_FULL_BY),
+          "dropped %s, returned %s, seal at T+%s"
+          % (sorted(dropped), sorted(back),
+             "%.0f" % seal if seal is not None else "-"))
     p_28 = planner.plan(28.5)
     names = {n for n, _, _ in p_28.tasks}
     check("under pressure the seal and the hospital always survive "
@@ -229,6 +248,21 @@ def main():
     check("BEAM_SEAL_VALUE equals the referee's score for a perfect seal",
           abs(planner.BEAM_SEAL_VALUE - seal) < 1e-6,
           "planner %.0f vs referee %.0f" % (planner.BEAM_SEAL_VALUE, seal))
+
+    # the seal is priced by when it starts (F117)
+    check("BEAM_FULL_BY leaves beam 2 and then beam 1's tail",
+          abs(planner.BEAM_FULL_BY
+              - (120.0 - planner.BEAM1_TAIL - planner.BEAM2_TIME)) < 1e-6,
+          "%.1f" % planner.BEAM_FULL_BY)
+    early = planner.plan(60.0, at="L2", todo=["KH", "KL", "BEAMS"],
+                         done=["L1", "L2"])
+    late = planner.plan(78.0, at="KH", todo=["KL", "BEAMS"], done=["L1", "KH"])
+    starts = {n: t for n, t, _ in late.tasks}
+    check("a seal that cannot finish both beams is priced at 25, not 70",
+          ("BEAMS" not in starts) or starts["BEAMS"] <= planner.BEAM_FULL_BY
+          or late.value < 60.0, repr(late))
+    check("...and one that can is still worth taking early", "BEAMS" in
+          [n for n, _, _ in early.tasks], repr(early))
 
     # the decision this all exists for
     planner.FLEET_PCC_R = 2

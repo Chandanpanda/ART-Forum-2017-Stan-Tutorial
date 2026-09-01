@@ -46,14 +46,10 @@ DUR = {
     # observe() re-prices within the match as the modes reveal themselves.
     "L1": 11.0, "L2": 11.0, "L3": 11.0,
     "KH": 4.0, "KL": 4.0,              # turn north, drop, wait, back off
-    # The MEAN, deliberately, though the seal's tail runs to 39 s: the
-    # seal is always TERMINAL, so an overrun costs nothing scheduled after
-    # it -- the only thing at risk is the beam already placed, and the
-    # BEAM1_TAIL banking gate in seal_quarantine owns exactly that.  A p90
-    # budget was tried instead and it refused seals that would have
-    # landed: one match stopped with 40 s on the clock because 42.5 did
-    # not fit, where the seal it declined runs 32-35.  Padding protects
-    # downstream value; a terminal task has none.
+    # The MEAN of the whole seal.  A terminal task's overrun costs nothing
+    # scheduled after it -- but see BEAM_FULL_BY: the seal's own second
+    # beam IS downstream value, and it is priced by start time rather than
+    # protected by padding this number (F117).
     "BEAMS": 31.0,
 }
 # Beam 1's own tail (staging dance + run-in + release), measured 17.2-19.8:
@@ -61,6 +57,9 @@ DUR = {
 # a seal that dies mid-beam-1 drags beam 2 with it, and 25 banked points
 # beat 0 heroic ones.
 BEAM1_TAIL = 18.5
+# The latest the seal may SET OFF and still have beam 1 attempted at all:
+# beam 2 takes BEAM2_TIME to land, and beam 1 needs BEAM1_TAIL after that.
+BEAM_FULL_BY = 120.0 - 18.5 - 18.0
 # The sweep is the fixed opening act (randomised cargo -> sensor-terminated
 # dwells), measured 24-28 s from the gun to the laboratory pivot line; the
 # mission plans from wherever its own clock actually stands when it ends.
@@ -150,6 +149,20 @@ from .params import Field, M2
 # next replan re-prices KL accordingly.
 FLEET_PCC_R = 2
 
+# THE SEAL IS WORTH 70 IF IT STARTS IN TIME AND 25 IF IT DOES NOT (F117).
+# seal_quarantine places beam 2 first and then refuses to begin beam 1 with
+# less than BEAM1_TAIL on the clock -- correctly, since a seal that dies
+# mid-beam-1 drags beam 2 off its line with it.  So a schedule that sets
+# the seal off too late does not lose a little of its 70 points, it loses
+# 45 of them, and a planner that prices the seal at a flat 70 will happily
+# buy an 18-point laboratory slot with the second beam.  Measured, three
+# seeds of twelve banked 25/70 that way.
+#
+# The fix is not to pad DUR["BEAMS"] -- that applies the worst case to
+# every seed and costs a slot on all of them.  It is to price the seal by
+# WHEN IT STARTS, which the DP already knows, and let it choose.
+BEAM2_TIME    = 18.0       # transit plus beam 2 alone, measured
+BEAM1_VALUE   = 45.0       # beam 1 (+25) and the closure it makes (+20)
 BEAM_SEAL_VALUE = 70.0     # +25 each and +20 for closure; check_planner pins
                            # this to referee.score_beams on a perfect seal
 
@@ -308,6 +321,10 @@ def plan(t_now, at="SWEEP", todo=NODES, done=(), dur=None):
     top, top_key = -1e9, None
     for key, t in best.items():
         v = _value(names_of(key[0]) + list(done))
+        # price the seal by its start time, not by whether it is in the set
+        if todo[key[1]] == "BEAMS":
+            if t - dur["BEAMS"] > BEAM_FULL_BY + 1e-9:
+                v -= BEAM1_VALUE
         if v > top + 1e-9 or (abs(v - top) < 1e-9 and
                               (top_key is None or t < best[top_key])):
             top, top_key = v, key

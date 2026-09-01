@@ -26,7 +26,7 @@ Three layers, split exactly where the hardware splits:
 """
 import numpy as np
 from . import hal, nav, trajectory
-from .params import Robot2 as R2
+from .params import Robot2 as R2, Field
 
 R2_INSCRIBED = 75.0        # no orientation fits inside this
 R2_CIRCUM = 98.0          # every orientation fits outside it
@@ -1169,12 +1169,20 @@ def _deliver(ctl, i, live, target, app, log, t, zone=None, what="patient"):
     assumes; the camera checks after every stage, because a capture that
     silently failed used to be carried all the way to a zone and released
     into thin air."""
+    j0 = ctl.jams
+    p0 = (ctl.pose[0], ctl.pose[1])
     ok = yield from ctl.goto(app[0], app[1], v_max=APPROACH_V, tol=70.0,
                              tries=3)
     gap = float(np.hypot(ctl.pose[0] - app[0], ctl.pose[1] - app[1]))
     if gap > 190.0:
-        log(t() + "  %s %d: never reached the stand-off (%.0f mm)"
-            % (what, i, gap))
+        # say WHY, not just that: blocked means the planner refused, jams
+        # mean the tracker was stopped by something, and neither means the
+        # same thing to whoever reads this next
+        moved = float(np.hypot(ctl.pose[0] - p0[0], ctl.pose[1] - p0[1]))
+        log(t() + "  %s %d: never reached the stand-off (%.0f mm short, "
+            "moved %.0f, %d jams%s)"
+            % (what, i, gap, moved, ctl.jams - j0,
+               ", no path" if ctl.blocked and ctl.jams == j0 else ""))
         return False
     px, py = live(i)
     yield from ctl.face(float(np.degrees(np.arctan2(py - ctl.pose[1],
@@ -1294,7 +1302,9 @@ def _work_patients(ctl, pucks, live, log, t, now, deadline=112.0,
                 break
 
         if best is None:
-            log(t() + "nothing deliverable from here")
+            log(t() + "nothing deliverable from here (%d placed, %d spent, "
+                "%d untouched)" % (len(placed), len(spent),
+                                   len(pucks) - len(placed) - len(spent)))
             return
         _, i, gain, secs, app, zone, cm, tgt, what = best
         if what == "patient":
@@ -1349,18 +1359,35 @@ def mission_robot2(ctl, m, d=None, log=print, clock=None, rb=None):
     # (747, 717) to (1046, 1001).  Nothing noticed, because nothing looked.
     # The camera can see two white boxes in a zone; so look, and shake
     # again from a re-squared pose if they are not there.
-    for attempt in range(3):
+    # STAND IN THE MIDDLE AND CHECK BEFORE THROWING.  The shake ejects off
+    # the tail, about 95 mm behind the axle, and PCC_R is 200 mm square --
+    # so from the zone's CENTRE the kits land inside it whatever the
+    # heading, and the only thing that matters is actually being there.
+    # Arriving on a 45 mm tolerance and shaking anyway put them 5-40 mm
+    # outside the line often enough to cost the 6/2/2 bonus on seven seeds
+    # of twelve.  Each stage is checked against the estimate before the
+    # next one is allowed to matter.
+    zx, zy = (Field.PCC_R[0] + Field.PCC_R[2]) / 2.0, \
+             (Field.PCC_R[1] + Field.PCC_R[3]) / 2.0
+    for attempt in range(4):
         ctl.cmap = _board_map(pucks, sched=sched(), t_now=now())
-        yield from ctl.goto(1043.0, 1075.0, v_max=360.0, tol=45.0)
-        yield from ctl.face(270.0, tol=8.0)
-        log(t() + "SHAKE: kits into PCC_R (attempt %d)" % (attempt + 1))
+        for _ in range(2):
+            yield from ctl.goto(zx, zy, v_max=360.0, tol=30.0, tries=3)
+            if np.hypot(ctl.pose[0] - zx, ctl.pose[1] - zy) < 55.0:
+                break
+        for _ in range(2):
+            yield from ctl.face(270.0, tol=6.0)
+            if abs(_wrap(ctl.th - 270.0)) < 14.0:
+                break
+        log(t() + "SHAKE: kits into PCC_R (attempt %d, at %.0f,%.0f hdg %.0f)"
+            % (attempt + 1, ctl.pose[0], ctl.pose[1], ctl.pose[2]))
         yield from ctl.shake_out(4)
         n_in = kits_home(m, d)
         if n_in >= 2:
             log(t() + "  both kits are in PCC_R")
             break
         log(t() + "  only %d kit(s) landed -- going round again" % n_in)
-        yield from ctl.back_off(130.0)
+        yield from ctl.back_off(150.0)
     yield from ctl.goto(1040.0, 900.0, v_max=340.0, tol=50.0)
 
     # ---- the patients: go there, GRAB it, carry it, let go --------------

@@ -383,9 +383,12 @@ def plan(cmap, start, goal, inscribed, circumscribed, t0=0.0, speed=280.0,
 
 PUSH_HEADINGS = 16
 PUSH_DISTS = (60.0, 120.0, 200.0, 300.0, 420.0, 560.0, 700.0)
-PLOW_REACH = 118.0            # centre to just behind the pocket mouth
-BODY_PTS = [(78.0, 55.0), (78.0, -55.0), (-78.0, 55.0), (-78.0, -55.0),
-            (78.0, 0.0), (0.0, 0.0)]
+PLOW_REACH = 92.0            # centre to just behind the pocket mouth
+# the CAPTURE POCKET IS PART OF THE BODY (F107): its flare tips reach 93 mm
+# ahead of the axle, and a planner that stops the footprint at 78 routes a
+# robot 15 mm shorter than the one that has to fit.
+BODY_PTS = [(-78.0, 55.0), (-78.0, -55.0), (78.0, 55.0), (78.0, -55.0),
+            (70, 38), (70, -38), (70, 0.0), (0.0, 0.0)]
 
 
 def body_masks(cmap, n_head=PUSH_HEADINGS):
@@ -542,7 +545,7 @@ def _unit(dx, dy):
     return dx / n, dy / n, n
 
 
-def capture_approach(cmap, puck, prefer=None, standoff=185.0):
+def capture_approach(cmap, puck, prefer=None, standoffs=(185.0, 150.0, 128.0)):
     """Where to stand, and facing where, to CAPTURE this patient.
 
     A pushing robot must approach along the push line -- that coupling is
@@ -564,22 +567,29 @@ def capture_approach(cmap, puck, prefer=None, standoff=185.0):
     for k, ok_here in enumerate(masks):
         th = 2.0 * np.pi * k / len(masks)
         ux, uy = np.cos(th), np.sin(th)
-        sx, sy = puck[0] - ux * standoff, puck[1] - uy * standoff
-        if not _infield(sx, sy, margin=85.0):
-            continue
-        i = int(np.clip(sx // cmap.res, 0, nx - 1))
-        j = int(np.clip(sy // cmap.res, 0, ny - 1))
-        if not ok_here[i, j]:
-            continue
-        # the run-in must be clear right up to the pocket's mouth
-        run = np.linspace(0.0, standoff - PLOW_REACH, 6)
-        ii = np.clip(((sx + ux * run) // cmap.res).astype(int), 0, nx - 1)
-        jj = np.clip(((sy + uy * run) // cmap.res).astype(int), 0, ny - 1)
-        if not ok_here[ii, jj].all():
-            continue
-        c = 0.0
-        if prefer is not None:
-            c = abs((np.degrees(th) - prefer + 180.0) % 360.0 - 180.0)
-        if c < best_c:
-            best_c, best = c, (sx, sy, float(np.degrees(th)))
+        # A LADDER OF STAND-OFFS, not one (F107).  A single 185 mm stand-off
+        # rejected the whole x-80 column -- every heading that fitted put the
+        # stand-off inside the wall margin, and every heading that cleared
+        # the margin did not fit.  At 150 mm heading 202 is clear.  The
+        # comfortable distance first, then whatever the corner allows.
+        for standoff in standoffs:
+            sx, sy = puck[0] - ux * standoff, puck[1] - uy * standoff
+            if not _infield(sx, sy, margin=85.0):
+                continue
+            i = int(np.clip(sx // cmap.res, 0, nx - 1))
+            j = int(np.clip(sy // cmap.res, 0, ny - 1))
+            if not ok_here[i, j]:
+                continue
+            # the run-in must be clear right up to the pocket's mouth
+            run = np.linspace(0.0, max(0.0, standoff - PLOW_REACH), 6)
+            ii = np.clip(((sx + ux * run) // cmap.res).astype(int), 0, nx - 1)
+            jj = np.clip(((sy + uy * run) // cmap.res).astype(int), 0, ny - 1)
+            if not ok_here[ii, jj].all():
+                continue
+            c = (0.0 if prefer is None else
+                 abs((np.degrees(th) - prefer + 180.0) % 360.0 - 180.0))
+            c += 0.25 * (185.0 - standoff)      # prefer room to line up
+            if c < best_c:
+                best_c, best = c, (sx, sy, float(np.degrees(th)))
+            break
     return best

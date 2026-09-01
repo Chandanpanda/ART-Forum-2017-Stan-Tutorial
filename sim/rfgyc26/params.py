@@ -553,16 +553,30 @@ class Robot2:
     #      walls       ||    ||          down to the stop, and is then
     #      stop        ||====||          captive through any manoeuvre
     #
-    STOP_X          = 42.0                   # back stop, ahead of centre
-    POCKET_D        = 52.0                   # parallel walls run STOP_X..+D
-    POCKET_W        = 46.0                   # gap: a O20 puck with slop
-    FLARE_L         = 42.0                   # funnel mouth
+    # COMPACT ON PURPOSE (F107).  The first pocket put its flare tips at
+    # x 136 -- it made the robot 214 mm long nose to tail, against the 156
+    # every planner still believed -- so paths were routed for a chassis
+    # 60 mm shorter than the real one and it jammed on the way to almost
+    # everything.  Pulled in: tips at 93, circumscribed radius 108.
+    # THE POCKET'S REACH IS A NAVIGATION BUDGET (F107).  A 2D planner
+    # hard-blocks at ONE radius, so the robot's forward reach sets how
+    # close any plan may take it to an obstacle -- and the field's two
+    # 191 mm pinches, the whole reason this chassis is narrow, need
+    # 2*reach < 191.  The first pocket reached 93 mm and planning at 55
+    # drove its flare into the laboratory plate (contact dump: 3.5 N on
+    # labcone1_20); planning at 95 would have shut the pinches instead.
+    # 70 mm of reach keeps both: the pinch has 51 mm of slack and the
+    # pocket still swallows a 20 mm puck to a 36 mm depth.
+    STOP_X          = 14.0                   # back stop, ahead of centre
+    POCKET_D        = 36.0                   # parallel walls run STOP_X..+D
+    POCKET_W        = 44.0                   # gap: a O20 puck with slop
+    FLARE_L         = 26.0                   # funnel mouth
     FLARE_ANG       = 38.0                   # degrees out from the walls
     PLOW_W          = 120.0                  # overall, flare tip to tip
     PLOW_H          = 26.0
     PLOW_CLEAR      = 5.0
     # where a captured puck's centre sits, ahead of the axle
-    CAPTURE_X       = STOP_X + 14.0
+    CAPTURE_X       = STOP_X + 12.0
 
     # THE TRAY.  The two PCC_R kits ride in a shallow recess, floor tilted
     # 3 degrees down toward the tail, a 2.5 mm lip on the open tail edge:

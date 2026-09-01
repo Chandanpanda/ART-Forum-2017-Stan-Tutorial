@@ -20,6 +20,8 @@ pip install mujoco numpy          # numpy is required; mujoco you already have
 cd path\to\ART-Forum-2017-Stan-Tutorial\sim
 
 python scripts\check_geometry.py     # 1. no physics: derived geometry + assertions
+python scripts\check_model.py        # 1b. the BUILT model, with physics (20 checks)
+python scripts\check_hal.py          # 1c. the sim/hardware interface contract (15)
 python scripts\demo_belt.py          # 2. the conveyor, isolated (fast, ~10 s)
 python scripts\demo_capture.py       # 3. the "pick" half: 3 discs -> magazine
 python scripts\demo_post.py          # 4. the "place" half: gate -> 3 lab holes
@@ -574,7 +576,7 @@ converge, not the robot failing to know. Wiring the datum in would measure an
 error that is zero by construction.
 
 Making it meaningful needs the robot navigating on its own dead-reckoned estimate
-— `rb.odo_steps` and the `--step-loss` injection are already there for it — so
+— `rb.odometry()` and the `--step-loss` injection are already there for it — so
 that drift is real and the datum has something to recover. That is the honest
 next step, and it is a bigger job than the datum itself: `route.py` reads true
 pose throughout.

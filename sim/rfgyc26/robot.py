@@ -1,10 +1,18 @@
-"""Agent A hardware abstraction: drive, servos, sensors.
+"""Agent A's MuJoCo backend of the HAL (hal.py owns the contract).
 
 The drive is a stepper model -- commanded wheel speed is quantised to whole
 full-steps per second, and step loss can be injected, because the spec calls a
-skipped step 'silent' and that is the design's main odometry risk.
+skipped step 'silent' and that is the design's main odometry risk.  odometry()
+books exactly what a TMC2209 step counter would: the commanded steps, losses
+included, integrated over the time each command was actually in force.
+
+Everything below the "ground truth" marker exists only in simulation: the
+referee and the check suites read it freely, mission code is losing it step
+by step (design doc paragraph 13 -- pose and qvel go in step 3, see_lab is the
+synthetic stand-in for the rendered camera pipeline that lands in step 2).
 """
 import numpy as np, mujoco
+from . import hal
 from .params import Chassis, AgentA, Piece, Field, Vision, M2, mm
 
 WHEEL_R = Chassis.WHEEL_D / 2000.0          # m
@@ -12,7 +20,7 @@ HALF_TRACK = Chassis.TRACK / 2000.0         # m
 STEP_RAD = 2 * np.pi / Chassis.STEPS_PER_REV
 
 
-class AgentARobot:
+class AgentARobot(hal.DriveHAL, hal.DeviceHAL):
     def __init__(self, model, data, step_loss=0.0, rng=None):
         self.m, self.d = model, data
         self.rng = rng or np.random.default_rng(0)
@@ -37,9 +45,18 @@ class AgentARobot:
         self.s_mag = gid(mujoco.mjtObj.mjOBJ_SENSOR, "a_mag")
         self.a_trim= gid(mujoco.mjtObj.mjOBJ_ACTUATOR, "a_trim")
         self.j_trim= gid(mujoco.mjtObj.mjOBJ_JOINT, "A_trim_j")
-        self.odo_steps = np.zeros(2)          # commanded steps, the robot's belief
+        # Commanded-step odometry: wheel mm/s currently in force, the mm each
+        # wheel has accumulated, and when the accumulator was last brought up
+        # to date.  (Replaces odo_steps, which integrated each command over
+        # ONE physics substep instead of the whole control period it was in
+        # force -- a 20x under-count.  Nothing consumed it, so it never bit.)
+        self._odo_v  = np.zeros(2)
+        self._odo_mm = np.zeros(2)
+        self._odo_t  = data.time
 
-    # ---------------------------------------------------------------- state
+    # ------------------------- ground truth (sim only; not in the HAL) -----
+    # The referee and check suites read these freely.  Mission code still
+    # does too, pending step 3 (the estimator); check_hal.py pins its reads.
     @property
     def pose(self):
         """(x_mm, y_mm, heading_deg) ground truth."""
@@ -65,8 +82,16 @@ class AgentARobot:
         return 1e9 if v < 0 else v*1000.0
 
     # ------------------------------------------------------------ actuation
+    def _odo_flush(self):
+        """Book the command in force since the last flush."""
+        t = self.d.time
+        if t > self._odo_t:
+            self._odo_mm += self._odo_v * (t - self._odo_t)
+        self._odo_t = t
+
     def drive(self, v_mm_s, omega_deg_s):
         """Differential drive.  Wheel speeds are quantised to whole steps/s."""
+        self._odo_flush()
         v, w = v_mm_s/1000.0, np.radians(omega_deg_s)
         wl = (v - w*HALF_TRACK) / WHEEL_R
         wr = (v + w*HALF_TRACK) / WHEEL_R
@@ -77,10 +102,21 @@ class AgentARobot:
                 steps -= np.sign(steps)                        # a silent skipped step
             out.append(steps * STEP_RAD)
         self.d.ctrl[self.a_l], self.d.ctrl[self.a_r] = out
-        self.odo_steps += np.array(out) / STEP_RAD * self.m.opt.timestep
+        # What odometry believes: the QUANTISED command, losses included --
+        # which is precisely what the TMC2209's step counter would say.
+        self._odo_v = np.array(out) * WHEEL_R * 1000.0
 
     def stop(self):
+        self._odo_flush()
         self.d.ctrl[self.a_l] = self.d.ctrl[self.a_r] = 0.0
+        self._odo_v[:] = 0.0
+
+    def odometry(self):
+        """(dL_mm, dR_mm) commanded wheel travel since the previous call."""
+        self._odo_flush()
+        dl, dr = self._odo_mm
+        self._odo_mm[:] = 0.0
+        return float(dl), float(dr)
 
     def fingers(self, opened=True):
         # RADIANS -- actuator ctrlrange is not converted by compiler angle="degree"
@@ -366,3 +402,23 @@ def _LAB_HOLE_Y():
     on mjcf.py at import time (mjcf imports params, params imports nothing)."""
     from .mjcf import LAB_HOLE_Y
     return LAB_HOLE_Y
+
+
+class SimClock(hal.Clock):
+    """The simulator's control tick: one tick = CTRL_DECIM physics substeps.
+
+    Owns the decimation the run scripts hard-code today (1 kHz physics to
+    50 Hz control), derived from the model's own timestep so a model change
+    cannot silently skew the control rate.  The Pi's clock sleeps to the
+    next 20 ms wall boundary instead; mission code cannot tell them apart.
+    """
+    def __init__(self, model, data, decim=None):
+        self.m, self.d = model, data
+        self.decim = decim or int(round(self.PERIOD / model.opt.timestep))
+
+    def now(self):
+        return self.d.time
+
+    def tick(self):
+        for _ in range(self.decim):
+            mujoco.mj_step(self.m, self.d)

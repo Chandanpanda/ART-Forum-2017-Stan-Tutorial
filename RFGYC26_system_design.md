@@ -157,7 +157,7 @@ implementation (a mechanical extraction — the method bodies already exist).
 
 ```python
 class DriveHAL:
-    def command(self, v_mm_s, omega_deg_s): ...   # body-frame velocity request
+    def drive(self, v_mm_s, omega_deg_s): ...      # body-frame velocity request
     def stop(self): ...
     def odometry(self):                            # (dL_mm, dR_mm) wheel travel
         ...                                        # since the previous call
@@ -413,10 +413,15 @@ grep-able.
 
 ## 10. Robot 2 — interface reserved now, built in step #3
 
-Decided architecture (not revisited here): two DC motors, small wheels, Pico
-with Bluetooth, **no camera, no autonomy** — robot 1 is its perception and its
-planner.  This document only fixes the contract so the planner and HAL are
-ready:
+Decided architecture (not revisited here): a small differential-drive robot —
+two DC motors, two drivers, small wheels, a small battery, a plow, a Pico W —
+**no camera, no autonomy**.  It is in effect a *detached actuator of robot 1*:
+robot 1's Pi 5 and stereo rig are its perception and its planner, the
+Bluetooth link is its wiring loom, and the hardware being imperfect is
+tolerable because every job it has is push/pull with a plow (position
+tolerance comes from the plow's width) plus the kit-shake manoeuvre, which is
+perfected in simulation before the firmware ships.  This document only fixes
+the contract so the planner and HAL are ready:
 
 * **LinkHAL protocol v0** (fits in one line each, ASCII, checksummed):
   `V <left> <right> <ms>` (velocity for a duration), `K` (keepalive/stop),

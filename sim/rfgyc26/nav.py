@@ -139,6 +139,46 @@ class CostMap:
                                             circumscribed, walls=False)
         return grid
 
+    def clearance(self):
+        """Distance from every cell to the nearest obstacle or wall, mm.
+
+        The same field the inflation is built from, exposed because SPEED
+        HAS TO FOLLOW CLEARANCE (F121).  This board gives robot 2 two ways
+        north out of its deployment box and both are pinches: between the
+        laboratory plate and the east patient column there are 176 mm of
+        gap for a chassis planned at a 150 mm diameter, and the west side
+        is the same.  At any planning radius above 75 there is no path at
+        all.  A tracker that carries 40 mm of cross-track error through
+        26 mm of slack does not pass; it wedges, and stays wedged -- one
+        match had robot 2 pinned against the plate from T+4 to the buzzer.
+        """
+        if "_dist" not in self._cache:
+            gx, gy = self._grid_xy()
+            dist = np.minimum(np.minimum(gx, FIELD_W - gx),
+                              np.minimum(gy, FIELD_H - gy))
+            if self.static.any():
+                oi, oj = np.nonzero(self.static)
+                ox = (oi + 0.5) * self.res
+                oy = (oj + 0.5) * self.res
+                for k in range(0, len(oi), 512):
+                    dx = gx[..., None] - ox[None, None, k:k + 512]
+                    dy = gy[..., None] - oy[None, None, k:k + 512]
+                    dist = np.minimum(dist,
+                                      np.sqrt(dx*dx + dy*dy).min(axis=2))
+            self._cache["_dist"] = dist
+        return self._cache["_dist"]
+
+    def min_clearance(self, pts):
+        """The tightest point along a path, in mm."""
+        d = self.clearance()
+        worst = 1e9
+        for a, b in zip(pts[:-1], pts[1:]):
+            n = max(2, int(np.hypot(b[0]-a[0], b[1]-a[1]) / (self.res * 0.5)))
+            for t in np.linspace(0.0, 1.0, n):
+                i, j = self.cell(a[0] + t*(b[0]-a[0]), a[1] + t*(b[1]-a[1]))
+                worst = min(worst, float(d[i, j]))
+        return worst
+
     def windows_at(self, t):
         live = np.zeros((self.nx, self.ny), dtype=bool)
         for mask, t0, t1 in self._windows:

@@ -476,9 +476,22 @@ class R2Controller:
         self._birth()
         if grid is None and self.cmap is not None:
             grid = self.cmap.inflated(6.0, 8.0)
+        pts = [(float(x), float(y)) for x, y in path]
+        # SPEED FOLLOWS CLEARANCE (F121).  The two ways north out of the
+        # deployment box are pinches with about 26 mm of slack for this
+        # chassis, and a tracker running at 360 mm/s carries more
+        # cross-track error than that: measured, robot 2 clipped the
+        # laboratory plate's south-east corner four seconds into the match
+        # and stayed wedged against it until the buzzer, on seed after
+        # seed.  It fits at a walk and it does not fit at a run, so the
+        # tightest point on the path sets the speed for the leg.
+        if self.cmap is not None:
+            gap = self.cmap.min_clearance(pts)
+            if gap < 130.0:
+                v_max = min(v_max, float(np.interp(gap, [85.0, 130.0],
+                                                   [110.0, v_max])))
         if cap_s is None:
             cap_s = 5.0 + nav.path_length(path) / 110.0
-        pts = [(float(x), float(y)) for x, y in path]
         gx, gy = pts[-1]
         gen = trajectory.track_waypoints(
             self, pts, v_max=v_max, v_end=110.0 if not carry else 90.0,
@@ -749,14 +762,28 @@ R1_LANES = {
     "KH":    [[(780.0, 220.0), (945.0, 260.0), (935.0, 650.0), (770.0, 790.0)],
               [(730.0, 850.0), (700.0, 960.0)]],
     "KL":    [[(660.0, 930.0), (250.0, 930.0)]],
+    # THE SEAL IS A QUADRANT, NOT A LANE (F122).  Three centrelines
+    # described the transit into the south-west and none of the work: the
+    # staging dance, the two run-ins, the withdrawals and the shuffles all
+    # happen inside roughly x < 420, y < 900, and robot 1 spends thirty-five
+    # seconds there doing them.  Reserving only the way in let robot 2 walk
+    # into the middle of it -- beams 55.8 -> 45.8/70 the moment robot 2
+    # became mobile enough to get there.  Robot 2 has no business in that
+    # quadrant at all: its own destination zone is RECOVERY at x 730-870.
     "BEAMS": [[(240.0, 860.0), (240.0, 700.0)], [(190.0, 620.0), (180.0, 200.0)],
-              [(300.0, 375.0), (140.0, 370.0)]],
+              [(300.0, 375.0), (140.0, 370.0)],
+              [(60.0, 120.0), (380.0, 120.0)], [(60.0, 300.0), (380.0, 300.0)],
+              [(60.0, 480.0), (380.0, 480.0)], [(60.0, 660.0), (380.0, 660.0)],
+              [(60.0, 840.0), (380.0, 840.0)]],
 }
-R1_HALF = 150.0        # robot 1's body plus a working gap, not its worst-case
-                       # 185 mm sweep: reserving the sweep for the whole of
-                       # every phase left robot 2 with no field at all and it
-                       # simply stopped working (measured: eight of twelve
-                       # patients declared unreachable, parked at T+26).
+# ROBOT 1'S OWN SWEPT RADIUS, and no less (F122).  150 was "its body plus a
+# working gap", chosen when reserving the full 185 left robot 2 with no
+# field -- but that was with windows spanning the whole match, before the
+# schedule made them the intervals robot 1 is actually in a lane.  The
+# corridor mask is inflated by ROBOT 2's radius on top of this (see
+# CostMap.inflated), so this number is robot 1's alone, and robot 1 sweeps
+# 185 mm.  Reserving 150 was reserving less than the robot.
+R1_HALF = 185.0
 
 
 def robot1_reservations(cmap, schedule=None, t_now=0.0):

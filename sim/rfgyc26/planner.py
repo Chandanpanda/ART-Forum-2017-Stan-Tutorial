@@ -84,13 +84,17 @@ for i, a in enumerate(("L1", "L2", "L3")):
 for a, i in (("L1", 0), ("L2", 1), ("L3", 2)):
     TRAVEL[("SWEEP", a)] = 2.2 + 0.9*i          # back out of the quarantine
     # Laboratory -> kit zones goes the LONG way by construction: dogleg
-    # east of the plate (4.5), climb the east side to y 730 (8), traverse
-    # west (2-6.5), turn up (1.5).  The first calibration halved this by
-    # mis-attributing the 3-zone loop's blocks -- measured directly on the
-    # new route, the hospital leg is 15-16 s (seed 12: 61.2 -> 77), and the
-    # DP promptly stopped promising kit loops it could not afford.
-    TRAVEL[(a, "KH")] = 15.5 - 0.3*i
-    TRAVEL[(a, "KL")] = 19.5 - 0.3*i
+    # east of the plate, climb, swing west to the hospital lip -- ONE
+    # pursuit since F88 (the 15.5 s the old chain measured was largely a
+    # tail-corner grind on the plate edge: the dock-line departure pivot
+    # was illegal and nothing logged it).  Re-measured on the fixed
+    # dispatch: L3 block 15.0 (mission), L1/L2 12.1/11.2 s of pursuit plus
+    # the 1.6 s back-away (rigs) -- travel is that minus the 4.0 service.
+    TRAVEL[(a, "KH")] = 12.4 - 0.7*i
+    # The direct-to-PCC_L plan (hospital already served or dropped) rides
+    # the same climb plus the ~470 mm west swing: the KH measurement plus
+    # 2.6 s.  Rarely planned; feasibility errs on the long side.
+    TRAVEL[(a, "KL")] = 15.0 - 0.7*i
     TRAVEL[(a, "BEAMS")] = 6.5 + 0.9*i          # down to the west lane
     # Kit-zone -> laboratory is FORBIDDEN, not merely slow: the dock's
     # approach (pursue to the pivot line) would cross the laboratory plate
@@ -98,8 +102,10 @@ for a, i in (("L1", 0), ("L2", 1), ("L3", 2)):
     # 5; until then the tour must not contain them.
     TRAVEL[("KH", a)] = 1e9
     TRAVEL[("KL", a)] = 1e9
-TRAVEL[("SWEEP", "KH")] = 17.0                  # kits before the lab: the
-TRAVEL[("SWEEP", "KL")] = 19.0                  # dogleg from the west corner
+TRAVEL[("SWEEP", "KH")] = 14.0                  # kits before the lab: the
+TRAVEL[("SWEEP", "KL")] = 16.0                  # dogleg from the west corner
+                                                # (old chain's +1.5 over a
+                                                # lab start, on F88's base)
 TRAVEL[("SWEEP", "BEAMS")] = 5.0
 TRAVEL[("KH", "KL")] = 5.5                      # the y-730 traverse (F77)
 TRAVEL[("KL", "KH")] = 5.5

@@ -14,6 +14,7 @@ Every action is time-guarded so a mission can fail but never hang.
 """
 import numpy as np
 from .params import Chassis, AgentA, Field, Piece, M2
+from . import trajectory
 
 HZ = 50.0
 MATCH = 120.0            # rules g.1
@@ -755,28 +756,63 @@ def deliver_kits(rb, log=print, clk=None, deadline=None, order=KIT_ORDER):
                                      tol=tol_), 9.0)
             yield from guard(drive_straight(rb, d_, speed=speed), cap)
 
-    # get east of the laboratory before turning north
-    if rb.pose[1] < 320.0:
-        yield from leg(*KIT_APPROACH, speed=230.0, cap=8.0)
-        # ...and CLIMB to the OLD PCC_R PIVOT SPOT (903, 730) before any
-        # west turn.  Two constraints meet here: the diagonal from the
-        # dogleg to a western longitude clips the laboratory's north-east
-        # corner, and a straight climb up the x~950 corridor drifts east
-        # until the west pivot jams on the east wall (measured: stuck at
-        # x 971 needing 958, then 17 s of wander).  The baseline never had
-        # the problem because its kit loop only ever pivoted at PCC_R's
-        # spot -- so aim the climb there, drift and all.
-        yield from leg(903.0, KIT_LOOP_Y, cap=10.0)
-    for dest in order:
+    # THE DEPARTURE PIVOT IS ILLEGAL AT THE DOCK LINE (F88).  Every kit
+    # dispatch from the laboratory starts at y~205 facing south, and the
+    # plate's south edge is 155 mm north -- under the 185 mm swept radius.
+    # The eastward pivot therefore rides the tail corner onto the plate's
+    # 5 mm edge and the chassis grinds: measured, the pursuit opened its
+    # arc 74 deg off-bearing into the edge and stalled to its watchdog
+    # (2.7 s), and the turn-drive-turn chain before it ground the same
+    # corner silently -- it is where the "15.5 s" hospital leg went.  So
+    # back away first: 55 mm south puts the sweep 25 mm clear, and only
+    # then turn east.
+    served_entry = False
+    if rb.pose[1] < 320.0 and order:
+        px, py, th = rb.pose
+        if 175.0 < py and 166.5 < px < 976.5 and \
+                abs((th + 90.0 + 180.0) % 360.0 - 180.0) < 50.0:
+            yield from guard(drive_straight(rb, py - 150.0, speed=200.0), 4.0)
+        # ...then ride ONE pursuit all the way to the first zone's lip
+        # (F87/F88): dogleg east of the plate, climb, swing west, arrive at
+        # the station facing ~105 deg -- the turn_to(90) below is the only
+        # stop left.  The old shape (climb to y 730, pivot west, traverse,
+        # pivot north, leg in) spent 7.5 s and two more illegal-band pivots
+        # on what the pursuit does in 3.  The knees are STRICT: a loose
+        # advance began the west swing 120 mm early and the body clipped
+        # the plate's NE corner (measured, -9 mm from the L1 dock).  The
+        # dogleg knee sits at (903, 250), NOT further east: the eastward
+        # turn's arc apex lands ~55 mm past the knee and the nose corner
+        # reaches 183 beyond that -- from a knee at 960 it pinned the
+        # corner on the east wall for 15 s (measured); from 903 the turn
+        # completes near x 958 with 30 mm in hand, and the climb line to
+        # (940, 655) then holds x >= 927 past the plate band (y 242-628).
+        # The swept SIDE_R patient column at x 983 has no
+        # legal alternative -- plate needs centre >= 909, that column
+        # needs <= 846 -- an empty corridor of the F87 kind; the climb
+        # accepts the plow and robot 2, which owns the east side, is the
+        # fleet-level cure.
+        tx0, ty0 = KIT_STATION[order[0]]
+        ok = yield from trajectory.track_waypoints(
+            rb, [(903.0, 250.0), (940.0, 655.0), (tx0 + 50.0, 780.0),
+                 (tx0, ty0)],
+            v_max=220.0, v_end=100.0, tol_end=28.0, strict=True)
+        served_entry = bool(ok)
+        if not ok:
+            if rb.pose[1] < 320.0:
+                yield from leg(*KIT_APPROACH, speed=230.0, cap=8.0)
+            yield from leg(903.0, KIT_LOOP_Y, cap=10.0)
+    for di, dest in enumerate(order):
         if deadline is not None and clk is not None and clk() > deadline:
             log(t() + "  kits: %s abandoned at the beam deadline" % dest)
             break
         tx, ty = KIT_STATION[dest]
         log(t() + "  kits -> %s (%.0f, %.0f)" % (dest, tx, ty))
-        # Traverse SOUTH of the drops, then turn up into the zone.
-        if abs(rb.pose[0] - tx) > 60.0:
-            yield from leg(tx, KIT_LOOP_Y, cap=10.0)
-        yield from leg(tx, ty)
+        # Traverse SOUTH of the drops, then turn up into the zone -- unless
+        # the entry pursuit already delivered the chassis to this lip.
+        if not (di == 0 and served_entry):
+            if abs(rb.pose[0] - tx) > 60.0:
+                yield from leg(tx, KIT_LOOP_Y, cap=10.0)
+            yield from leg(tx, ty)
         # 8 deg is enough: the hopper mouth is 78 mm off the centreline, so
         # 8 deg of heading error moves the landing point 11 mm, against zone
         # margins of 50 mm and more.
@@ -902,6 +938,7 @@ def mission_agent_a(rb, holes, hole_y, chute_offset, log=print, clock=None):
     log(t() + "plan: %r" % (sched,))
     HOLE_OF = {"L1": 0, "L2": 1, "L3": 2}
     prev = "SWEEP"
+    report = []
     while True:
         task = sched.next_task()
         if task is None:
@@ -939,10 +976,18 @@ def mission_agent_a(rb, holes, hole_y, chute_offset, log=print, clock=None):
         elif task == "BEAMS":
             yield from seal_quarantine(rb, log=log, clk=clock)
         sched.complete(task, now())
+        report.append((task, planner.TRAVEL.get((prev, task), 8.0)
+                       + planner.DUR[task], now() - t0))
         prev = task
         if sched.tasks:
             log(t() + "  replanned: %r" % (sched,))
     rb.stop()
+    # THE STOPWATCH REPORT: model vs match, per task -- the analysis loop
+    # built in, so a drifting cost model is seen the day it drifts, not
+    # rediscovered three boards later.
+    if report:
+        log(t() + "plan vs actual: " + "  ".join(
+            "%s %.0f/%.0fs" % (nm, mod, act) for nm, mod, act in report))
 
 
 # ============================================================ BEAM PLACEMENT
@@ -1235,8 +1280,21 @@ def place_beam(rb, which, log=print, clk=None, withdraw=0.0,
     yield from guard(turn_to(rb, head, tol=0.8), 5.0)
     rb.cradle(which, False)
     push = 35.0 if fwd else -35.0
-    for _ in range(int(1.0*HZ)):
-        rb.drive(push, 0.0); yield
+    # STALL-SEATED (F87).  The fixed 1.0 s push left the beam wherever the
+    # coast put it -- measured 10 mm of seating residual on bad days, and
+    # the referee's wall-touch tolerance is 6.  Push until the drivers say
+    # the beam is ON the wall (the same StallGuard datum the run-in used),
+    # capped: 0.5 mm residual, measured, for ~0.3 s more.
+    held = 0
+    for _ in range(int(1.6*HZ)):
+        rb.drive(push, 0.0)
+        if rb.stalled(0.22):
+            held += 1
+            if held > int(0.25*HZ):
+                break
+        else:
+            held = 0
+        yield
     rb.stop()
     yield from wait(rb, 0.4)
     lap("set down")
@@ -1332,7 +1390,29 @@ def seal_quarantine(rb, log=print, clk=None):
         log("      still on the laboratory at Y %.0f -- driving clear" % py)
         yield from guard(drive_straight(rb, py - PIVOT_Y, speed=200.0), 8.0)
         yield from guard(drive_straight(rb, py - PIVOT_Y, speed=200.0), 6.0)
+    # FROM THE LAB LINE, ROUTE TO THE BASIN FIRST (F87).  Rare branch (both
+    # kit zones dropped by the plan): the proven west corridor north, then
+    # the same single entry state as everyone else.
     px, py, _ = rb.pose
+    if py < 320.0:
+        log(t() + "  lab-line entry: west corridor to the basin")
+        yield from trajectory.track_waypoints(rb, [(240.0, 205.0),
+                                                   (240.0, 700.0)],
+                                              v_max=220.0, v_end=110.0)
+        yield from guard(turn_to(rb, 90.0, tol=5.0), 8.0)
+    # THE APPROACH STAYS THE PROVEN CHAIN (F87).  A tail-first capture of
+    # the lane was built, certified on a grid, and RETIRED here by the map:
+    # there is no descent corridor that misses SIDE_L's east sticker column
+    # (its patient needs centre x > 287; the plate's wheel limit needs
+    # centre x < 256), so every west-side descent plows that patient, and
+    # the capture's lane-hugging arc plowed it all the way into the beam
+    # corner, where it blocked the press 10 mm short at 6 deg (measured:
+    # the patient pinned against the south wall at x 75 under 3 N of our
+    # own push -- the step-4 b25s carried the same signature).  The old
+    # chain shoves it WEST early and turns away, which is as good as this
+    # geometry allows.  The real cure is the fleet's: that patient is
+    # robot 2's cargo, and robot 2 clears the west side before the seal.
+
     log("      transit: from (%.0f, %.0f, %.0f) to the lane" % rb.pose)
     yield from guard(turn_to(rb, np.degrees(np.arctan2(WP[1]-py, WP[0]-px)),
                              tol=3.0), 9.0)

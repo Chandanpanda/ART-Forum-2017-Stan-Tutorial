@@ -145,8 +145,10 @@ def main():
     PINNED = {r"rb\.d\b": 0,          # the oracle's data -- referee/checks only
               r"rb\.m\b": 0,
               r"pose_truth": 0,       # the oracle pose, banned in mission code
-              r"\.pose\b": 51,        # the map-frame BELIEF (transit;
-                                      # +1 for F86's seal-entry corridor)
+              r"\.pose\b": 53,        # the map-frame BELIEF (transit;
+                                      # +1 for F86's seal-entry corridor,
+                                      # +2 for F88's legal-departure check
+                                      # and entry-pursuit gate)
               r"pose_odo": 6}         # the odometry frame (dock terminals)
     for pat, cap in PINNED.items():
         got = len(re.findall(pat, src))

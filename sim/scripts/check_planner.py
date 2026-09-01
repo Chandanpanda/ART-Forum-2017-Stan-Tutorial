@@ -171,6 +171,9 @@ def main():
                                                  # by observe, not the mean)
         ("L1", "L2"):    [10.8, 10.8, 10.2],     # dock 2 total
         ("KH", "KL"):    [9.4, 9.7, 9.9, 10.1],  # HOSP->PCC_L block
+        ("L3", "KH"):    [15.0, 15.5, 16.4],     # F88 dispatch: seed-4
+                                                 # mission block + L2/L1
+                                                 # rig composites
         ("KL", "BEAMS"): [34.0, 35.0, 36.0],     # transit + both beams
     }
     off = []

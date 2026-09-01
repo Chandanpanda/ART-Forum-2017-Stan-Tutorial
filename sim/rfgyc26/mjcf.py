@@ -1169,7 +1169,9 @@ def robot2_body(pose=None):
     z0 = R2.WHEEL_R
     fa = radians(R2.FENCE_ANG)
     fy = R2.PLOW_POCKET/2.0 + (R2.FENCE_L/2.0)*cos(fa)
-    fx = R2.PLOW_X - (R2.FENCE_L/2.0)*sin(fa)
+    fx = R2.PLOW_X + (R2.FENCE_L/2.0)*sin(fa)   # forward: a FUNNEL
+    # (backward-swept wings were escape ramps: pucks pressed a wing
+    #  at speed and slid ALONG it out of the pocket -- F94)
     plow_zc = R2.PLOW_CLEAR + R2.PLOW_H/2.0 - z0
     tray_zc = R2.TRAY_Z - z0
     parts = [

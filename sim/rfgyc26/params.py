@@ -546,9 +546,13 @@ class Robot2:
     CMD_HZ          = 20.0
     DEADMAN_S       = 0.25
 
-    START_POSE      = (700.0, 205.0, 90.0)   # deployment box, west half,
-                                             # facing north; robot 1 holds
-                                             # 2.0 s while it scoots clear
+    START_POSE      = (1055.0, 140.0, 90.0)  # deployment box, east half
+                                             # (F82/F95): PCC_R is one run
+                                             # north-west of here, robot
+                                             # 1's world is never entered.
+                                             # Six timed-dash exit routes
+                                             # through robot 1's half all
+                                             # died on seed dice first.
 
 
 # ==================================================== AGENT A station schedule
@@ -1090,7 +1094,10 @@ class AgentA:
     BEAM2_STATION   = (177.5, 142.5,  90.0)   # 5 inboard, per spec 7
     BEAM_BACKOFF    = 45.0
 
-    START_POSE      = (974.5, 140.0, 180.0)   # field x, y, heading deg
+    START_POSE      = (830.0, 140.0, 180.0)   # field x, y, heading deg
+    # (was 974.5: shifted west in step 7 so robot 2 gets the east half of
+    #  the deployment box -- the doc's F82 posture, "robot 2 starts against
+    #  the east wall".  The exit drive only shortens; the sweep is west.)
 
 
 # ============================================================ derived + checks

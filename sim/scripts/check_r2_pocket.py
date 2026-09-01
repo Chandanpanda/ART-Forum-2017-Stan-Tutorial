@@ -37,39 +37,63 @@ def check(name, ok, detail=""):
 
 
 def geoms():
-    """Every COLLIDABLE geom of body robot2, as (name, lo[3], hi[3]) in the
-    chassis frame with z measured from the FLOOR."""
+    """Every COLLIDABLE geom of robot 2 and its child bodies, as
+    (name, lo[3], hi[3]) in the CHASSIS frame with z from the floor.
+
+    Read from the world through mj_forward and transformed back, not from
+    geom_pos: a geom on a child body (the wheels, the retention fingers)
+    carries a position local to THAT body, and reading it as if it were
+    chassis-local put the wheels on the centreline and failed the clear
+    volume for a robot that was fine.
+    """
     xml = mjcf.scene_full_match([(2500., 2400.), (2600., 2500.), (2700., 2600.)],
                                 rng=np.random.default_rng(0), r2=True,
                                 r2_pose=(1055., 140., 90.))
     m = mujoco.MjModel.from_xml_string(xml)
+    d = mujoco.MjData(m)
+    mujoco.mj_forward(m, d)
     b2 = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "robot2")
+    kin = {b2}
+    for b in range(m.nbody):
+        if m.body_parentid[b] in kin:
+            kin.add(b)
+    rx, ry = d.xpos[b2][:2] * 1000.0
+    q = d.xquat[b2]
+    yaw = np.arctan2(2*(q[0]*q[3] + q[1]*q[2]), 1 - 2*(q[2]**2 + q[3]**2))
+    c, sn = np.cos(-yaw), np.sin(-yaw)
     out = []
     for g in range(m.ngeom):
-        if m.geom_bodyid[g] != b2:
+        if m.geom_bodyid[g] not in kin:
             continue
         if m.geom_contype[g] == 0 and m.geom_conaffinity[g] == 0:
             continue                                   # visual only
         nm = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_GEOM, g) or "?"
-        p = m.geom_pos[g] * 1000.0
-        s = m.geom_size[g] * 1000.0
+        p = d.geom_xpos[g] * 1000.0
+        s_ = m.geom_size[g] * 1000.0
         if m.geom_type[g] == mujoco.mjtGeom.mjGEOM_SPHERE:
-            s = np.array([s[0], s[0], s[0]])
+            s_ = np.array([s_[0], s_[0], s_[0]])
         elif m.geom_type[g] == mujoco.mjtGeom.mjGEOM_CYLINDER:
-            s = np.array([s[0], s[0], s[1]])
-        # rotated geoms (the flares) get their AABB widened by the rotation
-        q = m.geom_quat[g]
-        R = np.zeros(9)
-        mujoco.mju_quat2Mat(R, q)
-        R = R.reshape(3, 3)
-        half = np.abs(R) @ s
-        lo = np.array([p[0]-half[0], p[1]-half[1], p[2]-half[2] + R2.WHEEL_R])
-        hi = np.array([p[0]+half[0], p[1]+half[1], p[2]+half[2] + R2.WHEEL_R])
+            s_ = np.array([s_[0], s_[0], s_[1]])
+        # the geom's own world orientation widens its axis-aligned box
+        R = d.geom_xmat[g].reshape(3, 3)
+        half = np.abs(R) @ s_
+        wlo = np.array([p[0]-half[0], p[1]-half[1], p[2]-half[2]])
+        whi = np.array([p[0]+half[0], p[1]+half[1], p[2]+half[2]])
+        # world -> chassis (the box stays axis-aligned under a 90 deg yaw,
+        # which is why the rig spawns the robot at exactly 90)
+        cor = []
+        for X in (wlo, whi):
+            dx, dy = X[0] - rx, X[1] - ry
+            cor.append((dx*c - dy*sn, dx*sn + dy*c, X[2]))
+        lo = np.array([min(cor[0][k], cor[1][k]) for k in range(3)])
+        hi = np.array([max(cor[0][k], cor[1][k]) for k in range(3)])
         out.append((nm, lo, hi))
     return out
 
 
-POCKET = {"r2_stop", "r2_wall_l", "r2_wall_r", "r2_flare_l", "r2_flare_r"}
+POCKET = {"r2_stop", "r2_wall_l", "r2_wall_r", "r2_flare_l",
+          "r2_flare_r", "r2_finger_l", "r2_finger_r"}
+WHEELS = {"r2_wg_l", "r2_wg_r"}       # outboard, above the puck
 
 
 def main():
@@ -80,14 +104,16 @@ def main():
     # A patient is a 20 mm cylinder standing on the floor; the pocket must
     # be able to swallow one from the flare tips down to the back stop.
     tip_x = R2.STOP_X + R2.POCKET_D + R2.FLARE_L * np.cos(np.radians(R2.FLARE_ANG))
-    x0, x1 = R2.STOP_X, tip_x + 12.0
+    # the volume starts at the STOP's front face, not its centre: the
+    # mass block is allowed to sit right behind the stop, and does
+    x0, x1 = R2.STOP_X + 3.0, tip_x + 12.0
     y_half, z_top = 40.0, 24.0
     if VERBOSE:
         print("  clear volume  x %.0f..%.0f  |y|<=%.0f  z 0..%.0f"
               % (x0, x1, y_half, z_top))
     bad = []
     for nm, lo, hi in gs:
-        if nm in POCKET:
+        if nm in POCKET or nm in WHEELS:
             continue
         if (hi[0] > x0 and lo[0] < x1 and hi[1] > -y_half and lo[1] < y_half
                 and hi[2] > 0.0 and lo[2] < z_top):

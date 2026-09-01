@@ -46,7 +46,8 @@ def _wrap(a):
 
 
 def track_waypoints(rb, pts, v_max=220.0, v_end=110.0, tol_end=30.0,
-                    lookahead=0.55, reverse=False, strict=False):
+                    lookahead=0.55, reverse=False, strict=False,
+                    w_max=None, no_pivot=False):
     """Pure pursuit through pts = [(x, y), ...]; ends near the last point
     at ~v_end.  Corners are cut by the lookahead circle -- that is the
     point -- so waypoints are corridor knees, not poses to visit exactly.
@@ -57,8 +58,20 @@ def track_waypoints(rb, pts, v_max=220.0, v_end=110.0, tol_end=30.0,
     the lookahead): for corridor-critical knees whose whole point is the
     detour -- the seal's east knee exists to keep the tail off a patient
     sticker, and the lookahead cheerfully cut it and plowed the column.
-    Returns True on arrival, False if progress stalled (caller decides)."""
+    Returns True on arrival, False if progress stalled (caller decides).
+
+    no_pivot FORBIDS THE STAND-AND-TURN, and w_max caps the yaw rate, for a
+    robot carrying something it can drop (F113).  Robot 2's capture pocket
+    holds a patient on three sides and is open at the front, so a pivot
+    walks it straight out of the mouth: measured in the chassis frame, a
+    seated puck at x 46 mm reached the flare tips at x 79 in 1.2 s of a
+    100 deg/s stand-and-turn, and nine of twelve deliveries died there.
+    Under no_pivot a large heading error is answered with a slow forward
+    ARC instead -- at 190 mm/s and 90 deg/s that is a 121 mm radius, which
+    this field has room for -- and the caller is expected to have chosen an
+    approach that does not need one (see nav.capture_approach's prefer)."""
     pts = [np.asarray(p, float) for p in pts]
+    w_cap = W_MAX if w_max is None else float(w_max)
     goal_i = 0                                  # the waypoint being pursued
     last_d, held = 1e9, 0
     pivoting = False
@@ -99,7 +112,7 @@ def track_waypoints(rb, pts, v_max=220.0, v_end=110.0, tol_end=30.0,
                 v_now = v_now*(1.0 - blend) + v_c*blend
         eff_th = th + (180.0 if reverse else 0.0)
         err = _wrap(np.degrees(np.arctan2(tgt[1]-py, tgt[0]-px)) - eff_th)
-        if pivoting or abs(err) > 95.0:
+        if (pivoting or abs(err) > 95.0) and not no_pivot:
             # Target behind the shoulder: stand and turn -- rare, and only
             # at entry.  WITH HYSTERESIS: keep standing until the error is
             # small.  Bailing out at 94 deg had the chassis open its arc
@@ -109,7 +122,8 @@ def track_waypoints(rb, pts, v_max=220.0, v_end=110.0, tol_end=30.0,
             # cheap; an arc that opens sideways is not.
             pivoting = abs(err) > 22.0
             if pivoting:
-                rb.drive(0.0, np.clip(3.0*err, -PIVOT_W, PIVOT_W))
+                rb.drive(0.0, np.clip(3.0*err, -min(PIVOT_W, w_cap),
+                                      min(PIVOT_W, w_cap)))
                 yield
                 continue
         # corner slowdown: the heading error IS the curvature demand
@@ -118,7 +132,7 @@ def track_waypoints(rb, pts, v_max=220.0, v_end=110.0, tol_end=30.0,
             rb.drive(-v_now*max(0.35, 1.0 - abs(err)/110.0),
                      np.clip(1.8*err, -45.0, 45.0))
         else:
-            rb.drive(v, np.clip(2.2*err, -W_MAX, W_MAX))
+            rb.drive(v, np.clip(2.2*err, -w_cap, w_cap))
         # watchdog: distance to the end must keep falling.  The epsilon is
         # 4 mm, not 0.5: a chassis pinned on a wall still CREEPS about a
         # millimetre a second under the scrubbing wheels, and that jitter

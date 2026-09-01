@@ -482,7 +482,8 @@ class R2Controller:
         gx, gy = pts[-1]
         gen = trajectory.track_waypoints(
             self, pts, v_max=v_max, v_end=110.0 if not carry else 90.0,
-            tol_end=tol, lookahead=0.62, strict=False)
+            tol_end=tol, lookahead=0.62, strict=False,
+            w_max=w_max if carry else None, no_pivot=carry)
         n = int(cap_s * hal.Clock.HZ)
         jx, jy, jn = self.x, self.y, 0
         for _ in range(n):
@@ -599,6 +600,68 @@ class R2Controller:
         return (R2.STOP_X - 12.0 < lx < R2.STOP_X + R2.POCKET_D + 26.0
                 and abs(ly) < R2.POCKET_W / 2.0 + 16.0)
 
+    def carry_turn(self, th_t, radius=130.0, v=170.0, tol=28.0, cap_s=7.0):
+        """Come round onto a heading WITHOUT PIVOTING, cargo aboard.
+
+        Every patient stands against a side wall and every destination is
+        toward the middle of the field, so a delivery's carry almost always
+        begins 100-180 degrees off its bearing.  A pivot answers that in
+        two seconds and loses the puck -- the pocket is open at the front,
+        and the chassis frame shows a seated puck walking from x 46 to the
+        flare tips at 79 inside 1.2 s of a 100 deg/s stand-and-turn (F113).
+        A differential drive does not need the pivot: a forward arc of
+        radius v/w turns just as far, and at 170 mm/s and 75 deg/s that is
+        130 mm, which this field has room for almost everywhere.
+
+        Both turn directions are tried against the body footprint, nearer
+        first; if neither fits, the caller still has the cargo and can be
+        told so rather than grinding into a wall.
+        """
+        w = np.degrees(v / max(radius, 1.0))
+        occ = None if self.cmap is None else \
+            (self.cmap.inflated(6.0, 8.0) >= nav.BLOCKED)
+
+        def fits(x, y, th, ahead):
+            if occ is None:
+                return True
+            a = np.radians(th)
+            x += ahead * np.cos(a)
+            y += ahead * np.sin(a)
+            for lx, ly in nav.BODY_PTS:
+                wx = x + lx*np.cos(a) - ly*np.sin(a)
+                wy = y + lx*np.sin(a) + ly*np.cos(a)
+                i, j = self.cmap.cell(wx, wy)
+                if occ[i, j]:
+                    return False
+            return True
+
+        err = _wrap(th_t - self.th)
+        sign = 1.0 if err > 0 else -1.0
+        # look a third of the way round each way and take a direction that
+        # is clear; prefer the short way when both are
+        for s_try in (sign, -sign):
+            th_probe = self.th
+            ok = True
+            for _ in range(6):
+                th_probe += s_try * 15.0
+                if not fits(self.x, self.y, th_probe, radius * 0.9):
+                    ok = False
+                    break
+            if ok:
+                sign = s_try
+                break
+        for _ in range(int(cap_s * hal.Clock.HZ)):
+            err = _wrap(th_t - self.th)
+            if abs(err) < tol:
+                break
+            self._drive(v, sign * w)
+            self.tick()
+            yield
+        self.stop()
+        for _ in range(3):
+            self.tick(); yield
+        return abs(_wrap(th_t - self.th)) < tol * 2.0
+
     def push_to(self, tx, ty, v=170.0, tol=35.0, cap_s=16.0):
         """A plow push: straight, slow, and gently steered so the puck stays
         in the pocket.  No costmap avoidance here on purpose -- the push
@@ -714,13 +777,16 @@ def robot1_reservations(cmap, schedule=None, t_now=0.0):
     own opening survey before it has planned) this falls back to the
     measured shape of the nominal plan.
     """
-    if schedule is None or not getattr(schedule, "tasks", None):
-        for nm, lanes in R1_LANES.items():
-            for lane in lanes:
-                cmap.add_corridor(lane, R1_HALF, 0.0, 121.0
-                                  if nm == "BEAMS" else 121.0)
-        return cmap
     from . import planner
+    if schedule is None or not getattr(schedule, "tasks", None):
+        # THE FALLBACK IS THE NOMINAL PLAN, NOT A CLOSED BOARD.  Robot 1
+        # does not publish a schedule until its opening sweep ends at
+        # T+27, which is exactly when robot 2 finishes its kits and wants
+        # its first patient -- and a fallback that reserved every lane for
+        # the whole match answered "nothing deliverable from here" and
+        # parked it at T+26 for the remaining 95 seconds.  Reserving
+        # everything is not caution, it is a different wrong answer.
+        schedule = planner.plan(planner.SWEEP_NOMINAL, at="SWEEP")
     prev = "SWEEP"
     for name, t0, dur in schedule.tasks:
         travel = planner.TRAVEL.get((prev, name), 8.0)
@@ -754,6 +820,30 @@ def survey(m, d=None):
                ("green" if g[1] > 0.5 and g[0] < 0.5 else "yellow"))
         out.append((i, float(x), float(y), col))
     return out
+
+
+def kits_home(m, d=None, which=(8, 9)):
+    """How many of robot 2's own kits are inside PCC_R.
+
+    Model-camera convention, exactly like survey(): in render mode this is
+    two white rectangles found in a known rectangle of the field, which is
+    the easiest perception task on either robot.
+    """
+    import mujoco
+    from .params import Field
+    if d is None:
+        d = mujoco.MjData(m)
+        mujoco.mj_forward(m, d)
+    z = Field.PCC_R
+    n = 0
+    for i in which:
+        b = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "kit%d" % i)
+        if b < 0:
+            continue
+        x, y = d.xpos[b][:2] * 1000.0
+        if z[0] <= x <= z[2] and z[1] <= y <= z[3]:
+            n += 1
+    return n
 
 
 def _norm(dx, dy):
@@ -839,16 +929,63 @@ def _board_map(pucks, skip=None, sched=None, t_now=0.0):
 #
 # So the fleet partitions by ZONE rather than negotiating inside one:
 #
-#     robot 1   HOSPITAL, PCC_L        (kits)
-#     robot 2   RECOVERY, PCC_R        (its own kits, dropped deep first)
+# The rule that falls out is simpler than a schedule: NO ROBOT ENTERS A
+# ZONE THAT HOLDS SCORED KITS.  Robot 2's own PCC_R kits are no different
+# from robot 1's -- the first version of this partition let robot 2 deliver
+# east-side yellows into PCC_R on the grounds that its kits sit 185 mm deep
+# and a release lands 150 mm away from them, and the board disagreed: the
+# kit column fell from 41/50 to 19.75/50, with PCC_R empty on ten of twelve
+# seeds, for a patient column that gained one point.  150 mm of paper
+# clearance is not clearance once the approach, the shuffle and the
+# back-off are counted.
 #
-# PCC_R is the proof that the partition is the right shape: robot 2 shakes
-# its kits out backwards to the zone's far edge, 185 mm deep, then releases
-# patients at the near edge 150 mm away, and nothing has ever disturbed
-# them.  Robot 2 therefore delivers the greens (RECOVERY, which holds no
-# kits at all) and the east-side yellows, and leaves the reds and west
-# yellows where they are: -3 each is cheaper than the alternative.
-R2_ZONES = ("RECOVERY", "PCC_R")
+#     robot 1   HOSPITAL, PCC_L
+#     robot 2   RECOVERY -- the one destination zone that holds no kits
+#
+# But "never" is too blunt, and the schedule robot 1 now publishes (F112)
+# says exactly how blunt.  A kit zone is only dangerous once the kits are
+# IN it.  Robot 1 reaches HOSPITAL around T+65 and PCC_L around T+75, so
+# there is a real window from the end of robot 2's own kit run at T+25
+# until then in which those rectangles are empty and a patient dropped
+# there is worth its full +8.  Robot 2 closes each zone at robot 1's
+# scheduled arrival, with a margin, and never reopens it.
+#
+# THE WINDOW WAS TRIED, AND THE BOARD SAID NO.  Opening HOSPITAL and
+# PCC_L until robot 1's scheduled arrival is a defensible idea and it lost
+# 34 points a match: kits 19.75 -> 3.0, beams 58.75 -> 33.3, for a patient
+# column that gained 2.5.  An empty rectangle is not a safe one -- robot 2
+# leaves a patient standing in the spot robot 1 must drive through to make
+# its drop, and it is still in the neighbourhood when robot 1 arrives.  The
+# original arithmetic was right and did not need re-litigating: +8 of
+# upside against -48 of downside is not a trade, whatever the clock says.
+#
+#     RECOVERY   the only destination zone that never holds kits
+#     everything else belongs to robot 1
+#
+# The gate below stays because it is the correct MECHANISM -- it is what
+# would let a future robot 2 with a deeper tray share a zone safely -- but
+# the list it filters is one entry long.
+R2_ZONES = ("RECOVERY",)
+ZONE_TASK = {"HOSP": "KH", "PCC_L": "KL"}
+CLOSE_MARGIN = 10.0        # be out before robot 1 sets off, not as it arrives
+
+
+def zone_open(zname, now, sched):
+    """May robot 2 still deliver into this zone?"""
+    if zname not in R2_ZONES:
+        return False
+    task = ZONE_TASK.get(zname)
+    if task is None:
+        return True
+    if sched is None or not getattr(sched, "tasks", None):
+        from . import planner
+        sched = planner.plan(planner.SWEEP_NOMINAL, at="SWEEP")
+    for name, t0, _dur in sched.tasks:
+        if name == task:
+            from . import planner
+            travel = planner.TRAVEL.get(("L3", task), 8.0)
+            return now < t0 - travel - CLOSE_MARGIN
+    return False           # not in the plan any more: it has been or is done
 
 CARRY_V = 190.0            # F106: arcs only, never a pivot, with a puck
 CARRY_W = 90.0
@@ -856,10 +993,22 @@ APPROACH_V = 330.0
 
 
 def _zone_pt(zone, puck):
-    """Where inside the zone to put this patient: the nearest legal point,
-    so a delivery is the shortest carry that still scores."""
-    return (float(np.clip(puck[0], zone[0] + 35.0, zone[2] - 35.0)),
-            float(np.clip(puck[1], zone[1] + 35.0, zone[3] - 35.0)))
+    """Where inside the zone to put this patient: the nearest point that is
+    COMFORTABLY inside, not merely inside.
+
+    35 mm of inset was arithmetic, not engineering.  The carry ends when
+    the tracker is within its 55 mm tolerance and the release then backs
+    away, so a target 35 mm inside the line can land 20 mm outside it --
+    measured, a green carried the whole width of the board and stopped at
+    x 691 against RECOVERY's edge at 700, nine millimetres short, for
+    nothing.  Inset by the tolerance instead, and collapse to the middle
+    when the zone is too small to allow it (RECOVERY is only 80 mm deep).
+    """
+    out = []
+    for lo, hi, p in ((zone[0], zone[2], puck[0]), (zone[1], zone[3], puck[1])):
+        inset = min(70.0, (hi - lo) / 2.0 - 5.0)
+        out.append(float(np.clip(p, lo + inset, hi - inset)))
+    return out[0], out[1]
 
 
 def _board_now(pucks, live, placed):
@@ -937,20 +1086,74 @@ def _blocker(pucks, live, i, zone, robot, t0, sched=None):
     return None
 
 
+def _can_turn_out(cm, pose, th0, th_t, radius=130.0):
+    """Is there a forward arc from (pose, th0) onto th_t that the body fits?
+
+    The same sweep carry_turn will actually drive, checked before the robot
+    commits to a capture it cannot leave.  Either direction counts; a
+    delivery only needs one of them.
+    """
+    occ = cm.inflated(6.0, 8.0) >= nav.BLOCKED
+    err = _wrap(th_t - th0)
+    for sgn in (1.0 if err > 0 else -1.0, -1.0 if err > 0 else 1.0):
+        x, y, th = pose[0], pose[1], th0
+        turned, ok = 0.0, True
+        while turned < abs(err) - 1e-9 and turned < 200.0:
+            dth = sgn * 10.0
+            th += dth
+            turned += 10.0
+            # advance along the arc by the same 10 degrees
+            x += radius * np.radians(10.0) * np.cos(np.radians(th))
+            y += radius * np.radians(10.0) * np.sin(np.radians(th))
+            a = np.radians(th)
+            for lx, ly in nav.BODY_PTS:
+                i, j = cm.cell(x + lx*np.cos(a) - ly*np.sin(a),
+                               y + lx*np.sin(a) + ly*np.cos(a))
+                if occ[i, j]:
+                    ok = False
+                    break
+            if not ok:
+                break
+        if ok:
+            return True
+    return False
+
+
 def _price(cm, robot, puck, zone, t0):
     """(seconds, approach) for one delivery, or None if it cannot be done.
 
     Both legs are planned STRICT: a transit that would cross a corridor
     robot 1 has reserved is not cheap, it is unavailable.
     """
-    app = nav.capture_approach(cm, puck)
+    # APPROACH FROM THE SIDE THE DESTINATION IS NOT ON (F113).  The carry
+    # is where deliveries were dying: the pocket is open at the front, so
+    # any stand-and-turn walks the puck out of the mouth, and a robot that
+    # captured facing east and must deliver west has to turn 180 degrees
+    # with the cargo aboard.  Arriving along the puck-to-zone line removes
+    # the turn instead of surviving it -- the robot ends the capture
+    # already pointing where the carry goes, and the whole delivery is a
+    # straight run in, a stop, and a straight run out.  This is the one
+    # thing a plow always got right and the first pocket mission threw
+    # away.
+    tgt = _zone_pt(zone, puck)
+    heading = float(np.degrees(np.arctan2(tgt[1] - puck[1],
+                                          tgt[0] - puck[0])))
+    app = nav.capture_approach(cm, puck, prefer=heading)
     if app is None:
+        return None
+    # CAN IT GET OUT AGAIN?  A capture pose is not a delivery: the robot
+    # ends the capture nose-first at the patient, and if the patient stands
+    # 80 mm off a wall the nose is 27 mm off it too, with no forward arc
+    # available and no reverse allowed while the pocket is loaded.  Six of
+    # twelve rig deliveries died in exactly that corner, at 21-31 s apiece,
+    # and the schedule cannot afford to discover it by driving there.  So
+    # the turn-out is part of the price: no clear arc, no delivery.
+    if not _can_turn_out(cm, _capture_pose(app, puck), app[2], heading):
         return None
     _, s1 = nav.plan(cm, robot, app[:2], R2_INSCRIBED, R2_CIRCUM,
                      t0=t0, speed=APPROACH_V, strict=True)
     if not np.isfinite(s1):
         return None
-    tgt = _zone_pt(zone, puck)
     _, s2 = nav.plan(cm, _capture_pose(app, puck), tgt, R2_INSCRIBED,
                      R2_CIRCUM, t0=t0 + s1 + 3.0, speed=CARRY_V, strict=True)
     if not np.isfinite(s2):
@@ -984,6 +1187,15 @@ def _deliver(ctl, i, live, target, app, log, t, zone=None, what="patient"):
         return False
     tx, ty = target
     ux, uy, _ = _norm(tx - live(i)[0], ty - live(i)[1])
+    # come round onto the carry bearing on an ARC before asking the
+    # tracker for anything (F113): pure pursuit answers a 150-degree
+    # opening error with a stand-and-turn, and a stand-and-turn empties
+    # the pocket.
+    yield from ctl.carry_turn(float(np.degrees(np.arctan2(ty - ctl.pose[1],
+                                                          tx - ctl.pose[0]))))
+    if not ctl.holding(*live(i)):
+        log(t() + "  %s %d: lost it coming round" % (what, i))
+        return False
     yield from ctl.goto(tx - ux * R2.CAPTURE_X, ty - uy * R2.CAPTURE_X,
                         v_max=CARRY_V, w_max=CARRY_W, tol=55.0, tries=3,
                         carry=True)
@@ -1015,10 +1227,10 @@ def _work_patients(ctl, pucks, live, log, t, now, deadline=112.0,
     _sc = sched if callable(sched) else (lambda: sched)
 
     def wanted(i, c, p):
-        """The zone robot 2 may deliver this patient to, or None."""
+        """The zone robot 2 may deliver this patient to right now, or None."""
         zn = DEST.get(c) if c != "yellow" else \
             ("PCC_R" if p[0] > 570.0 else "PCC_L")
-        return ZONES[zn] if zn in R2_ZONES else None
+        return ZONES[zn] if zone_open(zn, now(), _sc()) else None
 
     while now() < deadline:
         board = _board_now(pucks, live, placed)
@@ -1065,7 +1277,10 @@ def _work_patients(ctl, pucks, live, log, t, now, deadline=112.0,
                 sp = _spoil_point(cmj, pucks, live, live(j), {i, j})
                 if sp is None:
                     continue
-                app = nav.capture_approach(cmj, live(j))
+                app = nav.capture_approach(
+                    cmj, live(j),
+                    prefer=float(np.degrees(np.arctan2(sp[1]-live(j)[1],
+                                                       sp[0]-live(j)[0]))))
                 if app is None:
                     continue
                 _, s1 = nav.plan(cmj, ctl.pose[:2], app[:2], R2_INSCRIBED,
@@ -1125,11 +1340,27 @@ def mission_robot2(ctl, m, d=None, log=print, clock=None, rb=None):
         return getattr(rb, "schedule", None) if rb is not None else None
 
     # ---- the kits: PCC_R, from the east-box spawn -----------------------
-    ctl.cmap = _board_map(pucks, sched=sched(), t_now=now())
-    ok = yield from ctl.goto(1043.0, 1075.0, v_max=360.0, tol=45.0)
-    yield from ctl.face(270.0, tol=8.0)
-    log(t() + "SHAKE: kits into PCC_R")
-    yield from ctl.shake_out(4)
+    # AND CHECK THEY LANDED (F115).  This drop is worth 36 points to the
+    # fleet -- it is what turns robot 1's PCC_L delivery from a 16-point
+    # task into the 6/2/2 bonus -- and in isolation it works on ten of
+    # twelve seeds.  In a match it was failing silently: the kits stayed on
+    # the tray through the shake and then dribbled out over the next
+    # twenty-five seconds while robot 2 drove away, landing in a trail from
+    # (747, 717) to (1046, 1001).  Nothing noticed, because nothing looked.
+    # The camera can see two white boxes in a zone; so look, and shake
+    # again from a re-squared pose if they are not there.
+    for attempt in range(3):
+        ctl.cmap = _board_map(pucks, sched=sched(), t_now=now())
+        yield from ctl.goto(1043.0, 1075.0, v_max=360.0, tol=45.0)
+        yield from ctl.face(270.0, tol=8.0)
+        log(t() + "SHAKE: kits into PCC_R (attempt %d)" % (attempt + 1))
+        yield from ctl.shake_out(4)
+        n_in = kits_home(m, d)
+        if n_in >= 2:
+            log(t() + "  both kits are in PCC_R")
+            break
+        log(t() + "  only %d kit(s) landed -- going round again" % n_in)
+        yield from ctl.back_off(130.0)
     yield from ctl.goto(1040.0, 900.0, v_max=340.0, tol=50.0)
 
     # ---- the patients: go there, GRAB it, carry it, let go --------------

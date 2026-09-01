@@ -547,7 +547,15 @@ def _unit(dx, dy):
     return dx / n, dy / n, n
 
 
-def capture_approach(cmap, puck, prefer=None, standoffs=(185.0, 150.0, 128.0)):
+# THE FIELD MARGIN IS THE PLANNING RADIUS, NOT A ROUND NUMBER (F116).
+# 85 mm was a guess, and it rejected every stand-off directly north or
+# south of the INNER patient columns, which stand at x 80 -- the one
+# family of approaches that gives those six patients a way out, since
+# an approach from the field centre leaves the nose 27 mm off the wall
+# with no turning arc available.  A* hard-blocks at 75, so 78 is the
+# honest bound and anything larger is throwing away reachable board.
+def capture_approach(cmap, puck, prefer=None, standoffs=(185.0, 150.0, 128.0),
+                     margin=78.0):
     """Where to stand, and facing where, to CAPTURE this patient.
 
     A pushing robot must approach along the push line -- that coupling is
@@ -576,7 +584,7 @@ def capture_approach(cmap, puck, prefer=None, standoffs=(185.0, 150.0, 128.0)):
         # comfortable distance first, then whatever the corner allows.
         for standoff in standoffs:
             sx, sy = puck[0] - ux * standoff, puck[1] - uy * standoff
-            if not _infield(sx, sy, margin=85.0):
+            if not _infield(sx, sy, margin=margin):
                 continue
             i = int(np.clip(sx // cmap.res, 0, nx - 1))
             j = int(np.clip(sy // cmap.res, 0, ny - 1))

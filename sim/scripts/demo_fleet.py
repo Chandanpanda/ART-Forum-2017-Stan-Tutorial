@@ -44,7 +44,8 @@ def main():
     a = ap.parse_args()
 
     rng = np.random.default_rng(a.seed)
-    xml = mjcf.scene_full_match(random_discs(rng), rng=rng, r2=True)
+    discs0 = random_discs(rng)
+    xml = mjcf.scene_full_match(discs0, rng=rng, r2=True)
     m = mujoco.MjModel.from_xml_string(xml)
     d = mujoco.MjData(m)
     rb = AgentARobot(m, d, rng=rng)
@@ -52,7 +53,8 @@ def main():
     spot = robot2.sim_spot(m, d, np.random.default_rng(a.seed + 9000))
     ctl = robot2.R2Controller(link, spot, clock=lambda: d.time)
     g1 = mission_agent_a(rb, list(Field.LAB_HOLE_X), mjcf.LAB_HOLE_Y,
-                         CHUTE_OFFSET, log=print, clock=lambda: d.time)
+                         CHUTE_OFFSET, log=print, clock=lambda: d.time,
+                         discs=discs0)      # the opening survey plans the sweep
     g2 = robot2.mission_robot2(ctl, m, d=d, log=print, clock=lambda: d.time)
 
     shown = {"xray": a.xray}
@@ -84,9 +86,10 @@ def main():
                 next(g2)
             except StopIteration:
                 d2 = True
-        link.step()
-        for _ in range(CTRL_DECIM):
-            mujoco.mj_step(m, d)
+        # the link advances physics with the wheel servo closed around each
+        # substep -- a driver that also stepped would run the sim at double
+        # rate and halve every control loop's effective frequency
+        link.step(CTRL_DECIM)
         k += 1
         if viewer is not None and k % 2 == 0:
             if not viewer.is_running():

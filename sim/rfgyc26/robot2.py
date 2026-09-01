@@ -487,7 +487,7 @@ class R2Controller:
         return len(path) - 1
 
     def goto(self, tx, ty, v_max=340.0, tol=30.0, cap_s=None, t_now=None,
-             tries=4):
+             tries=4, strict=False):
         """Plan a path to (tx, ty), follow it, and REPLAN when the tracker
         runs out of admissible moves.
 
@@ -507,7 +507,8 @@ class R2Controller:
                 t0 = t_now if t_now is not None else (
                     self.clock() if self.clock else 0.0)
                 path, _ = nav.plan(self.cmap, (self.x, self.y), (tx, ty),
-                                   R2_INSCRIBED, R2_CIRCUM, t0=t0, speed=v_max)
+                                   R2_INSCRIBED, R2_CIRCUM, t0=t0, speed=v_max,
+                                   strict=strict)
                 if path is None:
                     self.blocked = True
                     return False
@@ -568,68 +569,54 @@ class R2Controller:
 
 
 # ============================================================== the mission
-# Field facts the push catalog is built from (params.Field, m2_layout):
-# sticker columns x 80/160 (west) and 983/1063 (east), rows y 537 (bottom),
-# 650, 763 (top); zones HOSP (471-671, >=901), RECOVERY (700-900, 190-270),
-# PCC_L (<=200, >=981), PCC_R (>=943, >=981).  What a puck can do is wall
-# geometry (F94, measured the hard way -- the first catalog parked the
-# approach INSIDE the wall's corner sweep and the pivot batted the pucks):
-#
-#   * every column pushes NORTH or SOUTH along itself freely;
-#   * mid columns (160/983) also take +-65-degree diagonals: the approach
-#     point 133 mm behind the puck then keeps the body's 93 mm corner
-#     circle 11 mm clear of the wall.  Shallower angles do not fit, so an
-#     eastward escape off the west columns is ~0.42 mm of x per mm pushed;
-#   * edge columns (80/1063) have standing room for NOTHING but the
-#     column itself: their reds and greens stay adrift (-3), priced;
-#   * within a column: the bottom row's south-going and the top row's
-#     north-going pushes cross nothing; the middle row waits for whichever
-#     neighbour its own push direction crosses.
-#
-# Approaches arrive PRE-FACED: _push stages 240 mm behind the puck along
-# the push line first (when that point is in-field), so the goto's arrival
-# heading IS the push heading and no plow-sweeping pivot happens within
-# reach of the puck (F94's second lesson).
+# ONE PLAN AT THE GUN (design doc section 15.5), then track it and repair it.
+# The board is fully observable from the start line -- the only randomness a
+# match holds is which colour stands on which sticker, and the camera sees
+# that -- so the mission is not a script of hand-timed phases any more.  It
+# is: survey, build the map, reserve robot 1's corridors in space-time, price
+# every delivery with the push planner, take them in value order, and re-price
+# against the live board after each one.
 
-DIAG = 65.0                                   # degrees off east-west
-_ZONES = {"red": (511.0, 941.0, 631.0, 1141.0),      # HOSP inset 40
-          "green": (740.0, 215.0, 860.0, 245.0),     # RECOVERY inset
-          "yellowW": (40.0, 1021.0, 160.0, 1141.0),  # PCC_L inset
-          "yellowE": (983.0, 1021.0, 1103.0, 1141.0)}
+ZONES = {"HOSP": (511.0, 941.0, 631.0, 1141.0),
+         "RECOVERY": (730.0, 200.0, 870.0, 260.0),
+         "PCC_L": (40.0, 1021.0, 160.0, 1141.0),
+         "PCC_R": (983.0, 1021.0, 1103.0, 1141.0)}
+DEST = {"red": "HOSP", "green": "RECOVERY"}
 
+# ROBOT 1'S RESERVATIONS.  Its planner knows its own schedule; until the two
+# solvers are merged this is that schedule's measured shape -- the corridors
+# it occupies and when.  Robot 2's A* runs on the residual, so the two cannot
+# collide by construction instead of negotiating at 20 Hz (F95/F98).
+def robot1_reservations(cmap):
+    """Robot 1's corridors, as space-time keep-outs.
 
-def _generic(i, x, y, c):
-    """A one-leg push from wherever the puck IS to the nearest inset point
-    of its destination zone; None when it is already home or the approach
-    would leave the field."""
-    key = c if c != "yellow" else ("yellowE" if x > 570.0 else "yellowW")
-    x0, y0, x1, y1 = _ZONES[key]
-    tx = float(np.clip(x, x0, x1))
-    ty = float(np.clip(y, y0, y1))
-    if abs(tx - x) < 4.0 and abs(ty - y) < 4.0:
-        return None                          # already inside
-    ux, uy, n = _norm(tx - x, ty - y)
-    ax, ay = x - ux * 190.0, y - uy * 190.0
-    # margin 70, not 95: robot 1's climb piles pucks 40 mm off the north
-    # wall, and their east-west approaches live in that band -- arriving
-    # pre-faced keeps the corner circle out of the wall (F97)
-    if not _infield(ax, ay, margin=70.0):
-        return None
-    # carry 35 mm INTO the zone so the release leaves it inside
-    return (2 if n < 200.0 else 6, i, x, y,
-            [(tx + ux * 35.0, ty + uy * 35.0)])
+    THE WIDTH AND THE WINDOWS ARE BOTH BUDGETS.  Reserving robot 1's full
+    185 mm swept radius for the whole of every phase leaves robot 2 with
+    almost no field and it simply stops working (measured: it declared eight
+    of twelve patients unreachable and parked at T+26).  These are the
+    centrelines with a 150 mm half-width -- robot 1's body plus a working gap,
+    not its worst-case sweep -- over the windows its phases actually occupy.
+    When the two planners merge, this function is replaced by a read of
+    robot 1's own Schedule."""
+    cmap.add_corridor([(60.0, 130.0), (700.0, 130.0)], 150.0, 0.0, 26.0)
+    cmap.add_corridor([(60.0, 215.0), (700.0, 215.0)], 150.0, 8.0, 28.0)
+    cmap.add_corridor([(390.0, 230.0), (740.0, 230.0)], 150.0, 26.0, 58.0)
+    cmap.add_corridor([(780.0, 220.0), (945.0, 260.0), (935.0, 650.0),
+                       (770.0, 790.0)], 150.0, 56.0, 72.0)
+    cmap.add_corridor([(730.0, 850.0), (700.0, 960.0)], 150.0, 62.0, 76.0)
+    cmap.add_corridor([(660.0, 930.0), (250.0, 930.0)], 150.0, 72.0, 84.0)
+    cmap.add_corridor([(240.0, 860.0), (240.0, 700.0)], 150.0, 78.0, 92.0)
+    cmap.add_corridor([(190.0, 620.0), (180.0, 200.0)], 150.0, 86.0, 121.0)
+    cmap.add_corridor([(300.0, 375.0), (140.0, 370.0)], 150.0, 100.0, 121.0)
 
 
-def _classify(m, d=None):
-    """Robot 1's colour classifier, model-camera convention: in render mode
-    perception.classify_patch does this from pixels; the mission cannot
-    tell.  With `d`, positions are CURRENT -- the east column is wherever
-    robot 1's climb plowed it, not where the stickers were (F94)."""
+def survey(m, d=None):
+    """The opening perception act: every patient's position and colour.
+    Model-camera convention, exactly like robot 1's synthetic see_lab -- in
+    render mode perception.classify_patch does this from pixels and nothing
+    above can tell the difference."""
     import mujoco
     if d is None or float(abs(d.xpos).sum()) < 1e-9:
-        # match start: the live data has not been forwarded yet -- read the
-        # spawn state (measured: planning from an unforwarded d aimed every
-        # push at (0,0) and the robot chased the corner for 100 s)
         d = mujoco.MjData(m)
         mujoco.mj_forward(m, d)
     out = []
@@ -645,282 +632,119 @@ def _classify(m, d=None):
     return out
 
 
-def _infield(x, y, margin=95.0):
-    return margin <= x <= 1143.0 - margin and margin <= y <= 1181.0 - margin
-
-
 def _norm(dx, dy):
     n = float(np.hypot(dx, dy))
+    if n < 1e-9:
+        return 1.0, 0.0, 0.0
     return dx / n, dy / n, n
 
 
-def _push(ctl, px, py, ux, uy, dist, v=175.0):
-    """Acquire the puck at (px,py) and push it `dist` mm along unit (ux,uy).
-    Stage 240 back along the line when the field allows, so the approach
-    ARRIVES facing the push; face() only trims what is left."""
-    from .params import Robot2 as R2
-    hd = np.degrees(np.arctan2(uy, ux))
-    sx, sy = px - ux * 240.0, py - uy * 240.0
-    ax, ay = px - ux * (R2.PLOW_X + 52.0), py - uy * (R2.PLOW_X + 52.0)
-    if _infield(sx, sy):
-        yield from ctl.goto(sx, sy, v_max=310.0, tol=42.0, cap_s=6.0)
-    yield from ctl.goto(ax, ay, v_max=250.0, tol=26.0, slow_into=160.0,
-                        cap_s=6.0)
-    if abs((hd - ctl.th + 180.0) % 360.0 - 180.0) > 10.0:
-        yield from ctl.face(hd, tol=6.0, cap_s=3.0)
-    tx, ty = px + ux * dist, py + uy * dist
-    yield from ctl.push_to(tx - ux * (R2.PLOW_X - 10.0),
-                           ty - uy * (R2.PLOW_X - 10.0), v=v,
-                           cap_s=7.0 + dist / v)
-    yield from ctl.back_off(95.0)
+def zone_of(colour, x):
+    if colour == "yellow":
+        return ZONES["PCC_R"] if x > 570.0 else ZONES["PCC_L"]
+    return ZONES[DEST[colour]]
 
 
-def _plan_side(pats, side, want="all"):
-    """Ordered push tasks for one side.  Each: (prio, i, x, y, legs) where
-    legs = [(ux, uy, dist), ...] applied in sequence with re-acquisition.
-    Encodes the F94 catalog: which colour can leave which column, and the
-    within-column crossing order."""
-    east = side == "E"
-    mid_x = 983.0 if east else 160.0
-    s = -1.0 if east else 1.0               # x-direction away from the wall
-    col = {}
-    for i, x, y, c in pats:
-        col.setdefault(round(x), []).append((i, x, y, c))
-    tasks = []
-    ca, sa = np.cos(np.radians(DIAG)), np.sin(np.radians(DIAG))
-    pccy = 1010.0
-
-    def diag_to_recovery(x, y):
-        """leg A: down-and-out at -DIAG to y~240, leg B: flat to RECOVERY."""
-        d = (y - 240.0) / sa
-        lx = x + s * ca * d
-        bx = 845.0 if east else 800.0
-        return [(lx, 240.0), (bx, 240.0)]
-
-    def diag_to_hosp(x, y):
-        """leg A: up-and-out at +DIAG to y<=870, leg B: aimed into HOSP.
-        From the east the entry aims HIGH (640, 1075): robot 1's kit pile
-        lands at (535-590, 920-960) at T+66-72 and the east phase runs
-        after it -- the north-east entry corridor clears the pile."""
-        d = (min(870.0, y + 333.0) - y) / sa
-        lx, ly = x + s * ca * d, y + sa * d
-        if east:
-            bx, by = float(np.clip(lx - 140.0, 560.0, 640.0)), 1075.0
-        else:
-            bx, by = float(np.clip(lx + 140.0, 495.0, 640.0)), 1005.0
-        return [(lx, ly), (bx, by)]
-
-    for cx, pucks in col.items():
-        is_mid = abs(cx - mid_x) < 40.0
-        for i, x, y, c in pucks:
-            if want == "nogreens" and c == "green":
-                continue
-            if want == "greens" and c != "green":
-                continue
-            row = round(y)
-            off_sticker = min(abs(x - 80.0), abs(x - 160.0),
-                              abs(x - 983.0), abs(x - 1063.0)) > 60.0 or \
-                min(abs(y - 537.0), abs(y - 650.0), abs(y - 763.0)) > 60.0
-            if off_sticker:
-                # robot 1's plow relocated it (the climb pile): a generic
-                # straight push to the nearest inset point of its zone
-                g = _generic(i, x, y, c)
-                if g:
-                    tasks.append(g)
-                continue
-            if not east and not is_mid:
-                # x-80 stays UNTOUCHED (F98): it is west of the descent's
-                # swath, so it is no seal hazard -- and a failed push there
-                # strands a puck mid-corridor, which is one.  Its yellows'
-                # +5s wait for a faster push pipeline.
-                continue
-            if c == "yellow":
-                # NORTH, bottom-up (a row's approach nudges the row below;
-                # re-spotting heals it, F96/F97) on a wall-standoff line
-                # (F94: at x 80 the wing grazed the wall).  With non-yellow
-                # mates ABOVE, the pocket would train them into the PCC at
-                # -5 each: stop the train short of the zone, then finish
-                # the yellow alone on a re-spotted second leg.
-                xv = float(np.clip(x, 100.0, 1043.0))
-                mates_above = any(cy > y + 40.0 and cc != "yellow"
-                                  for _, _, cy, cc in pucks)
-                legs = [(xv, 925.0), (xv, pccy)] if mates_above \
-                    else [(xv, pccy)]
-                tasks.append((10 + (row - 500) // 100, i, x, y, legs))
-                continue
-            elif not east and is_mid:
-                # WEST mid column non-yellows (F97): the wall locks every
-                # scoring diagonal, but these pucks ARE the seal-corridor
-                # hazard (F87/F90) -- the fleet's founding job.  Park them
-                # NORTH, out of the corridor (y > 780) and south of PCC_L,
-                # after the yellows have gone through; the mop-up upgrades
-                # any that get displaced east.
-                # park at (108, 902): out of the corridor (y > 780), out
-                # of PCC_L (y < 981), and west of robot 1's PCC_L approach
-                # swath (x >= 122) -- the first park spot sat inside that
-                # swath and the drop scattered both park and kits (F98)
-                tasks.append((14 + (row - 500) // 100, i, x, y,
-                              [(108.0, 902.0)]))
-                continue
-            elif not is_mid:
-                # edge reds/greens: priced adrift.  x-80 sits west of the
-                # descent's swath (122+), so it is not a seal hazard.
-                continue
-            elif c == "green":
-                if row >= 700:
-                    # top green: NE out (crosses nothing), then the long
-                    # field push to RECOVERY
-                    d = 107.0 / sa
-                    lx, ly = x + s * ca * d, 870.0
-                    bx, by = (845.0, 240.0) if east else (800.0, 240.0)
-                    tasks.append((5, i, x, y, [(lx, ly), (bx, by)]))
-                else:
-                    # bottom/middle green: down-and-out; middle waits for
-                    # the bottom sticker to clear (prio order handles it)
-                    tasks.append((1 if row < 600 else 3, i, x, y,
-                                  diag_to_recovery(x, y)))
-            elif c == "red":
-                if row >= 700:
-                    tasks.append((5, i, x, y, diag_to_hosp(x, y)))
-                else:
-                    # bottom red goes NE early only if the row above it is
-                    # already leaving (handled by prio: bottom-diag-up runs
-                    # AFTER top/middle rows cleared)
-                    tasks.append((7 if row < 600 else 6, i, x, y,
-                                  diag_to_hosp(x, y)))
-    tasks.sort(key=lambda k: k[0])
-    return tasks
-
-
-def _run_tasks(ctl, tasks, spot_puck, log, t, clock, stop_at, placed,
-               hard_stop=None):
-    """Camera-verified delivery: every leg starts from where the puck IS
-    (robot 1's classifier re-spots it), and a leg that left it more than
-    75 mm from its target gets ONE straight retry from the actual spot --
-    open-loop pushes lost half their cargo and nobody knew (F96)."""
-    for prio, i, x, y, legs in tasks:
-        if clock() > stop_at:
-            log(t() + "window over here")
-            return
-        t0 = clock()
-        for k, (tx, ty) in enumerate(legs):
-            for attempt in (0, 1):
-                if clock() > stop_at or clock() - t0 > 16.0:
-                    log(t() + "push %d out of time" % i)
-                    break
-                px, py = spot_puck(i)
-                ux, uy, n = _norm(tx - px, ty - py)
-                if n < 70.0:
-                    break                    # this leg is done enough
-                if hard_stop is not None and \
-                        clock() + 9.0 + n / 160.0 > hard_stop:
-                    # would still be pushing when the window slams: a task
-                    # that overran T+52 put robot 2 inside robot 1's climb
-                    # and cost the whole kit phase (F98)
-                    log(t() + "push %d would overrun the window" % i)
-                    return
-                log(t() + "push %d leg %d%s: %.0f mm at %.0f deg"
-                    % (i, k, "r" if attempt else "", n,
-                       np.degrees(np.arctan2(uy, ux))))
-                yield from _push(ctl, px, py, ux, uy, n + 12.0)
-        placed[i] = spot_puck(i)
+def _board_map(pucks, skip=None):
+    """A fresh costmap with robot 1's reservations and every patient except
+    the one being pushed."""
+    cm = nav.CostMap.field()
+    robot1_reservations(cm)
+    for i, x, y, c in pucks:
+        if skip is not None and i == skip:
+            continue
+        cm.add_disc(x, y, 12.0)
+    return cm
 
 
 def mission_robot2(ctl, m, d=None, log=print, clock=None):
-    """The whole match for the detached actuator.  One yield per tick."""
+    """Survey, plan, execute, repair.  One yield per 50 Hz tick."""
     t = (lambda: "") if clock is None else (lambda: "T+%5.1f R2 " % clock())
-    pats = _classify(m, d)
-    east = [p for p in pats if p[1] > 500.0]
+    now = clock if clock else (lambda: 0.0)
+    pucks = survey(m, d)
+    log(t() + "survey: " + " ".join("%d%s@%.0f,%.0f" % (i, c[0], x, y)
+                                    for i, x, y, c in pucks))
 
-    import mujoco as _mj
-    _cb = {i: _mj.mj_name2id(m, _mj.mjtObj.mjOBJ_BODY, "cyl%d" % i)
-           for i, _, _, _ in pats}
-    _dd = d
+    def live(i):
+        """Where the tracker says puck i is now."""
+        import mujoco
+        b = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "cyl%d" % i)
+        return (float(d.xpos[b][0] * 1000.0), float(d.xpos[b][1] * 1000.0))
 
-    def spot_puck(i):
-        if _dd is None:
-            return (0.0, 0.0)
-        p = _dd.xpos[_cb[i]]
-        return float(p[0] * 1000.0), float(p[1] * 1000.0)
-    log(t() + "colours: " + " ".join("%d%s@%.0f,%.0f" % (i, c[0], x, y)
-                                     for i, x, y, c in pats))
-    placed = {}
+    def refresh():
+        return [(i, *live(i), c) for i, _, _, c in pucks]
 
-    def wait_until(ts):
-        ctl.stop()
-        while clock() < ts:
-            ctl.tick()
-            yield
+    done = set()
 
-    # ---- P0: kits FIRST, from the east-box spawn (F82/F95).  Six exit
-    # routes through robot 1's half of the field all died on seed dice --
-    # a 35 s wrestle, a mutual corner-lock, three wrecked sweeps -- because
-    # no lane through it clears the sweep band, the parked body, the plate
-    # and the samples at once.  The doc had the answer all along: robot 2
-    # starts AGAINST THE EAST WALL (robot 1's spawn moved 144 mm west to
-    # make room), so its opening act crosses nothing robot 1 will ever
-    # touch: north-west under the sticker rows, up the east pinch it was
-    # sized for, SHAKE into PCC_R with the north wall as the backstop.
-    yield from ctl.goto(880.0, 420.0, v_max=340.0, tol=36.0)
-    yield from ctl.goto(885.0, 700.0, v_max=320.0, tol=34.0)
-    yield from ctl.goto(1040.0, 1080.0, v_max=300.0, tol=30.0)
-    yield from ctl.face(270.0, tol=7.0)
-    log(t() + "SHAKE: kits out against the north wall")
+    # ---- the kits: PCC_R, from the east-box spawn -----------------------
+    ctl.cmap = _board_map(pucks)
+    ok = yield from ctl.goto(1043.0, 1075.0, v_max=360.0, tol=45.0)
+    yield from ctl.face(270.0, tol=8.0)
+    log(t() + "SHAKE: kits into PCC_R")
     yield from ctl.shake_out(4)
+    yield from ctl.goto(1040.0, 900.0, v_max=340.0, tol=50.0)
 
-    # ---- P1: the EAST columns, EARLY (F98).  Robot 1 lives in the
-    # south and west until its kit climb at ~T+56; the east stickers are
-    # pristine and robot-1-free until then.  Working them now means the
-    # climb's plow-pile later contains only what is left.  The WEST side
-    # is not visited at all in this build: five configurations of west
-    # pushing each re-rolled robot 1's seal into b0s -- the corridor
-    # cannot host a 10-30 s noisy push pipeline and a seal.  The west
-    # yellows' +20 and the F87 patient cure return when the pushes are
-    # twice as fast; the roadmap owns it.
-    yield from _run_tasks(ctl, _plan_side(east, "E"), spot_puck, log, t,
-                          clock, stop_at=52.0, placed=placed, hard_stop=55.0)
-
-    # hold in the north-east dead corner through robot 1's climb window
-    log(t() + "holding at (1085, 880) through robot 1's climb")
-    while clock() < 74.0:
-        px, py, _ = ctl.pose
-        if abs(px - 1085.0) > 90.0 or abs(py - 880.0) > 90.0:
-            yield from ctl.goto(1085.0, 880.0, v_max=320.0, tol=45.0)
-        ctl.stop()
-        for _ in range(int(1.0 * hal.Clock.HZ)):
-            ctl.tick()
-            yield
-
-    # ---- P3: east side once robot 1 has left it.  LOOK AGAIN each
-    # round: robot 1's climb piles the east column near HOSP (measured),
-    # and every push moves the map -- plan from the live positions until
-    # the clock or the work runs out.
-    yield from wait_until(74.0)
-    while clock() < 108.0:
-        east = [p for p in _classify(m, d) if p[1] > 400.0
-                and p[0] not in placed]
-        log(t() + "east re-look: " + " ".join(
-            "%d%s@%.0f,%.0f" % (i, c[0], x, y) for i, x, y, c in east))
-        tasks = _plan_side(east, "E")
-        if not tasks:
+    # ---- the patients, cheapest-first, re-priced after every delivery ---
+    while now() < 108.0:
+        board = refresh()
+        best = None
+        for i, x, y, c in board:
+            if i in done:
+                continue
+            z = zone_of(c, x)
+            if z[0] <= x <= z[2] and z[1] <= y <= z[3]:
+                done.add(i)
+                continue
+            cm = _board_map(board, skip=i)
+            legs, secs = nav.plan_push(cm, (x, y), z, robot=ctl.pose[:2])
+            if legs is None:
+                continue
+            # value is the referee's: +5 delivered and +3 not-adrift = 8
+            if best is None or secs < best[1]:
+                best = (i, secs, legs, cm, (x, y))
+        if best is None:
+            log(t() + "nothing deliverable from here")
             break
-        n0 = len(placed)
-        yield from _run_tasks(ctl, tasks, spot_puck, log, t, clock,
-                              stop_at=112.0, placed=placed)
-        if len(placed) == n0:
-            break                            # no progress: stop replanning
+        i, secs, legs, cm, p0 = best
+        if now() + secs > 112.0:
+            log(t() + "%.0f s of work left, %.0f s of clock -- stopping"
+                % (secs, 112.0 - now()))
+            break
+        log(t() + "puck %d: %d legs, %.1f s" % (i, len(legs), secs))
+        ctl.cmap = cm
+        failed = False
+        for k, (tx, ty) in enumerate(legs):
+            px, py = live(i)
+            ux, uy, n = _norm(tx - px, ty - py)
+            if n < 55.0:
+                continue
+            ax, ay = px - ux * nav.PLOW_REACH, py - uy * nav.PLOW_REACH
+            ok = yield from ctl.goto(ax, ay, v_max=320.0, tol=34.0,
+                                     tries=2, strict=True)
+            if not ok and np.hypot(ctl.pose[0] - ax, ctl.pose[1] - ay) > 95.0:
+                # 95, not zero: THE PLOW'S WIDTH IS THE POSITION TOLERANCE --
+                # that was the whole argument for a 120 mm pocket on a robot
+                # driven by cheap motors.  The first version abandoned any
+                # puck whose approach goto returned False, which threw away
+                # deliveries the chassis was already standing in front of
+                # (measured: eleven pucks abandoned from inside 60 mm).
+                failed = True
+                break
+            yield from ctl.face(float(np.degrees(np.arctan2(uy, ux))), tol=7.0)
+            yield from ctl.push_to(tx - ux * 60.0, ty - uy * 60.0, v=180.0,
+                                   cap_s=6.0 + n / 150.0)
+            yield from ctl.back_off(95.0)
+            if now() > 112.0:
+                break
+        done.add(i)
+        if failed:
+            log(t() + "puck %d: approach blocked, moving on" % i)
 
-    # ---- P4: PARK AND HOLD in the dead ground (F98).  "Done" is not a
-    # state a detached actuator may improvise: left loose it was found in
-    # the seal corridor being plowed by its own teammate.  The box's east
-    # end is robot-1-dead after T+66; the hold re-checks, because robot 1
-    # CAN shove this robot.
-    log(t() + "parking in the north-east dead corner")
+    # ---- park in the dead corner ----------------------------------------
+    log(t() + "parking")
+    ctl.cmap = _board_map(refresh())
+    yield from ctl.goto(1085.0, 880.0, v_max=340.0, tol=60.0)
+    ctl.stop()
     while True:
-        px, py, _ = ctl.pose
-        if abs(px - 1085.0) > 90.0 or abs(py - 880.0) > 90.0:
-            yield from ctl.goto(1085.0, 880.0, v_max=320.0, tol=45.0)
-        ctl.stop()
-        for _ in range(int(2.0 * hal.Clock.HZ)):
-            ctl.tick()
-            yield
+        ctl.tick()
+        yield

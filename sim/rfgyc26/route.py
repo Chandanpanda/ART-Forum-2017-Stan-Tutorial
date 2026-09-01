@@ -852,7 +852,46 @@ def _in_zone(dest, x, y):
     return box[0] <= x <= box[2] and box[1] <= y <= box[3]
 
 
-def mission_agent_a(rb, holes, hole_y, chute_offset, log=print, clock=None):
+SWEEP_REACH = 52.0          # a sample this far off the lane is still taken
+SWEEP_LANE_MIN = 120.0      # south of this the mouth rides the wall
+SWEEP_LANE_MAX = 235.0      # north of this a pass shoves pieces OUT (F59)
+
+
+def sweep_lanes(discs, reach=SWEEP_REACH):
+    """Choose the fewest sweep lanes that cover every surveyed sample.
+
+    Greedy set cover on one axis: take the lane that collects the most
+    uncovered samples, repeat.  With no survey this returns the two fixed
+    lanes the blind macro always drove, so the caller degrades safely."""
+    if not discs:
+        return [130.0, 215.0]
+    ys = sorted(float(p[1]) for p in discs)
+    left, lanes = list(ys), []
+    while left and len(lanes) < 3:
+        best, best_n = None, -1
+        for cand in left:
+            lane = float(np.clip(cand, SWEEP_LANE_MIN, SWEEP_LANE_MAX))
+            n = sum(1 for y in left if abs(y - lane) <= reach)
+            if n > best_n:
+                best, best_n = lane, n
+        lanes.append(best)
+        left = [y for y in left if abs(y - best) > reach]
+    # THE SECOND PASS IS NOT OPTIONAL, and dropping it cost ~30 points a seed
+    # (measured: samples fell from 50 to 9 on a third of the board).  Set
+    # cover assumes the targets hold still and these do not -- the mouth is
+    # 235 wide against a ~110 collecting window, so every pass BULLDOZES the
+    # samples it cannot take, northward, out of the lane it just drove.  The
+    # second lane is that strip: it exists to recover pass 1's own strays,
+    # not to cover the survey.  The survey PLACES the lanes; it never removes
+    # the recovery.
+    if len(lanes) < 2:
+        lanes.append(float(np.clip(lanes[0] + 85.0, SWEEP_LANE_MIN,
+                                   SWEEP_LANE_MAX)))
+    return sorted(lanes)
+
+
+def mission_agent_a(rb, holes, hole_y, chute_offset, log=print, clock=None,
+                    discs=None):
     # THE MATCH IS 120 s (rules g.1).  Every phase is stamped so the budget
     # is visible in the log, not discovered at the end.
     t = (lambda: "") if clock is None else (lambda: "T+%5.1f  " % clock())
@@ -897,10 +936,22 @@ def mission_agent_a(rb, holes, hole_y, chute_offset, log=print, clock=None):
             yield from guard(pursue(rb, 430.0, lane, speed=220.0, tol=40.0), 20.0)
         yield from guard(sweep_line(rb, lane, 158.0, want=3), 45.0)
 
-    log(t() + "sweep pass 1, mouth on Y 130")
-    yield from _pass(130.0, None)
-    log(t() + "sweep pass 2, mouth on Y 215")
-    yield from _pass(215.0, 235.0)
+    # PLAN THE LANES FROM THE SURVEY (F100).  The two fixed lanes above were
+    # chosen against 24 randomised samples and they collect -- but they are a
+    # BLIND macro: the opening camera pass already knows where all three
+    # samples are, and on most seeds one lane covers two of them and the
+    # second lane is driven for a single disc, or for none at all.
+    #
+    # Greedy set cover over the measured positions, with the mouth's own
+    # reach (a piece within ~55 mm of the lane is collected, F-intake) as the
+    # covering radius.  Same passes when the samples really are spread; one
+    # pass, and ~12 s back, when they are not.  The clock is what the seal is
+    # short of, so this is the cheapest 12 s on the robot.
+    lanes = sweep_lanes(discs)
+    for k, lane in enumerate(lanes):
+        log(t() + "sweep pass %d, mouth on Y %.0f%s"
+            % (k + 1, lane, "  (planned from the survey)" if discs else ""))
+        yield from _pass(lane, None if k == 0 else lane + 20.0)
     log(t() + "settling the magazine")
     yield from guard(settle_stack(rb, want=len(holes)), 30.0)
     # THERE IS NO THIRD LANE, AND IT WAS TRIED.  A pass at Y 265 covers the strip

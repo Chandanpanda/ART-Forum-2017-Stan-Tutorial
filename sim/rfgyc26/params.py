@@ -492,12 +492,45 @@ class Robot2:
     PLATE_Z         = 12.0                   # chassis plate mid-height
     M_TOTAL         = 0.42                   # kg, battery included
 
-    WHEEL_R         = 22.0
-    WHEEL_W         = 8.0
-    TRACK           = 84.0                   # outside faces at 92 < W
+    # WHEELS 32 mm RADIUS (64 dia), not 22 (F99).  Not cosmetic: the axle
+    # rides 10 mm higher, so plow ground clearance stops being a knife-edge
+    # constant -- the "plow dug into the floor" failure was cured with a 3 mm
+    # tweak and at this radius it cannot happen -- and tape edges, the box
+    # lip and floor irregularity stop mattering.  N20 gearmotors ship with
+    # 32-43 mm wheels as standard, so this is also the easier part to buy.
+    WHEEL_R         = 32.0
+    WHEEL_W         = 9.0
+    TRACK           = 84.0                   # outside faces at 93 < W
     AXLE_X          = -20.0                  # axle behind centre; plow leads
-    V_MAX           = 380.0                  # mm/s, straight-line, fresh cells
-    W_MAX           = 240.0                  # deg/s pivot (differential limit)
+
+    # THE MOTOR IS A PLANT, NOT A SERVO (F99).  The old model was a velocity
+    # actuator with an arbitrary force clamp: unphysically stiff near zero
+    # speed AND too weak at stall, which is exactly the combination that
+    # reads as "the robot gets stuck".  Model the real part instead -- an
+    # N20 6 V metal-gear motor with a built-in quadrature encoder -- by its
+    # torque-speed line, and let the firmware's PI close the loop on it:
+    #
+    #     tau(w) = TAU_STALL * (1 - w / W_NOLOAD)
+    #
+    # At 32 mm that is ~1.9 N of tractive force per wheel, ~3.7 N total
+    # against 0.45 kg: about 8 m/s^2 available.  The point is not raw
+    # strength -- it is that the acceleration limits the local planner
+    # reasons about are now PHYSICAL numbers instead of guesses.
+    TAU_STALL       = 0.060                  # N.m at the output shaft
+    W_NOLOAD        = 21.0                   # rad/s  (~200 rpm)
+    V_MAX           = 420.0                  # mm/s sustained under load
+    W_MAX           = 260.0                  # deg/s pivot
+
+    # THE ENCODER, which the first build simply did not have.  N20s come with
+    # a magnetic quadrature encoder on the rear shaft; through the gearbox
+    # that is ~700 counts per output revolution, 0.29 mm of travel per count
+    # at this radius.  This is what lets the Pico close an inner velocity
+    # loop (see robot2.WheelServo) instead of setting a PWM proportional to
+    # the request and hoping.
+    ENC_CPR         = 700.0                  # counts per output revolution
+    SERVO_HZ        = 1000.0                 # firmware inner-loop rate
+    SERVO_KP        = 0.0045                 # N.m per (mm/s) of error
+    SERVO_KI        = 0.030                  # N.m per (mm/s . s)
 
     # THE PLOW.  A straight blade with swept-back end fences: a shallow
     # pocket 80 mm across that centres a O20 patient and holds it through
@@ -534,14 +567,15 @@ class Robot2:
     MARKER_MM       = 40.0
     MARKER_Z        = 58.0
 
-    # DC plant model, applied by the sim link exactly where the real driver
-    # sits: per-motor gain spread (manufacturing lottery, drawn per match),
-    # a deadband under which the driver hums and nothing turns, and the
-    # command quantisation of the wire (integer mm/s).
+    # PLANT IMPERFECTIONS, applied where they physically live -- between the
+    # driver and the shaft, INSIDE the inner loop, so the servo has to reject
+    # them exactly as it will on the bench: a per-motor torque-gain lottery
+    # (motor + gearbox + tyre tolerances, drawn per match), driver stiction,
+    # and the wire's integer-mm/s quantisation.  With the encoder loop closed
+    # these stop being errors the Pi must model and become errors the Pico
+    # rejects locally.
     GAIN_SD         = 0.07                   # per-motor multiplicative sigma
-    DEADBAND        = 28.0                   # mm/s
-    MOTOR_TAU_N     = 0.35                   # forcerange N at the rim: sets
-                                             # the natural first-order lag
+    STICTION        = 0.004                  # N.m breakaway torque
     # LinkHAL v0 timing (design doc section 10)
     CMD_HZ          = 20.0
     DEADMAN_S       = 0.25

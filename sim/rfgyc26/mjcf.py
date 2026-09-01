@@ -1245,11 +1245,16 @@ def robot2_body(pose=None):
             f'size="{mm(R2.WHEEL_R):.5f} {mm(R2.WHEEL_W/2):.5f}" mass="0.02" '
             f'friction="1.2 0.01 0.0002" rgba="0.12 0.12 0.14 1"/></body>')
     parts.append('</body>')
-    wmax = (R2.V_MAX * 1.35) / R2.WHEEL_R
-    act = (f'\n    <velocity name="r2_drive_l" joint="r2_w_l" kv="4.0" '
-           f'ctrlrange="{-wmax:.1f} {wmax:.1f}" forcerange="-0.06 0.06"/>'
-           f'\n    <velocity name="r2_drive_r" joint="r2_w_r" kv="4.0" '
-           f'ctrlrange="{-wmax:.1f} {wmax:.1f}" forcerange="-0.06 0.06"/>')
+    # TORQUE actuators, not velocity servos (F99).  The simulator models the
+    # PLANT -- an N20 gearmotor's shaft -- and the CONTROLLER lives in the
+    # firmware (robot2.WheelServo), closed on the encoder.  That is the
+    # honest split: the same PI code runs on the Pico, and a velocity servo
+    # in the XML would have been a controller we could never ship.
+    tmax = R2.TAU_STALL * 1.2
+    act = (f'\n    <motor name="r2_drive_l" joint="r2_w_l" gear="1" '
+           f'ctrlrange="{-tmax:.4f} {tmax:.4f}"/>'
+           f'\n    <motor name="r2_drive_r" joint="r2_w_r" gear="1" '
+           f'ctrlrange="{-tmax:.4f} {tmax:.4f}"/>')
     return "\n".join(parts), act
 
 

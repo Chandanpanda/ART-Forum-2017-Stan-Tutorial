@@ -25,29 +25,91 @@ Three layers, split exactly where the hardware splits:
     push whose tolerance is the plow's width.
 """
 import numpy as np
-from . import hal
+from . import hal, nav
 from .params import Robot2 as R2
+
+R2_INSCRIBED = 55.0        # no orientation fits inside this
+R2_CIRCUM = 93.0           # every orientation fits outside it
 
 TICK = hal.Clock.PERIOD                      # 50 Hz mission tick
 _CMD_EVERY = max(1, int(round(hal.Clock.HZ / R2.CMD_HZ)))   # ticks per send
 
 
 # ============================================================== the Pico side
+class WheelServo:
+    """The inner loop -- the one the first build did not have (F99).
+
+    A cheap DC gearmotor does not go the speed you ask it to.  Its torque
+    constant is a lottery, its driver has stiction, its battery sags, and the
+    plow's load changes every second.  The first build told the Pico
+    "200 mm/s", set a PWM proportional to that, and compensated at the Pi with
+    a SINGLE LEARNED SCALAR -- which can represent none of those, because they
+    are per-wheel, nonlinear and time-varying.
+
+    So: a PI controller per wheel, on measured encoder velocity, at 1 kHz,
+    inside the firmware.  Then `V 200 200 150` on the wire MEANS 200 mm/s, and
+    every layer above stops paying for the lie.  This class is the firmware;
+    it is deliberately written in the terms a Pico has (ticks, dt, a torque
+    command) so it ports across as arithmetic, not as an idea."""
+
+    def __init__(self, gain=1.0, rng=None):
+        self.gain = float(gain)          # the motor's own torque constant
+        self.i = 0.0                     # integrator, N.m
+        self.ticks = 0                   # encoder accumulator
+        self._frac = 0.0
+        self.target = 0.0                # mm/s
+
+    def update(self, v_meas, dt):
+        """One firmware tick: measured wheel velocity in, torque out."""
+        err = self.target - v_meas
+        self.i = float(np.clip(self.i + R2.SERVO_KI * err * dt,
+                               -R2.TAU_STALL, R2.TAU_STALL))
+        if abs(self.target) < 1e-6:
+            self.i *= 0.9                # bleed down when commanded to stop
+        tau = R2.SERVO_KP * err + self.i
+        # the plant's own limit: an N20 cannot exceed its stall torque, and
+        # what it CAN deliver falls off with speed (the torque-speed line)
+        w = abs(v_meas) / R2.WHEEL_R
+        avail = R2.TAU_STALL * max(0.0, 1.0 - w / R2.W_NOLOAD)
+        tau = float(np.clip(tau, -avail, avail))
+        # stiction: below breakaway the shaft simply does not move
+        if abs(tau) < R2.STICTION and abs(v_meas) < 5.0:
+            tau = 0.0
+        return tau * self.gain
+
+    def count(self, v_meas, dt):
+        """Quadrature accumulation, quantised exactly as the hardware is."""
+        rev = v_meas * dt / (2.0 * np.pi * R2.WHEEL_R)
+        self._frac += rev * R2.ENC_CPR
+        whole = int(self._frac)
+        self._frac -= whole
+        self.ticks += whole
+        return self.ticks
+
+
 class SimLink(hal.LinkHAL):
     """The firmware end of the wire, on MuJoCo.
 
-    Construct with the model/data and a per-match rng: the gain lottery is
-    drawn HERE, because that is where the real spread lives (motor + driver
-    + tyre tolerances).  The mission driver calls step() once per control
-    tick, before physics."""
+    Owns: the v0 grammar decode, the 250 ms dead-man, the SHAKE macro, the two
+    WheelServos, and the `O <l> <r>` odometry report the Pi consumes.  The
+    per-motor gain lottery is drawn HERE, because that is where the real
+    spread lives -- and now the servo has to REJECT it rather than the Pi
+    having to model it."""
 
     def __init__(self, m, d, rng=None):
         self.m, self.d = m, d
         rng = rng or np.random.default_rng(0)
         self._al = _aid(m, "r2_drive_l")
         self._ar = _aid(m, "r2_drive_r")
+        import mujoco
+        self._jl = m.jnt_dofadr[mujoco.mj_name2id(
+            m, mujoco.mjtObj.mjOBJ_JOINT, "r2_w_l")]
+        self._jr = m.jnt_dofadr[mujoco.mj_name2id(
+            m, mujoco.mjtObj.mjOBJ_JOINT, "r2_w_r")]
         self.gain_l = float(1.0 + R2.GAIN_SD * rng.standard_normal())
         self.gain_r = float(1.0 + R2.GAIN_SD * rng.standard_normal())
+        self.servo_l = WheelServo(self.gain_l)
+        self.servo_r = WheelServo(self.gain_r)
         self._vl = self._vr = 0.0
         self._expire = -1.0
         self._shake = 0.0                    # busy-until clock for the macro
@@ -73,32 +135,49 @@ class SimLink(hal.LinkHAL):
             self._vl = self._vr = 0.0
 
     def recv(self):
-        return None
+        """`O <ticks_l> <ticks_r>` -- the return direction the first build
+        left as None.  This is what turns the Pi's dead reckoning from
+        commanded-velocity-times-a-scalar into actual odometry."""
+        return "O %d %d" % (self.servo_l.ticks, self.servo_r.ticks)
+
+    def wheel_speeds(self):
+        """Measured, in mm/s -- what the encoders see."""
+        return (float(self.d.qvel[self._jl]) * R2.WHEEL_R,
+                float(self.d.qvel[self._jr]) * R2.WHEEL_R)
 
     # --- plant ---
-    def _wheel(self, v, gain):
-        # driver deadband, then the gain lottery; the wire already quantised
-        if abs(v) < R2.DEADBAND:
-            return 0.0
-        return v * gain
+    def step(self, n=20):
+        """One 50 Hz control tick: the COMMAND layer once, then n physics
+        substeps with the inner servo loop closed around each one.
 
-    def step(self):
-        """Apply the current command state to the actuators.  One call per
-        control tick; the dead-man and the shake macro live here."""
+        THE LINK OWNS THE SUBSTEPPING, which is not an accident of the sim: the
+        inner loop only means anything if it reads a velocity that has changed
+        since it last wrote a torque.  The first attempt ran twenty servo
+        iterations against one frozen qvel and simply wound its integrator up.
+        Drivers call this INSTEAD of their own mj_step loop."""
+        import mujoco
         now = self.d.time
         if now < self._shake:
-            # THE RATCHET (rigged, F93): collect against the front rail at
-            # full reverse, then a full-jerk forward pulse -- the kit
-            # sprints the tray and hops the 1.2 mm tail lip.  0.55 s/cycle.
+            # THE RATCHET (F93): collect against the front rail at full
+            # reverse, then a full-jerk forward pulse -- the kit sprints the
+            # tray and hops the 1.2 mm tail lip.  0.55 s per cycle.
             ph = (now - self._shake_t0) % 0.55
-            v = -380.0 if ph < 0.25 else (380.0 if ph < 0.45 else 0.0)
+            v = -R2.V_MAX if ph < 0.25 else (R2.V_MAX if ph < 0.45 else 0.0)
             vl = vr = v
         elif now > self._expire:
             vl = vr = 0.0                    # dead-man: silence stops it
         else:
             vl, vr = self._vl, self._vr
-        self.d.ctrl[self._al] = self._wheel(vl, self.gain_l) / R2.WHEEL_R
-        self.d.ctrl[self._ar] = self._wheel(vr, self.gain_r) / R2.WHEEL_R
+        self.servo_l.target = vl
+        self.servo_r.target = vr
+        dt = float(self.m.opt.timestep)
+        for _ in range(max(1, n)):
+            ml, mr = self.wheel_speeds()
+            self.d.ctrl[self._al] = self.servo_l.update(ml, dt)
+            self.d.ctrl[self._ar] = self.servo_r.update(mr, dt)
+            self.servo_l.count(ml, dt)
+            self.servo_r.count(mr, dt)
+            mujoco.mj_step(self.m, self.d)
 
     def busy(self):
         return self.d.time < self._shake
@@ -137,62 +216,86 @@ def _wrap(a):
 
 
 class R2Controller:
-    """Closed loop over the camera, open loop between fixes.
+    """The Pi side: belief, path following, and the push primitive.
 
-    The belief is last-fix + command dead-reckoning through the learned
-    gains; every new fix both corrects the belief and refines the gains
-    (scale from distance covered, turn bias from heading drift on nominally
-    straight legs).  Fix cadence ~5 Hz: every job here tolerates that."""
+    THREE LOOPS, and this class owns the outer two (the inner one is
+    WheelServo, on the Pico).  The belief is encoder odometry corrected by
+    camera fixes; the tracker is a Dynamic Window Approach over the costmap,
+    so refusing to drive into things is a property of the controller rather
+    than something the mission has to route around by hand.
+    """
 
     FIX_EVERY = 10                            # ticks between camera looks
 
-    def __init__(self, link, spot, clock):
+    def __init__(self, link, spot, clock, cmap=None):
         self.link, self.spot, self.clock = link, spot, clock
-        x, y, th = spot()
-        self.x, self.y, self.th = x, y, th
-        self.scale = 1.0                      # learned: commanded -> real
-        self.turn_bias = 0.0                  # deg/s of veer at straight cmd
+        self.cmap = cmap
+        # THE BELIEF IS BORN LAZILY, on first use -- not here (F99).  A pose
+        # read at construction time comes from an un-forwarded MjData and is
+        # all zeros, so every plan started from the south-west corner and the
+        # robot spent the match chasing a path it was never on.  Robot 1's
+        # estimator learned this exact lesson in step 3 (F85); the fix is the
+        # same one.
+        self._born = False
+        self.x = self.y = self.th = 0.0
         self._tick = 0
         self._cmd = (0.0, 0.0)
-        self._dr = np.zeros(3)                # dead-reckoned delta since fix
-        self._fix_xy = (x, y, th)
+        self._ticks = self._read_ticks()
+        self.jams = 0
+        self.blocked = False                  # last follow_path gave up
 
-    # ---- belief upkeep -------------------------------------------------
+    # ---- belief: encoder odometry, camera-corrected ---------------------
+    def _read_ticks(self):
+        line = self.link.recv()
+        if not line:
+            return (0, 0)
+        f = line.split()
+        return (int(f[1]), int(f[2])) if f[0] == "O" else (0, 0)
+
     def _integrate(self):
-        vl, vr = self._cmd
-        v = 0.5 * (vl + vr) * self.scale
-        w = np.degrees((vr - vl) * self.scale / R2.TRACK) + \
-            (self.turn_bias if abs(vl) > 50 and abs(vr) > 50 else 0.0)
-        self.th += w * TICK
-        self.x += v * np.cos(np.radians(self.th)) * TICK
-        self.y += v * np.sin(np.radians(self.th)) * TICK
-        self._dr += (v * TICK, 0.0, w * TICK)
+        """Differential-drive dead reckoning on ENCODER TICKS -- not on the
+        commanded velocity times a learned scalar, which is what the first
+        build had and which could not represent the deadband, the per-wheel
+        gain spread or the battery's sag (F99)."""
+        tl, tr = self._read_ticks()
+        dl = (tl - self._ticks[0]) / R2.ENC_CPR * 2.0 * np.pi * R2.WHEEL_R
+        dr = (tr - self._ticks[1]) / R2.ENC_CPR * 2.0 * np.pi * R2.WHEEL_R
+        self._ticks = (tl, tr)
+        ds = 0.5 * (dl + dr)
+        dth = np.degrees((dr - dl) / R2.TRACK)
+        self.th += dth
+        self.x += ds * np.cos(np.radians(self.th - 0.5 * dth))
+        self.y += ds * np.sin(np.radians(self.th - 0.5 * dth))
 
     def _maybe_fix(self):
         self._tick += 1
         if self._tick % self.FIX_EVERY:
             return
         x, y, th = self.spot()
-        # calibration: compare camera displacement with the dead-reckoned
-        # one over the window; only meaningful when the robot really moved
-        cam_d = float(np.hypot(x - self._fix_xy[0], y - self._fix_xy[1]))
-        dr_d = float(self._dr[0])
-        # calibrate only on healthy motion: a JAM (commanded travel, no
-        # camera travel) is not a gain -- it drove scale to the old 0.6
-        # floor once and quarter-speed dead-reckoning poisoned every leg
-        # after.  Physical DC spreads are +-15%; clamp accordingly.
-        if abs(dr_d) > 25.0 and cam_d > 0.5 * abs(dr_d):
-            r = float(np.clip(cam_d / abs(dr_d), 0.7, 1.4))
-            self.scale = float(np.clip(0.9*self.scale + 0.1*self.scale*r,
-                                       0.8, 1.3))
         self.x, self.y, self.th = x, y, th
-        self._fix_xy = (x, y, th)
-        self._dr[:] = 0.0
 
-    # ---- wire ----------------------------------------------------------
-    def _drive(self, vl, vr):
-        vl = float(np.clip(vl, -R2.V_MAX, R2.V_MAX))
-        vr = float(np.clip(vr, -R2.V_MAX, R2.V_MAX))
+    def _birth(self):
+        if not self._born:
+            self.x, self.y, self.th = self.spot()
+            self._ticks = self._read_ticks()
+            self._born = True
+
+    def tick(self):
+        self._birth()
+        self._integrate()
+        self._maybe_fix()
+
+    @property
+    def pose(self):
+        self._birth()
+        return self.x, self.y, self.th
+
+    # ---- wire ------------------------------------------------------------
+    def _drive(self, v, w):
+        """(v mm/s, w deg/s) -> wheel speeds -> the wire, at 20 Hz."""
+        dv = np.radians(w) * R2.TRACK / 2.0
+        vl = float(np.clip(v - dv, -R2.V_MAX, R2.V_MAX))
+        vr = float(np.clip(v + dv, -R2.V_MAX, R2.V_MAX))
         self._cmd = (vl, vr)
         if self._tick % _CMD_EVERY == 0:
             self.link.cmd(vl, vr, 150)
@@ -201,110 +304,259 @@ class R2Controller:
         self._cmd = (0.0, 0.0)
         self.link.halt()
 
-    def tick(self):
-        """One 50 Hz step of bookkeeping; call from inside primitives."""
-        self._integrate()
-        self._maybe_fix()
+    # ---- DWA -------------------------------------------------------------
+    # Acceleration limits are PHYSICAL now: 2*TAU_STALL/WHEEL_R over the mass.
+    A_LIN = 2000.0                            # mm/s^2 usable (of ~8900 avail)
+    A_ANG = 900.0                             # deg/s^2
+    HORIZON = 0.7                             # s of rollout
+    N_V, N_W = 7, 15
 
-    @property
-    def pose(self):
-        return self.x, self.y, self.th
+    # The body's corners in the chassis frame: what the footprint check
+    # actually tests.  A DISC MODEL CANNOT REPRESENT THIS ROBOT (F99) --
+    # inflating by the inscribed radius (55, the half-WIDTH) leaves the nose
+    # 75 mm out free to enter an obstacle, and it did: the tracker drove the
+    # chassis onto the laboratory plate and pressed there, wheels spinning,
+    # while its disc model reported clear.  Inflating by the circumscribed
+    # radius instead would be safe but would close both 191 mm pinches this
+    # robot was narrowed to fit.  So: plan on the disc, VETO ON THE BODY.
+    _CORNERS = [(78.0, 55.0), (78.0, -55.0), (-78.0, 55.0), (-78.0, -55.0),
+                (78.0, 0.0), (0.0, 0.0)]
 
-    # ---- primitives ----------------------------------------------------
+    def _hits(self, x, y, a, body):
+        ca, sa = np.cos(a), np.sin(a)
+        for lx, ly in self._CORNERS:
+            wx = x + lx * ca - ly * sa
+            wy = y + lx * sa + ly * ca
+            i = int(np.clip(wx // nav.RES, 0, body.shape[0] - 1))
+            j = int(np.clip(wy // nav.RES, 0, body.shape[1] - 1))
+            if body[i, j] >= nav.BLOCKED:
+                return True
+        return False
+
+    def _dwa(self, path, i_ahead, v_max, w_max, grid, body=None):
+        """Sample the admissible window, roll each candidate forward, keep the
+        best.  Score = progress toward the carrot + clearance + speed, minus
+        cross-track error.  A candidate whose rollout touches a blocked cell
+        is discarded outright, which is what makes 'stuck' structurally
+        impossible rather than something a watchdog notices afterwards."""
+        px, py, th = self.x, self.y, np.radians(self.th)
+        v0 = 0.5 * (self._cmd[0] + self._cmd[1])
+        w0 = np.degrees((self._cmd[1] - self._cmd[0]) / R2.TRACK)
+        dt = 1.0 / hal.Clock.HZ
+        vs = np.linspace(max(-v_max, v0 - self.A_LIN * dt * 4),
+                         min(v_max, v0 + self.A_LIN * dt * 4), self.N_V)
+        ws = np.linspace(max(-w_max, w0 - self.A_ANG * dt * 4),
+                         min(w_max, w0 + self.A_ANG * dt * 4), self.N_W)
+        cand = [(v, w) for v in vs for w in ws]
+        # ESCAPES, always available whatever the accel window says.  A
+        # differential drive can ALWAYS spin on the spot and can always back
+        # up, and those two are exactly the moves that rescue a chassis whose
+        # forward window has gone empty.  Without them the tracker declared
+        # itself stuck four times a leg (measured) in situations a driver
+        # would have turned out of in half a second.
+        for w in (-w_max, -0.6 * w_max, 0.6 * w_max, w_max):
+            cand.append((0.0, w))
+            cand.append((-140.0, 0.35 * w))
+        cand.append((-170.0, 0.0))
+        cx, cy = path[i_ahead]
+        best, best_s = (0.0, 0.0), -1e18
+        steps = 6
+        h = self.HORIZON / steps
+        for v, w in cand:
+            if True:
+                x, y, a = px, py, th
+                imminent, pen = False, 0.0
+                for k in range(steps):
+                    a += np.radians(w) * h
+                    x += v * np.cos(a) * h
+                    y += v * np.sin(a) * h
+                    if body is not None:
+                        if self._hits(x, y, a, body):
+                            # HARD-REJECT ONLY WHAT IS IMMINENT.  Rejecting
+                            # any rollout that grazes an inflated halo empties
+                            # the window everywhere near a wall -- measured,
+                            # five of six legs jammed within seconds.  The
+                            # A* path is already clear; DWA's job is to track
+                            # it and to not hit what the path did not know
+                            # about.  So: veto the next 2 steps, and merely
+                            # dislike the rest.
+                            if k < 2:
+                                imminent = True
+                                break
+                            pen += 600.0 / (k + 1)
+                            break
+                        # NO soft clearance term.  A* already routed for
+                        # clearance; charging it again here made the tracker
+                        # pay ~100 points to move at all inside the inflation
+                        # band -- which is most of the field -- against a
+                        # speed reward of 20, so it crawled the whole match
+                        # at 80 mm/s against a 340 limit (measured).  DWA's
+                        # job is tracking and imminent-collision veto; the
+                        # clearance judgement belongs to the planner.
+                if imminent:
+                    continue
+                d_end = np.hypot(cx - x, cy - y)
+                head = abs(_wrap(np.degrees(np.arctan2(cy - y, cx - x))
+                                 - np.degrees(a)))
+                # forward progress is worth more than spinning: the escapes
+                # must rescue the tracker, not become its favourite move
+                s = (-2.0 * d_end - 1.2 * head + 0.25 * max(v, 0.0)
+                     - 0.20 * abs(min(v, 0.0)) - pen)
+                if s > best_s:
+                    best_s, best = s, (v, w)
+        return best
+
+    # ---- primitives ------------------------------------------------------
     def face(self, th_t, tol=6.0, cap_s=4.0):
         n = int(cap_s * hal.Clock.HZ)
         for _ in range(n):
             err = _wrap(th_t - self.th)
             if abs(err) < tol:
                 break
-            w = np.clip(3.2 * err, -R2.W_MAX, R2.W_MAX)
-            dv = np.radians(w) * R2.TRACK / 2.0
-            # keep the wheels outside the deadband or nothing turns
-            if abs(dv) < R2.DEADBAND + 12.0:
-                dv = np.sign(dv) * (R2.DEADBAND + 12.0)
-            self._drive(-dv, dv)
+            w = float(np.clip(3.2 * err, -R2.W_MAX, R2.W_MAX))
+            if abs(w) < 40.0:
+                w = 40.0 * np.sign(w)
+            self._drive(0.0, w)
             self.tick()
             yield
         self.stop()
-        for _ in range(4):
+        for _ in range(3):
             self.tick(); yield
 
-    def goto(self, tx, ty, v_max=320.0, tol=25.0, cap_s=12.0, slow_into=None):
-        """Drive to a point: initial face if far off-bearing, then a heading-P
-        pursuit with a speed ramp.  slow_into caps speed near the goal.
-        A JAM (robot-robot contact, mostly) backs off and retries twice,
-        then gives up rather than grinding the match away."""
-        b0 = np.degrees(np.arctan2(ty - self.y, tx - self.x))
-        if abs(_wrap(b0 - self.th)) > 35.0:
-            yield from self.face(b0, tol=10.0)
+    def follow_path(self, path, v_max=340.0, w_max=200.0, tol=30.0,
+                    cap_s=None, grid=None):
+        """Track a planned path with DWA.  Returns True on arrival."""
+        if not path:
+            return True
+        self._birth()
+        body = None
+        if grid is None and self.cmap is not None:
+            grid = self.cmap.inflated(R2_INSCRIBED, R2_CIRCUM)
+            body = self.cmap.inflated(6.0, 8.0)
+        if cap_s is None:
+            cap_s = 4.0 + nav.path_length(path) / 120.0
         n = int(cap_s * hal.Clock.HZ)
-        jx, jy, jn, jams = self.x, self.y, 0, 0
+        gx, gy = path[-1]
+        jx, jy, jn = self.x, self.y, 0
         for _ in range(n):
-            jn += 1
-            if jn >= 60:
-                if np.hypot(self.x - jx, self.y - jy) < 14.0 and \
-                        abs(self._cmd[0]) + abs(self._cmd[1]) > 100.0:
-                    jams += 1
-                    if jams > 2:
-                        self.stop()
-                        return
-                    yield from self.back_off(90.0)
-                jx, jy, jn = self.x, self.y, 0
-            dx, dy = tx - self.x, ty - self.y
-            dist = float(np.hypot(dx, dy))
-            if dist < tol:
-                break
-            err = _wrap(np.degrees(np.arctan2(dy, dx)) - self.th)
-            if abs(err) > 55.0:
-                yield from self.face(np.degrees(np.arctan2(dy, dx)), tol=8.0)
-                continue
-            v = min(v_max, max(90.0, 2.2 * dist))
-            if slow_into is not None:
-                v = min(v, slow_into)
-            v *= max(0.25, 1.0 - abs(err) / 80.0)
-            w = np.clip(2.6 * err, -140.0, 140.0)          # deg/s of yaw
-            dv = np.radians(w) * R2.TRACK / 2.0
-            self._drive(v - dv, v + dv)
+            if np.hypot(gx - self.x, gy - self.y) < tol:
+                self.stop()
+                for _ in range(3):
+                    self.tick(); yield
+                return True
+            i = self._carrot(path, 170.0)
+            v, w = self._dwa(path, i, v_max, w_max, grid, body)
+            if abs(v) < 8.0 and abs(w) < 8.0:
+                # the window is empty -- every rollout hits something.  Back
+                # out, mark the spot, and let the caller replan.
+                self.jams += 1
+                if self.cmap is not None:
+                    self.cmap.add_sticky(self.x, self.y)
+                yield from self.back_off(90.0)
+                self.blocked = True
+                return False
+            self._drive(v, w)
             self.tick()
             yield
+            jn += 1
+            if jn >= 50:
+                if np.hypot(self.x - jx, self.y - jy) < 12.0:
+                    self.jams += 1
+                    if self.cmap is not None:
+                        self.cmap.add_sticky(self.x, self.y)
+                    yield from self.back_off(90.0)
+                    self.blocked = True
+                    return False
+                jx, jy, jn = self.x, self.y, 0
         self.stop()
-        for _ in range(4):
-            self.tick(); yield
+        return np.hypot(gx - self.x, gy - self.y) < tol * 2.0
 
-    def push_to(self, tx, ty, v=150.0, tol=30.0, cap_s=16.0):
-        """A plow push: same pursuit, gentler -- the puck must stay in the
-        pocket, so turns are arc-limited and speed is constant-low."""
+    def _carrot(self, path, look):
+        """Index of the point `look` mm ahead along the path."""
+        best, bd = 0, 1e18
+        for k, (x, y) in enumerate(path):
+            d = np.hypot(x - self.x, y - self.y)
+            if d < bd:
+                bd, best = d, k
+        acc = 0.0
+        for k in range(best, len(path) - 1):
+            acc += np.hypot(path[k+1][0] - path[k][0],
+                            path[k+1][1] - path[k][1])
+            if acc >= look:
+                return k + 1
+        return len(path) - 1
+
+    def goto(self, tx, ty, v_max=340.0, tol=30.0, cap_s=None, t_now=None,
+             tries=4):
+        """Plan a path to (tx, ty), follow it, and REPLAN when the tracker
+        runs out of admissible moves.
+
+        The replan is the whole recovery story (F99).  A tracked path is a
+        reference, and the chassis drifts off it -- 59 mm was enough, measured:
+        from there the straight line to the carrot clipped a patient the PATH
+        went around, DWA correctly vetoed every candidate, and the first build
+        simply gave up 700 mm short.  Replanning from where the robot actually
+        IS costs half a millisecond and is the correct answer; the sticky cost
+        the tracker just dropped stops the new plan repeating the old one."""
+        self._birth()
+        self.blocked = False
+        for attempt in range(max(1, tries)):
+            if self.cmap is None:
+                path = [(self.x, self.y), (tx, ty)]
+            else:
+                t0 = t_now if t_now is not None else (
+                    self.clock() if self.clock else 0.0)
+                path, _ = nav.plan(self.cmap, (self.x, self.y), (tx, ty),
+                                   R2_INSCRIBED, R2_CIRCUM, t0=t0, speed=v_max)
+                if path is None:
+                    self.blocked = True
+                    return False
+                path = list(path) + [(tx, ty)]
+            ok = yield from self.follow_path(path, v_max=v_max, tol=tol,
+                                             cap_s=cap_s)
+            if ok:
+                self.blocked = False
+                return True
+            if np.hypot(tx - self.x, ty - self.y) < tol * 1.6:
+                self.blocked = False
+                return True
+        return False
+
+    def push_to(self, tx, ty, v=170.0, tol=35.0, cap_s=16.0):
+        """A plow push: straight, slow, and gently steered so the puck stays
+        in the pocket.  No costmap avoidance here on purpose -- the push
+        corridor was proved clear by the push planner before we committed,
+        and swerving mid-push is how you lose the cargo."""
         n = int(cap_s * hal.Clock.HZ)
         jx, jy, jn = self.x, self.y, 0
         for _ in range(n):
-            jn += 1
-            if jn >= 70:
-                if np.hypot(self.x - jx, self.y - jy) < 14.0:
-                    self.stop()
-                    return                   # jammed mid-push: abandon it
-                jx, jy, jn = self.x, self.y, 0
             dx, dy = tx - self.x, ty - self.y
-            dist = float(np.hypot(dx, dy))
-            if dist < tol:
+            if float(np.hypot(dx, dy)) < tol:
                 break
             err = _wrap(np.degrees(np.arctan2(dy, dx)) - self.th)
-            w = np.clip(1.6 * err, -55.0, 55.0)            # gentle: keep the
-            dv = np.radians(w) * R2.TRACK / 2.0            # puck in the pocket
-            self._drive(v - dv, v + dv)
+            self._drive(v * max(0.4, 1.0 - abs(err) / 90.0),
+                        float(np.clip(1.6 * err, -55.0, 55.0)))
             self.tick()
             yield
+            jn += 1
+            if jn >= 60:
+                if np.hypot(self.x - jx, self.y - jy) < 12.0:
+                    self.stop()
+                    return False
+                jx, jy, jn = self.x, self.y, 0
         self.stop()
-        for _ in range(4):
+        for _ in range(3):
             self.tick(); yield
+        return True
 
-    def back_off(self, mm_, v=200.0):
+    def back_off(self, mm_, v=220.0):
         n = int(mm_ / v * hal.Clock.HZ)
         for _ in range(n):
-            self._drive(-v, -v)
+            self._drive(-v, 0.0)
             self.tick()
             yield
         self.stop()
-        for _ in range(4):
+        for _ in range(3):
             self.tick(); yield
 
     def shake_out(self, n=4):

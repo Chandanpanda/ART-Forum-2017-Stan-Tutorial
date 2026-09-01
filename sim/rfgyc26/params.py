@@ -539,23 +539,30 @@ class Robot2:
     SERVO_KP        = 0.0045                 # N.m per (mm/s) of error
     SERVO_KI        = 0.030                  # N.m per (mm/s . s)
 
-    # THE PLOW.  A straight blade with swept-back end fences: a shallow
-    # pocket 80 mm across that centres a O20 patient and holds it through
-    # gentle arcs (radius >= 200).  Bottom edge 2 mm off the floor; 26 tall
-    # against a 20 mm puck so nothing rides over.
-    PLOW_X          = 78.0                   # blade face ahead of body centre
-    PLOW_W          = 120.0
+    # THE CAPTURE POCKET, not a plow (F106).  A blade with swept fences
+    # CENTRES a patient but does not HOLD one: the puck squirts out on any
+    # turn, which is why deliveries had to be decomposed into multi-leg
+    # straight pushes each constrained by wall geometry, and why most of
+    # them failed.  A deep U opening forward holds the puck on three sides
+    # -- two parallel walls through every turn, a back stop so it cannot
+    # enter the body -- and RELEASES BY BACKING AWAY.  No actuator, still
+    # two motors, and the mission becomes what it should always have been:
+    # go there, capture, carry, release.
+    #
+    #      flare      \        /        the puck enters the flare, slides
+    #      walls       ||    ||          down to the stop, and is then
+    #      stop        ||====||          captive through any manoeuvre
+    #
+    STOP_X          = 42.0                   # back stop, ahead of centre
+    POCKET_D        = 52.0                   # parallel walls run STOP_X..+D
+    POCKET_W        = 46.0                   # gap: a O20 puck with slop
+    FLARE_L         = 42.0                   # funnel mouth
+    FLARE_ANG       = 38.0                   # degrees out from the walls
+    PLOW_W          = 120.0                  # overall, flare tip to tip
     PLOW_H          = 26.0
-    PLOW_CLEAR      = 5.0                    # 2 dug in: the nose
-                                             # sinks ~2 mm on the
-                                             # caster compliance at
-                                             # full accel and the
-                                             # blade anchored (F93)
-    PLOW_POCKET     = 80.0                   # straight section between fences
-    FENCE_L         = 26.0
-    FENCE_ANG       = 40.0                   # degrees swept back; the pair
-                                             # spans PLOW_W exactly:
-                                             # 80 + 2*26*cos(40) = 120
+    PLOW_CLEAR      = 5.0
+    # where a captured puck's centre sits, ahead of the axle
+    CAPTURE_X       = STOP_X + 14.0
 
     # THE TRAY.  The two PCC_R kits ride in a shallow recess, floor tilted
     # 3 degrees down toward the tail, a 2.5 mm lip on the open tail edge:

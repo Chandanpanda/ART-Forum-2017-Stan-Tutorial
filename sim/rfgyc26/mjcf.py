@@ -1167,11 +1167,9 @@ def robot2_body(pose=None):
     from .params import Robot2 as R2
     px, py, ph = pose or R2.START_POSE
     z0 = R2.WHEEL_R
-    fa = radians(R2.FENCE_ANG)
-    fy = R2.PLOW_POCKET/2.0 + (R2.FENCE_L/2.0)*cos(fa)
-    fx = R2.PLOW_X + (R2.FENCE_L/2.0)*sin(fa)   # forward: a FUNNEL
-    # (backward-swept wings were escape ramps: pucks pressed a wing
-    #  at speed and slid ALONG it out of the pocket -- F94)
+    fa = radians(R2.FLARE_ANG)
+    fl_x = R2.STOP_X + R2.POCKET_D + (R2.FLARE_L/2.0)*cos(fa)
+    fl_y = R2.POCKET_W/2.0 + (R2.FLARE_L/2.0)*sin(fa)
     plow_zc = R2.PLOW_CLEAR + R2.PLOW_H/2.0 - z0
     tray_zc = R2.TRAY_Z - z0
     parts = [
@@ -1187,21 +1185,33 @@ def robot2_body(pose=None):
         f'pos="0 0 {mm(26.0 - z0):.5f}" '
         f'size="{mm(38.0):.5f} {mm(34.0):.5f} {mm(12.0):.5f}" '
         f'mass="{0.20:.3f}" rgba="0.30 0.33 0.38 1"/>',
-        # plow: blade + two swept-back fences = the 120 mm pocket
-        f'  <geom name="r2_blade" class="robot" type="box" '
-        f'pos="{mm(R2.PLOW_X + 2.0):.5f} 0 {mm(plow_zc):.5f}" '
-        f'size="{mm(2.0):.5f} {mm(R2.PLOW_POCKET/2):.5f} {mm(R2.PLOW_H/2):.5f}" '
-        f'mass="0.015" rgba="0.85 0.55 0.15 1"/>',
-        f'  <geom name="r2_fence_l" class="robot" type="box" '
-        f'pos="{mm(fx):.5f} {mm(fy):.5f} {mm(plow_zc):.5f}" '
-        f'euler="0 0 {R2.FENCE_ANG:.1f}" '
-        f'size="{mm(2.0):.5f} {mm(R2.FENCE_L/2):.5f} {mm(R2.PLOW_H/2):.5f}" '
-        f'mass="0.006" rgba="0.85 0.55 0.15 1"/>',
-        f'  <geom name="r2_fence_r" class="robot" type="box" '
-        f'pos="{mm(fx):.5f} {mm(-fy):.5f} {mm(plow_zc):.5f}" '
-        f'euler="0 0 {-R2.FENCE_ANG:.1f}" '
-        f'size="{mm(2.0):.5f} {mm(R2.FENCE_L/2):.5f} {mm(R2.PLOW_H/2):.5f}" '
-        f'mass="0.006" rgba="0.85 0.55 0.15 1"/>',
+        # THE CAPTURE POCKET (F106): a back stop, two parallel walls and a
+        # flared mouth.  Holds a patient through turns, releases by
+        # reversing, and needs no actuator to do either.
+        f'  <geom name="r2_stop" class="robot" type="box" '
+        f'pos="{mm(R2.STOP_X):.5f} 0 {mm(plow_zc):.5f}" '
+        f'size="{mm(3.0):.5f} {mm(R2.POCKET_W/2 + 3.0):.5f} '
+        f'{mm(R2.PLOW_H/2):.5f}" mass="0.012" rgba="0.85 0.55 0.15 1"/>',
+        f'  <geom name="r2_wall_l" class="robot" type="box" '
+        f'pos="{mm(R2.STOP_X + R2.POCKET_D/2):.5f} {mm(R2.POCKET_W/2):.5f} '
+        f'{mm(plow_zc):.5f}" '
+        f'size="{mm(R2.POCKET_D/2):.5f} {mm(3.0):.5f} {mm(R2.PLOW_H/2):.5f}" '
+        f'mass="0.010" rgba="0.85 0.55 0.15 1"/>',
+        f'  <geom name="r2_wall_r" class="robot" type="box" '
+        f'pos="{mm(R2.STOP_X + R2.POCKET_D/2):.5f} {mm(-R2.POCKET_W/2):.5f} '
+        f'{mm(plow_zc):.5f}" '
+        f'size="{mm(R2.POCKET_D/2):.5f} {mm(3.0):.5f} {mm(R2.PLOW_H/2):.5f}" '
+        f'mass="0.010" rgba="0.85 0.55 0.15 1"/>',
+        f'  <geom name="r2_flare_l" class="robot" type="box" '
+        f'pos="{mm(fl_x):.5f} {mm(fl_y):.5f} {mm(plow_zc):.5f}" '
+        f'euler="0 0 {R2.FLARE_ANG:.1f}" '
+        f'size="{mm(R2.FLARE_L/2):.5f} {mm(3.0):.5f} {mm(R2.PLOW_H/2):.5f}" '
+        f'mass="0.008" rgba="0.85 0.55 0.15 1"/>',
+        f'  <geom name="r2_flare_r" class="robot" type="box" '
+        f'pos="{mm(fl_x):.5f} {mm(-fl_y):.5f} {mm(plow_zc):.5f}" '
+        f'euler="0 0 {-R2.FLARE_ANG:.1f}" '
+        f'size="{mm(R2.FLARE_L/2):.5f} {mm(3.0):.5f} {mm(R2.PLOW_H/2):.5f}" '
+        f'mass="0.008" rgba="0.85 0.55 0.15 1"/>',
         # kit tray: tilted floor, side+front rails, low tail lip
         f'  <geom name="r2_tray" class="robot" type="box" '
         f'pos="{mm(R2.TRAY_X):.5f} 0 {mm(tray_zc):.5f}" euler="0 {R2.TRAY_TILT:.1f} 0" '
@@ -1356,7 +1366,16 @@ def scene_full_match(disc_positions, robot_pose=None, rng=None, kits_aboard=True
                          f'0.0001 0.0001 0.0001" '
                          f'solref="0.005 1.0" solimp="0.9 0.99 0.002"/>')
         for i in range(n_cyl):
-            for g in ("r2_blade", "r2_fence_l", "r2_fence_r"):
+            # THE POCKET GRIPS; THE FLARES DO NOT (F106).  A plow wanted
+            # slippery faces so a puck slid to the centre -- but a CAPTURE
+            # pocket wants the opposite: 0.06 on the holding walls let the
+            # puck squirt straight back out of the mouth on the first turn,
+            # every time (measured 4/4).  Rubber-faced walls, slick funnel.
+            for g in ("r2_stop", "r2_wall_l", "r2_wall_r"):
+                extra.append(f'    <pair geom1="{g}" geom2="cyl{i}_g" '
+                             f'friction="0.75 0.75 0.002 0.0001 0.0001" '
+                             f'solref="0.004 1" solimp="0.95 0.99 0.001"/>')
+            for g in ("r2_flare_l", "r2_flare_r"):
                 extra.append(f'    <pair geom1="{g}" geom2="cyl{i}_g" '
                              f'friction="0.06 0.06 0.0005 0.0001 0.0001" '
                              f'solref="0.004 1" solimp="0.95 0.99 0.001"/>')

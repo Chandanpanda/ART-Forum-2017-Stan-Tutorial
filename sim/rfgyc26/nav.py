@@ -383,7 +383,7 @@ def plan(cmap, start, goal, inscribed, circumscribed, t0=0.0, speed=280.0,
 
 PUSH_HEADINGS = 16
 PUSH_DISTS = (60.0, 120.0, 200.0, 300.0, 420.0, 560.0, 700.0)
-PLOW_REACH = 130.0            # centre-to-blade-face + a working margin
+PLOW_REACH = 118.0            # centre to just behind the pocket mouth
 BODY_PTS = [(78.0, 55.0), (78.0, -55.0), (-78.0, 55.0), (-78.0, -55.0),
             (78.0, 0.0), (0.0, 0.0)]
 
@@ -413,6 +413,12 @@ def body_masks(cmap, n_head=PUSH_HEADINGS):
             bad |= occ[i, j]
         out.append(~bad)
     return out
+
+
+def _infield(x, y, margin=95.0):
+    """Is a robot centre here inside the playing surface, with room?"""
+    return (margin <= x <= FIELD_W - margin and
+            margin <= y <= FIELD_H - margin)
 
 
 def _body_free(body, x, y, a):
@@ -534,3 +540,46 @@ def _unit(dx, dy):
     if n < 1e-9:
         return 1.0, 0.0, 0.0
     return dx / n, dy / n, n
+
+
+def capture_approach(cmap, puck, prefer=None, standoff=185.0):
+    """Where to stand, and facing where, to CAPTURE this patient.
+
+    A pushing robot must approach along the push line -- that coupling is
+    what made the sticker columns unworkable, because the run-up to a puck
+    passed straight through its neighbours.  A robot that CAPTURES has no
+    such constraint: it may come from any side that is clear, and carry
+    wherever it likes afterwards.  So this searches the headings and returns
+    the cheapest clear one, preferring `prefer` (usually the carry bearing)
+    when several work.
+
+    Returns (x, y, heading_deg) or None.
+    """
+    masks = getattr(cmap, "_push_masks", None)
+    if masks is None:
+        masks = body_masks(cmap)
+        cmap._push_masks = masks
+    nx, ny = masks[0].shape
+    best, best_c = None, 1e18
+    for k, ok_here in enumerate(masks):
+        th = 2.0 * np.pi * k / len(masks)
+        ux, uy = np.cos(th), np.sin(th)
+        sx, sy = puck[0] - ux * standoff, puck[1] - uy * standoff
+        if not _infield(sx, sy, margin=85.0):
+            continue
+        i = int(np.clip(sx // cmap.res, 0, nx - 1))
+        j = int(np.clip(sy // cmap.res, 0, ny - 1))
+        if not ok_here[i, j]:
+            continue
+        # the run-in must be clear right up to the pocket's mouth
+        run = np.linspace(0.0, standoff - PLOW_REACH, 6)
+        ii = np.clip(((sx + ux * run) // cmap.res).astype(int), 0, nx - 1)
+        jj = np.clip(((sy + uy * run) // cmap.res).astype(int), 0, ny - 1)
+        if not ok_here[ii, jj].all():
+            continue
+        c = 0.0
+        if prefer is not None:
+            c = abs((np.degrees(th) - prefer + 180.0) % 360.0 - 180.0)
+        if c < best_c:
+            best_c, best = c, (sx, sy, float(np.degrees(th)))
+    return best

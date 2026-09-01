@@ -345,7 +345,8 @@ class R2Controller:
                 return True
         return False
 
-    def _dwa(self, path, i_ahead, v_max, w_max, grid, body=None):
+    def _dwa(self, path, i_ahead, v_max, w_max, grid, body=None,
+             carry=False):
         """Sample the admissible window, roll each candidate forward, keep the
         best.  Score = progress toward the carrot + clearance + speed, minus
         cross-track error.  A candidate whose rollout touches a blocked cell
@@ -366,10 +367,22 @@ class R2Controller:
         # forward window has gone empty.  Without them the tracker declared
         # itself stuck four times a leg (measured) in situations a driver
         # would have turned out of in half a second.
-        for w in (-w_max, -0.6 * w_max, 0.6 * w_max, w_max):
-            cand.append((0.0, w))
-            cand.append((-140.0, 0.35 * w))
-        cand.append((-170.0, 0.0))
+        if carry:
+            # CARRYING: never stop, never spin (F106).  The pocket holds a
+            # patient only while the chassis is driving INTO it; a stationary
+            # pivot swings the walls sideways past a puck that has nothing
+            # behind it and flings it out the mouth -- measured, 4 captures
+            # of 4 survived the approach and none survived a 90-degree turn
+            # in place.  So a laden robot turns by driving arcs.
+            cand = [(v, w) for v, w in cand if v > 60.0]
+            if not cand:
+                cand = [(90.0, w) for w in
+                        np.linspace(-0.5 * w_max, 0.5 * w_max, 9)]
+        else:
+            for w in (-w_max, -0.6 * w_max, 0.6 * w_max, w_max):
+                cand.append((0.0, w))
+                cand.append((-140.0, 0.35 * w))
+            cand.append((-170.0, 0.0))
         cx, cy = path[i_ahead]
         best, best_s = (0.0, 0.0), -1e18
         steps = 6
@@ -436,7 +449,7 @@ class R2Controller:
             self.tick(); yield
 
     def follow_path(self, path, v_max=340.0, w_max=200.0, tol=30.0,
-                    cap_s=None, grid=None):
+                    cap_s=None, grid=None, carry=False):
         """Track a planned path with DWA.  Returns True on arrival."""
         if not path:
             return True
@@ -457,7 +470,7 @@ class R2Controller:
                     self.tick(); yield
                 return True
             i = self._carrot(path, 170.0)
-            v, w = self._dwa(path, i, v_max, w_max, grid, body)
+            v, w = self._dwa(path, i, v_max, w_max, grid, body, carry)
             if abs(v) < 8.0 and abs(w) < 8.0:
                 # the window is empty -- every rollout hits something.  Back
                 # out, mark the spot, and let the caller replan.
@@ -498,8 +511,8 @@ class R2Controller:
                 return k + 1
         return len(path) - 1
 
-    def goto(self, tx, ty, v_max=340.0, tol=30.0, cap_s=None, t_now=None,
-             tries=4, strict=False):
+    def goto(self, tx, ty, v_max=340.0, w_max=200.0, tol=30.0, cap_s=None,
+             t_now=None, tries=4, strict=False, carry=False):
         """Plan a path to (tx, ty), follow it, and REPLAN when the tracker
         runs out of admissible moves.
 
@@ -525,8 +538,9 @@ class R2Controller:
                     self.blocked = True
                     return False
                 path = list(path) + [(tx, ty)]
-            ok = yield from self.follow_path(path, v_max=v_max, tol=tol,
-                                             cap_s=cap_s)
+            ok = yield from self.follow_path(path, v_max=v_max, w_max=w_max,
+                                             tol=tol, cap_s=cap_s,
+                                             carry=carry)
             if ok:
                 self.blocked = False
                 return True
@@ -534,6 +548,39 @@ class R2Controller:
                 self.blocked = False
                 return True
         return False
+
+    def capture(self, px, py, cap_s=5.0):
+        """Close the last ~120 mm onto a patient so it seats in the pocket.
+        Straight, slow, and blind to the costmap on purpose: the target IS
+        an obstacle and we mean to touch it."""
+        for _ in range(int(cap_s * hal.Clock.HZ)):
+            dx, dy = px - self.x, py - self.y
+            n = float(np.hypot(dx, dy))
+            if n < R2.CAPTURE_X + 12.0:
+                break
+            err = _wrap(np.degrees(np.arctan2(dy, dx)) - self.th)
+            self._drive(150.0 * max(0.35, 1.0 - abs(err) / 80.0),
+                        float(np.clip(1.4 * err, -40.0, 40.0)))
+            self.tick()
+            yield
+        # settle against the stop
+        for _ in range(int(0.4 * hal.Clock.HZ)):
+            self._drive(110.0, 0.0)
+            self.tick()
+            yield
+        self.stop()
+        for _ in range(3):
+            self.tick(); yield
+
+    def holding(self, px, py):
+        """Is the patient still in the pocket?  Cheap and honest: where the
+        camera says it is, in the chassis frame."""
+        a = np.radians(self.th)
+        dx, dy = px - self.x, py - self.y
+        lx = dx * np.cos(a) + dy * np.sin(a)
+        ly = -dx * np.sin(a) + dy * np.cos(a)
+        return (R2.STOP_X - 12.0 < lx < R2.STOP_X + R2.POCKET_D + 26.0
+                and abs(ly) < R2.POCKET_W / 2.0 + 16.0)
 
     def push_to(self, tx, ty, v=170.0, tol=35.0, cap_s=16.0):
         """A plow push: straight, slow, and gently steered so the puck stays
@@ -657,6 +704,19 @@ def zone_of(colour, x):
     return ZONES[DEST[colour]]
 
 
+def _reserved(cm, pt, t):
+    """Is this spot inside a corridor robot 1 still needs?  Destination
+    zones are exempt -- a scored patient is not an obstacle."""
+    for zx0, zy0, zx1, zy1 in ZONES.values():
+        if zx0 - 30 <= pt[0] <= zx1 + 30 and zy0 - 30 <= pt[1] <= zy1 + 30:
+            return False
+    i, j = cm.cell(*pt)
+    for mask, w0, w1 in cm._windows:
+        if w1 > t and mask[i, j]:
+            return True
+    return False
+
+
 def _board_map(pucks, skip=None):
     """A fresh costmap with robot 1's reservations and every patient except
     the one being pushed."""
@@ -723,30 +783,33 @@ def mission_robot2(ctl, m, d=None, log=print, clock=None):
                 done.add(i)
                 continue
             cm = _board_map(board, skip=i)
-            # leave-clean: never park a patient where robot 1 still has to
-            # go -- EXCEPT in a destination zone (F102).  Robot 1's kit
-            # corridor runs straight through the hospital, so an unqualified
-            # mask forbade delivering a red to its own zone and robot 2 then
-            # declared the whole board undeliverable and quit at T+49 with
-            # sixty seconds in hand.  A scored patient is not an obstacle.
-            avoid = np.zeros((cm.nx, cm.ny), dtype=bool)
-            for mask, w0, w1 in cm._windows:
-                if w1 > now():
-                    avoid |= mask
-            for zx0, zy0, zx1, zy1 in ZONES.values():
-                gx, gy = cm._grid_xy()
-                avoid &= ~((gx >= zx0 - 30.0) & (gx <= zx1 + 30.0) &
-                           (gy >= zy0 - 30.0) & (gy <= zy1 + 30.0))
-            legs, secs = nav.plan_push(cm, (x, y), z, robot=ctl.pose[:2],
-                                       avoid=avoid)
-            if legs is None:
+            # CARRYING MAKES FEASIBILITY A NAVIGATION QUESTION (F106).  The
+            # push planner asked "is there a straight shove corridor from
+            # here to the zone, in three legs, with a standable run-up for
+            # each" -- and for the sticker columns the answer was usually no,
+            # which is why robot 2 spent three quarters of the match deciding
+            # nothing was deliverable.  A robot that HOLDS the patient only
+            # has to be able to DRIVE there.
+            app = nav.capture_approach(cm, (x, y))
+            if app is None:
                 continue
-            # value is the referee's: +5 delivered and +3 not-adrift = 8
+            tgt = (float(np.clip(x, z[0] + 25.0, z[2] - 25.0)),
+                   float(np.clip(y, z[1] + 25.0, z[3] - 25.0)))
+            # leave-clean still applies to where we PUT it
+            if _reserved(cm, tgt, now()):
+                continue
+            p_in, t_in = nav.plan(cm, ctl.pose[:2], app[:2], R2_INSCRIBED,
+                                  R2_CIRCUM, t0=now(), speed=320.0)
+            if p_in is None:
+                continue
+            p_out, t_out = nav.plan(cm, (x, y), tgt, R2_INSCRIBED, R2_CIRCUM,
+                                    t0=now() + t_in, speed=230.0)
+            if p_out is None:
+                continue
+            secs = t_in + t_out + 5.0          # capture + release overhead
             if best is None or secs < best[1]:
-                best = (i, secs, legs, cm, (x, y))
+                best = (i, secs, [tgt], cm, (x, y), app)
         if best is None:
-            # NOT a reason to stop while the window is open: reservations
-            # expire and the board keeps changing under robot 1's wheels.
             if now() > PATIENT_DEADLINE - 6.0:
                 break
             log(t() + "nothing deliverable yet; waiting")
@@ -754,51 +817,65 @@ def mission_robot2(ctl, m, d=None, log=print, clock=None):
                 ctl.tick()
                 yield
             continue
-        i, secs, legs, cm, p0 = best
+        i, secs, legs, cm, p0, app = best
+        c = dict((k, v) for k, _, _, v in [(a, b, cc, dd) for a, b, cc, dd
+                                           in board])[i]
+        z = zone_of(c, p0[0])
         if now() + secs > PATIENT_DEADLINE + 4.0:
             log(t() + "%.0f s of work left, %.0f s of clock -- stopping"
-                % (secs, 112.0 - now()))
+                % (secs, PATIENT_DEADLINE - now()))
             break
-        log(t() + "puck %d: %d legs, %.1f s" % (i, len(legs), secs))
+        log(t() + "puck %d: capture at (%.0f,%.0f), carry to (%.0f,%.0f)"
+            % (i, p0[0], p0[1], legs[-1][0], legs[-1][1]))
         ctl.cmap = cm
         failed = False
-        for k, (tx, ty) in enumerate(legs):
-            px, py = live(i)
-            ux, uy, n = _norm(tx - px, ty - py)
-            if n < 55.0:
-                continue
-            # THE APPROACH DOES NOT NEED TO BE PRECISE (F101), and asking
-            # for precision is what cost the deliveries.  What the push
-            # actually requires is: be BEHIND the puck, FACING the push
-            # direction, with the puck inside a 120 mm pocket.  The first
-            # version drove to an exact pose 130 mm back on a 34 mm
-            # tolerance and abandoned the puck when the tracker could not
-            # nail it -- 12-20 s a puck, nothing delivered.  So: park loosely
-            # well behind it, turn onto the push line, then CLOSE the last
-            # 120 mm in a straight line.  The straight run is what funnels
-            # the puck into the pocket, and it needs no planner at all.
-            hd = float(np.degrees(np.arctan2(uy, ux)))
-            sx, sy = px - ux * 250.0, py - uy * 250.0
-            ok = yield from ctl.goto(sx, sy, v_max=330.0, tol=70.0,
-                                     tries=2, strict=True)
-            # 300, not 190: the straight close below covers the rest, and
-            # abandoning from inside a chassis-length of the staging point
-            # is throwing away a delivery that was nearly made
-            if not ok and np.hypot(ctl.pose[0] - sx, ctl.pose[1] - sy) > 300.0:
-                failed = True
-                break
-            yield from ctl.face(hd, tol=6.0)
-            # close on the puck: the plow's mouth does the centring
-            yield from ctl.push_to(px - ux * 40.0, py - uy * 40.0, v=200.0,
-                                   tol=45.0, cap_s=4.0)
-            yield from ctl.push_to(tx - ux * 60.0, ty - uy * 60.0, v=180.0,
-                                   cap_s=6.0 + n / 150.0)
-            yield from ctl.back_off(95.0)
-            if now() > PATIENT_DEADLINE + 4.0:
-                break
+        px, py = live(i)
+        # ---- 1. GO: stand off behind the patient, on the line to its zone
+        tx, ty = legs[-1]
+        ux, uy, n = _norm(tx - px, ty - py)
+        sx, sy, hd_in = app
+        # NOT strict here.  A reservation exists to stop robot 2 LEAVING
+        # things in robot 1's way and to stop it loitering there -- the
+        # leave-clean mask on the push targets already does the first, and
+        # the T+70 deadline the second.  Applying it to approach paths as
+        # well simply refused most of the board (measured: 78% of the match
+        # stopped, every patient "could not reach the stand-off").
+        ok = yield from ctl.goto(sx, sy, v_max=330.0, tol=70.0, tries=3)
+        if not ok and np.hypot(ctl.pose[0] - sx, ctl.pose[1] - sy) > 300.0:
+            log(t() + "  puck %d: could not reach the stand-off" % i)
+            done.add(i)
+            continue
+        # ---- 2. GRAB: aim at it and close
+        px, py = live(i)
+        yield from ctl.face(float(np.degrees(np.arctan2(py - ctl.pose[1],
+                                                        px - ctl.pose[0]))),
+                            tol=5.0)
+        yield from ctl.capture(px, py)
+        if not ctl.holding(*live(i)):
+            log(t() + "  puck %d: capture missed" % i)
+            done.add(i)
+            continue
+        # ---- 3. CARRY: an ordinary planned transit, patient aboard.  This
+        # is the whole point of the pocket -- the route to the zone is now a
+        # NAVIGATION problem, not a sequence of straight shoves constrained
+        # by which walls happen to allow a run-up.
+        zx, zy = legs[-1]
+        aim = (zx - ux * R2.CAPTURE_X, zy - uy * R2.CAPTURE_X)
+        # GENTLY.  A laden chassis loses its patient to centrifugal force on
+        # a tight arc as surely as to a pivot: 200 deg/s at 250 mm/s is a
+        # 70 mm radius, and the pocket cannot hold against that.  90 deg/s at
+        # 190 is 120 mm, which it can.
+        ok = yield from ctl.goto(aim[0], aim[1], v_max=190.0, w_max=90.0,
+                                 tol=55.0, tries=3, carry=True)
+        held = ctl.holding(*live(i))
+        # ---- 4. RELEASE: back away and leave it there
+        yield from ctl.back_off(150.0)
+        fx, fy = live(i)
+        inzone = (z[0] <= fx <= z[2] and z[1] <= fy <= z[3])
+        log(t() + "  puck %d: %s at (%.0f,%.0f)%s"
+            % (i, "DELIVERED" if inzone else "dropped short", fx, fy,
+               "" if held else "  (lost en route)"))
         done.add(i)
-        if failed:
-            log(t() + "puck %d: approach blocked, moving on" % i)
 
     # ---- park in the dead corner ----------------------------------------
     log(t() + "parking")

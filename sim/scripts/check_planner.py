@@ -186,6 +186,57 @@ def main():
     check("the cost model stays within 35%% of the stopwatch, block by block",
           not off, "; ".join(off) or "%d blocks" % len(MEASURED))
 
+    # ------------------------------------------------- the value model (F109)
+    # The planner's value function used to be a hand-set constant per station
+    # and it disagreed with the referee by 20 points a match: KL was priced
+    # "2 kits x3 +10 = 16" on the assumption PCC_R stays empty, so the DP
+    # dropped it for a lab dock worth 23 and the fleet forfeited the +20
+    # distribution bonus.  These pin _value to the referee itself.
+    from rfgyc26 import referee as _ref
+    from rfgyc26.params import Field as _F, M2 as _M2
+
+    def _kits(*zones):
+        pts = []
+        for z, n in zones:
+            c = ((z[0]+z[2])/2.0, (z[1]+z[3])/2.0)
+            pts += [c]*n
+        return _ref.score_kits(pts)[0]
+
+    for pcc, want_kl in ((0, 16.0), (2, 36.0)):
+        base = planner._value(["KH"], pcc_r=pcc)
+        got = planner._value(["KH", "KL"], pcc_r=pcc) - base
+        check("PCC_L is worth %+.0f when robot 2 lands %d PCC_R kits"
+              % (want_kl, pcc), abs(got - want_kl) < 1e-6, "got %+.1f" % got)
+
+    check("a full robot-1 board is worth exactly samples+kits+beams",
+          abs(planner._value(["L1", "L2", "L3", "KH", "KL", "BEAMS"],
+                             pcc_r=2) - 170.0) < 1e-6,
+          "%.1f" % planner._value(["L1", "L2", "L3", "KH", "KL", "BEAMS"],
+                                  pcc_r=2))
+    check("the kit arithmetic IS the referee's, not a copy",
+          abs((planner._value(["KH", "KL"], pcc_r=2)
+               - planner._value(["KH", "KL"], pcc_r=0))
+              - (_kits((_F.HOSPITAL, 6), (_F.PCC_L, 2), (_F.PCC_R, 2))
+                 - _kits((_F.HOSPITAL, 6), (_F.PCC_L, 2)))) < 1e-6)
+
+    # and the beam constant is the referee's too: a perfect seal, scored
+    beam1 = (_F.BEAM1_CENTRE[0], _F.BEAM1_CENTRE[1], 30.0,
+             np.array([1.0, 0.0, 0.0, 0.0]))
+    a = np.radians(90.0) / 2.0
+    beam2 = (_F.BEAM2_CENTRE[0], _F.BEAM2_CENTRE[1], 30.0,
+             np.array([np.cos(a), 0.0, 0.0, np.sin(a)]))
+    seal = _ref.score_beams([beam1, beam2])[0]
+    check("BEAM_SEAL_VALUE equals the referee's score for a perfect seal",
+          abs(planner.BEAM_SEAL_VALUE - seal) < 1e-6,
+          "planner %.0f vs referee %.0f" % (planner.BEAM_SEAL_VALUE, seal))
+
+    # the decision this all exists for
+    planner.FLEET_PCC_R = 2
+    keep = planner.plan(50.3, at="L2", todo=["L3", "KH", "KL", "BEAMS"],
+                        done=["L1", "L2"])
+    check("with PCC_R promised, the tour keeps PCC_L",
+          "KL" in [n for n, _, _ in keep.tasks], repr(keep))
+
     # --------------------------------------------------------------- summary
     fails = [r for r in RESULTS if not r[1]]
     for name, ok, detail in RESULTS:

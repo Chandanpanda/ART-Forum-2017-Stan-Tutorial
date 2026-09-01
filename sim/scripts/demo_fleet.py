@@ -55,7 +55,7 @@ def main():
     g1 = mission_agent_a(rb, list(Field.LAB_HOLE_X), mjcf.LAB_HOLE_Y,
                          CHUTE_OFFSET, log=print, clock=lambda: d.time,
                          discs=discs0)      # the opening survey plans the sweep
-    g2 = robot2.mission_robot2(ctl, m, d=d, log=print, clock=lambda: d.time)
+    g2 = robot2.mission_robot2(ctl, m, d=d, rb=rb, log=print, clock=lambda: d.time)
 
     shown = {"xray": a.xray}
     mjcf.set_xray(m, a.xray)

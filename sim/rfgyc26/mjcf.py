@@ -15,7 +15,9 @@ from .params import Field, Piece, Chassis, AgentA, M2, Vision, mm, BELT_TOP_TAIL
 # R11 (new): the Explainer's hole centre Y 372 puts a O60 hole 18 mm outside a
 # plate spanning Y 360-510.  400 is the nearest value that keeps the bore fully
 # inside the 150-deep plate.  [VERIFY on the field mock-up]
-LAB_HOLE_Y = 400.0
+# the bore centreline.  DEFINED IN referee.py and re-exported here so the
+# scoring module needs no import from the model generator (F109).
+from .referee import LAB_HOLE_Y            # noqa: F401
 
 def local_to_world(px, py, heading_deg, lx_mm, ly_mm):
     """Robot-frame (mm) -> field-frame (mm).  Used to spawn the carried beams

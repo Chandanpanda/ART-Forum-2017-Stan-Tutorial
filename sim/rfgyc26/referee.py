@@ -1,7 +1,16 @@
-"""Senior scoring, as a pure function of the final world state."""
-import numpy as np, mujoco
+"""Senior scoring, as a pure function of the final world state.
+
+PURE ON PURPOSE: numpy and params only.  planner.py imports this module so
+that what a board is WORTH has exactly one definition in the codebase --
+see F109, where the planner's own hand-set copy of the kit arithmetic
+quietly disagreed with this file and threw away the +20 distribution bonus
+every match.  Adding a simulator dependency here would push the planner off
+the Raspberry Pi and force that copy to come back.
+"""
+import numpy as np
 from .params import Field, Piece, M2
-from .mjcf import LAB_HOLE_Y
+
+LAB_HOLE_Y = 400.0           # the bore centreline (mjcf re-exports this)
 
 WRONG_ZONE_PENALTY = -5      # R7: table says -3, penalties section says -5
 

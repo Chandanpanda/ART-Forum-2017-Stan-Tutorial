@@ -1011,6 +1011,17 @@ def mission_agent_a(rb, holes, hole_y, chute_offset, log=print, clock=None,
     from . import planner
     now = clock if clock is not None else (lambda: planner.SWEEP_NOMINAL)
     sched = planner.plan(now(), at="SWEEP")
+    # PUBLISH THE PLAN (F112).  Robot 2's controller runs on this same Pi --
+    # it is a detached actuator, not a peer -- so it can read robot 1's
+    # schedule directly instead of guessing at it.  It needs to: robot 2
+    # keeps out of robot 1's way by reserving corridors in SPACE-TIME, and
+    # until now those windows were hardcoded from one measured running
+    # order.  The moment the planner started choosing between L3 and PCC_L
+    # the windows stopped describing anything: a corridor reserved for
+    # 72-84 s while robot 1 is actually in it at 60-70 is not a
+    # reservation, it is a decoy, and robot 2 duly parked in the one place
+    # robot 1 was about to drive through.
+    rb.schedule = sched
     log(t() + "plan: %r" % (sched,))
     HOLE_OF = {"L1": 0, "L2": 1, "L3": 2}
     prev = "SWEEP"
@@ -1052,6 +1063,7 @@ def mission_agent_a(rb, holes, hole_y, chute_offset, log=print, clock=None,
         elif task == "BEAMS":
             yield from seal_quarantine(rb, log=log, clk=clock)
         sched.complete(task, now())
+        rb.schedule = sched            # every replan is re-published (F112)
         report.append((task, planner.TRAVEL.get((prev, task), 8.0)
                        + planner.DUR[task], now() - t0))
         prev = task

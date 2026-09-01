@@ -27,13 +27,12 @@ are the route's own: the east dogleg around the laboratory (the plate
 cannot be crossed), the y-730 traverse south of the kit drops (F77), the
 west lane the beams stage from.
 
-VALUES ARE THE REFEREE'S, marginal per station:
-    L1/L2/L3   +15 in the slot, +3 for no longer being stranded aboard,
-               +5 once when all three are placed
-    KH (HOSP)  6 kits x3 +10 for the zone not being empty  = +28
-    KL (PCC_L) 2 kits x3 +10                               = +16
-    BEAMS      both beams + closure                        = +70
-PCC_R belongs to robot 2 (F82) and is not this robot's problem.
+VALUES ARE THE REFEREE'S -- literally: _value() scores a projected board
+with referee.score_discs/score_kits rather than keeping a second copy of the
+scoring rules.  That is not tidiness.  The kit column's +20 distribution
+bonus and -10 empty-zone penalties couple robot 1's PCC_L drop to robot 2's
+PCC_R drop, so a per-station constant CANNOT price KL correctly (F109), and
+the constant this file used to carry was wrong by 20 points a match.
 """
 import numpy as np
 
@@ -112,10 +111,79 @@ TRAVEL[("KL", "KH")] = 5.5
 TRAVEL[("KH", "BEAMS")] = 9.0                   # down the west side
 TRAVEL[("KL", "BEAMS")] = 5.0                   # why the loop ends at PCC_L
 
-VALUE = {"L1": 18.0, "L2": 18.0, "L3": 18.0,
-         "KH": 28.0, "KL": 16.0, "BEAMS": 70.0}
-ALL_PLACED_BONUS = 5.0
 NODES = ("L1", "L2", "L3", "KH", "KL", "BEAMS")
+
+# ===================================================== what a board is WORTH
+# THE SCORE IS NOT SEPARABLE ACROSS ROBOTS, AND HAND-SET VALUES CANNOT SAY SO
+# (F109).  This planner used to price each station with a constant:
+#
+#     VALUE = {"L1": 18, "L2": 18, "L3": 18, "KH": 28, "KL": 16, "BEAMS": 70}
+#
+# with a special case bolted on for the one joint bonus it knew about (all
+# three samples, +5).  KL's 16 was derived on paper as "2 kits x3, +10 for
+# the zone not being empty" -- correct ONLY on a board where PCC_R stays
+# empty, which the comment beside it cheerfully admitted: "PCC_R belongs to
+# robot 2 and is not this robot's problem."
+#
+# It is exactly this robot's problem.  The kit column pays +20 for the
+# distribution 6/2/2 and -10 for each EMPTY zone, so robot 1's PCC_L drop
+# and robot 2's PCC_R drop are worth far more together than apart:
+#
+#     robot 2 misses PCC_R:  KH alone -2   KH+KL 14   -> KL is worth 16
+#     robot 2 lands  PCC_R:  KH alone 14   KH+KL 50   -> KL is worth 36
+#
+# Priced at 16, KL loses the tour to L3 (18) and is dropped at T+50 on most
+# seeds; the two kits then ride in the hopper until they fall out beside the
+# beams.  Measured over twelve seeds, that is the difference between a kit
+# column of 2/50 and one of 50/50.  Robot 2 lands PCC_R on 10 of 12 seeds
+# (21 of 24 kits, 7.5 s), so the good case is the normal one.
+#
+# The fix is not a better constant.  It is to stop keeping a second copy of
+# the scoring rules: value(S) is the REFEREE's score for the board that task
+# set leaves behind, and the marginal value of a task falls out of the DP
+# for free -- joint bonuses, empty-zone penalties, sample closure and all.
+from . import referee
+from .params import Field, M2
+
+# Robot 2's contract with the fleet.  Its opening act is two kits into
+# PCC_R; route.py lowers this the moment robot 2 reports it failed, and the
+# next replan re-prices KL accordingly.
+FLEET_PCC_R = 2
+
+BEAM_SEAL_VALUE = 70.0     # +25 each and +20 for closure; check_planner pins
+                           # this to referee.score_beams on a perfect seal
+
+
+def _centre(box):
+    return ((box[0] + box[2]) / 2.0, (box[1] + box[3]) / 2.0)
+
+
+def _value(mask_names, pcc_r=None):
+    """The referee's score for the board this task set would leave behind.
+
+    Undelivered samples are stranded in the magazine (-3 each) and
+    undelivered kits stay aboard, which is what the referee sees when the
+    buzzer goes; patients are robot 2's column and cancel out of every
+    comparison this DP makes, so they are left out.
+    """
+    names = set(mask_names)
+    pcc_r = FLEET_PCC_R if pcc_r is None else pcc_r
+
+    xyz = []
+    for k, nm in enumerate(("L1", "L2", "L3")):
+        if nm in names:
+            xyz.append((Field.LAB_HOLE_X[k], referee.LAB_HOLE_Y, 2.5))
+    xyz += [(2000.0, 2000.0, 10.0)] * (3 - len(xyz))       # still aboard
+
+    kits = []
+    if "KH" in names:
+        kits += [_centre(Field.HOSPITAL)] * M2.KIT_PLAN["HOSP"]
+    if "KL" in names:
+        kits += [_centre(Field.PCC_L)] * M2.KIT_PLAN["PCC_L"]
+    kits += [_centre(Field.PCC_R)] * int(pcc_r)
+
+    return (referee.score_discs(xyz)[0] + referee.score_kits(kits)[0]
+            + (BEAM_SEAL_VALUE if "BEAMS" in names else 0.0))
 
 # THE PROVEN TOPOLOGY (F86).  The DP is free over SUBSETS but not over
 # structure: slots west-to-east, then kits hospital-first, then the seal.
@@ -127,13 +195,6 @@ NODES = ("L1", "L2", "L3", "KH", "KL", "BEAMS")
 # structure; the exotic orders come back in step 5 when the rebuilt
 # transits can back them.
 RANK = {"L1": 0, "L2": 1, "L3": 2, "KH": 3, "KL": 4, "BEAMS": 5}
-
-
-def _value(mask_names):
-    v = sum(VALUE.get(n, 0.0) for n in mask_names)
-    if {"L1", "L2", "L3"} <= set(mask_names):
-        v += ALL_PLACED_BONUS
-    return v
 
 
 class Schedule:

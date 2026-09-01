@@ -671,31 +671,67 @@ ZONES = {"HOSP": (511.0, 941.0, 631.0, 1141.0),
          "PCC_R": (983.0, 1021.0, 1103.0, 1141.0)}
 DEST = {"red": "HOSP", "green": "RECOVERY"}
 
-# ROBOT 1'S RESERVATIONS.  Its planner knows its own schedule; until the two
-# solvers are merged this is that schedule's measured shape -- the corridors
-# it occupies and when.  Robot 2's A* runs on the residual, so the two cannot
-# collide by construction instead of negotiating at 20 Hz (F95/F98).
-def robot1_reservations(cmap):
+# ROBOT 1'S RESERVATIONS, read from robot 1's own live plan (F112).
+# Robot 2's A* runs on the residual, so the two cannot collide by
+# construction instead of negotiating at 20 Hz (F95/F98).
+# The corridor each of robot 1's tasks actually occupies, as a centreline.
+# These are its own route's lanes: the east dogleg round the laboratory
+# plate (which cannot be crossed), the y-730 traverse south of the kit
+# drops, the climb to the hospital lip, the west lane the beams stage from.
+R1_LANES = {
+    "SWEEP": [[(60.0, 130.0), (700.0, 130.0)], [(60.0, 215.0), (700.0, 215.0)]],
+    "L1":    [[(390.0, 230.0), (500.0, 230.0)]],
+    "L2":    [[(500.0, 230.0), (640.0, 230.0)]],
+    "L3":    [[(640.0, 230.0), (780.0, 230.0)]],
+    "KH":    [[(780.0, 220.0), (945.0, 260.0), (935.0, 650.0), (770.0, 790.0)],
+              [(730.0, 850.0), (700.0, 960.0)]],
+    "KL":    [[(660.0, 930.0), (250.0, 930.0)]],
+    "BEAMS": [[(240.0, 860.0), (240.0, 700.0)], [(190.0, 620.0), (180.0, 200.0)],
+              [(300.0, 375.0), (140.0, 370.0)]],
+}
+R1_HALF = 150.0        # robot 1's body plus a working gap, not its worst-case
+                       # 185 mm sweep: reserving the sweep for the whole of
+                       # every phase left robot 2 with no field at all and it
+                       # simply stopped working (measured: eight of twelve
+                       # patients declared unreachable, parked at T+26).
+
+
+def robot1_reservations(cmap, schedule=None, t_now=0.0):
     """Robot 1's corridors, as space-time keep-outs.
 
-    THE WIDTH AND THE WINDOWS ARE BOTH BUDGETS.  Reserving robot 1's full
-    185 mm swept radius for the whole of every phase leaves robot 2 with
-    almost no field and it simply stops working (measured: it declared eight
-    of twelve patients unreachable and parked at T+26).  These are the
-    centrelines with a 150 mm half-width -- robot 1's body plus a working gap,
-    not its worst-case sweep -- over the windows its phases actually occupy.
-    When the two planners merge, this function is replaced by a read of
-    robot 1's own Schedule."""
-    cmap.add_corridor([(60.0, 130.0), (700.0, 130.0)], 150.0, 0.0, 26.0)
-    cmap.add_corridor([(60.0, 215.0), (700.0, 215.0)], 150.0, 8.0, 28.0)
-    cmap.add_corridor([(390.0, 230.0), (740.0, 230.0)], 150.0, 26.0, 58.0)
-    cmap.add_corridor([(780.0, 220.0), (945.0, 260.0), (935.0, 650.0),
-                       (770.0, 790.0)], 150.0, 56.0, 72.0)
-    cmap.add_corridor([(730.0, 850.0), (700.0, 960.0)], 150.0, 62.0, 76.0)
-    cmap.add_corridor([(660.0, 930.0), (250.0, 930.0)], 150.0, 72.0, 84.0)
-    cmap.add_corridor([(240.0, 860.0), (240.0, 700.0)], 150.0, 78.0, 92.0)
-    cmap.add_corridor([(190.0, 620.0), (180.0, 200.0)], 150.0, 86.0, 121.0)
-    cmap.add_corridor([(300.0, 375.0), (140.0, 370.0)], 150.0, 100.0, 121.0)
+    THE WINDOWS COME FROM ROBOT 1'S OWN PLAN when one is offered (F112).
+    Robot 2's controller runs on robot 1's Pi, so there is no reason to
+    guess: route.mission_agent_a publishes its live Schedule on the robot
+    at every replan, and each remaining task's window is exactly the
+    interval that plan gives it -- travel in, plus service.
+
+    Hardcoded windows were defensible while robot 1 ran one fixed order.
+    They stopped being defensible the moment its planner started choosing
+    between the third laboratory slot and PCC_L, because the running order
+    now differs seed to seed.  A corridor reserved for 72-84 s while robot
+    1 is in it at 60-70 is worse than no reservation: robot 2 reads the
+    lane as free and parks in it.  Without a schedule (rigs, and robot 1's
+    own opening survey before it has planned) this falls back to the
+    measured shape of the nominal plan.
+    """
+    if schedule is None or not getattr(schedule, "tasks", None):
+        for nm, lanes in R1_LANES.items():
+            for lane in lanes:
+                cmap.add_corridor(lane, R1_HALF, 0.0, 121.0
+                                  if nm == "BEAMS" else 121.0)
+        return cmap
+    from . import planner
+    prev = "SWEEP"
+    for name, t0, dur in schedule.tasks:
+        travel = planner.TRAVEL.get((prev, name), 8.0)
+        # the lane is occupied from when robot 1 sets off for it until it
+        # has finished there; a margin either side covers the model's own
+        # error, which observe() is still correcting as the match runs
+        w0, w1 = t0 - travel - 3.0, t0 + dur + 3.0
+        for lane in R1_LANES.get(name, ()):
+            cmap.add_corridor(lane, R1_HALF, max(w0, t_now - 1.0), w1)
+        prev = name
+    return cmap
 
 
 def survey(m, d=None):
@@ -733,20 +769,343 @@ def zone_of(colour, x):
     return ZONES[DEST[colour]]
 
 
-def _board_map(pucks, skip=None):
+def _board_map(pucks, skip=None, sched=None, t_now=0.0):
     """A fresh costmap with robot 1's reservations and every patient except
-    the one being pushed."""
+    the one(s) being handled.  skip is an index or a set of them."""
     cm = nav.CostMap.field()
-    robot1_reservations(cm)
+    robot1_reservations(cm, schedule=sched, t_now=t_now)
+    drop = set() if skip is None else (
+        {skip} if isinstance(skip, (int, np.integer)) else set(skip))
     for i, x, y, c in pucks:
-        if skip is not None and i == skip:
+        if i in drop:
             continue
         cm.add_disc(x, y, 12.0)
     return cm
 
 
-def mission_robot2(ctl, m, d=None, log=print, clock=None):
-    """Survey, plan, execute, repair.  One yield per 50 Hz tick."""
+
+# ==================================================== the patient mission
+# WHY THIS IS AN ORDERING PROBLEM BEFORE IT IS A CONTROL PROBLEM (F110).
+#
+# The twelve patients stand in two 2x3 blocks pressed against the side
+# walls: 80 mm apart across the field, 113 mm along it.  This chassis is
+# 110 mm wide, so it cannot pass BETWEEN two neighbours -- the removal
+# order is forced by geometry, not chosen by a planner:
+#
+#     west block   x=160 must come out before x=80 is reachable at all
+#     east block   x=983 must come out before x=1063
+#
+# Across a column the robot approaches broadside from the field centre,
+# and its 110 mm width clears easily between neighbours 226 mm apart, so
+# the three rows are free in any order.  The old mission asked plan_push
+# for a cheapest-first ordering that knew nothing of this, spent its legs
+# re-staging at a 250 mm stand-off three times per delivery, and mostly
+# reported "nothing deliverable from here".
+#
+# The clock decides HOW MANY.  A delivery is approach + capture + carry +
+# release; carries run 400 mm (a block to its own PCC) to 700 mm (to
+# HOSPITAL or RECOVERY), so one costs 10-15 s and the match affords about
+# eight of the twelve.  Which eight is worth real points: the referee pays
+# +6 for four reds in HOSPITAL, +8 for yellows 2/2 across the PCCs and +6
+# for four greens in RECOVERY, and no per-patient constant can see a set
+# bonus.  So the selection is value-per-second over what is legal RIGHT
+# NOW, and the value is referee.score_cylinders on the projected board --
+# the same discipline the fleet's kit pricing needed (F109).
+#
+# Robot 1 owns the third constraint.  Its beam seal takes the west lane
+# from T+86 and the west block's only approach corridor runs through it,
+# so transits are planned STRICT against robot1_reservations' space-time
+# windows: robot 2 works the east block first (it starts there, and its
+# kits are there) and is refused the west corridor once the seal opens
+# rather than negotiating for it at 20 Hz.
+# ZONE OWNERSHIP IS A PARTITION, AND THE GEOMETRY LEAVES NO CHOICE (F111).
+#
+# HOSPITAL, PCC_L and PCC_R are destinations for BOTH scoring columns.
+# Robot 1 drops six kits into HOSPITAL at T+68 and two into PCC_L at T+72;
+# robot 2 then carries patients into the same rectangles.  Releasing a
+# patient leaves the flare tips 88 mm past it, and HOSPITAL is 200 mm wide
+# with the pile down its centre at x 546-554, so a 110 mm chassis cannot
+# stand anywhere in that zone without touching the pile -- from the south,
+# from the west, or deep from the north, all three were checked and all
+# three foul it.  PCC_L is worse: robot 1's kits land 6 mm inside the
+# southern lip, exactly where a carry releases.
+#
+# The arithmetic settles it even where the geometry is arguable.  A
+# delivered patient is worth +8.  Shovelling the HOSPITAL pile costs the
+# six kits (-18), the empty-zone penalty (-10) and the 6/2/2 bonus (-20):
+# up to -48.  There is no version of that trade worth taking, and the
+# measured boards agree -- robot 1 alone lands 6 and 2 in the same spots on
+# every seed, while a fleet board's kit column swings between -30 and +50.
+#
+# So the fleet partitions by ZONE rather than negotiating inside one:
+#
+#     robot 1   HOSPITAL, PCC_L        (kits)
+#     robot 2   RECOVERY, PCC_R        (its own kits, dropped deep first)
+#
+# PCC_R is the proof that the partition is the right shape: robot 2 shakes
+# its kits out backwards to the zone's far edge, 185 mm deep, then releases
+# patients at the near edge 150 mm away, and nothing has ever disturbed
+# them.  Robot 2 therefore delivers the greens (RECOVERY, which holds no
+# kits at all) and the east-side yellows, and leaves the reds and west
+# yellows where they are: -3 each is cheaper than the alternative.
+R2_ZONES = ("RECOVERY", "PCC_R")
+
+CARRY_V = 190.0            # F106: arcs only, never a pivot, with a puck
+CARRY_W = 90.0
+APPROACH_V = 330.0
+
+
+def _zone_pt(zone, puck):
+    """Where inside the zone to put this patient: the nearest legal point,
+    so a delivery is the shortest carry that still scores."""
+    return (float(np.clip(puck[0], zone[0] + 35.0, zone[2] - 35.0)),
+            float(np.clip(puck[1], zone[1] + 35.0, zone[3] - 35.0)))
+
+
+def _board_now(pucks, live, placed):
+    """(x, y, colour) for all twelve, as the tracker currently believes."""
+    return [(placed[i][0], placed[i][1], c) if i in placed else (*live(i), c)
+            for i, _, _, c in pucks]
+
+
+def _marginal(board, i, zone):
+    """Referee points gained by putting patient i in that zone -- set
+    bonuses, wrong-zone penalties and the adrift baseline included."""
+    from . import referee
+    after = list(board)
+    after[i] = ((zone[0] + zone[2]) / 2.0, (zone[1] + zone[3]) / 2.0,
+                board[i][2])
+    return (referee.score_cylinders(after)[0]
+            - referee.score_cylinders(board)[0])
+
+
+def _capture_pose(app, puck):
+    """Where the chassis ends up once the puck is seated."""
+    ux, uy = np.cos(np.radians(app[2])), np.sin(np.radians(app[2]))
+    return (puck[0] - ux * R2.CAPTURE_X, puck[1] - uy * R2.CAPTURE_X)
+
+
+def _spoil_point(cm, pucks, live, near, drop):
+    """Somewhere harmless to put a patient that is merely IN THE WAY.
+
+    Moving a blocker is FREE: the referee pays -3 for a patient outside
+    every destination zone whether it is standing on its sticker or shoved
+    300 mm sideways.  So the peel that the packing forces -- outer column
+    before inner, because a 110 mm chassis cannot pass between neighbours
+    80 mm apart -- costs nothing but seconds.  What it must not do is
+    create a NEW problem: the spoil point is clear of every zone (a patient
+    dropped in the wrong one is -5, and one dropped on robot 1's kits is
+    far worse), clear of the other patients, and clear of the corridors
+    robot 1 has reserved.
+    """
+    grid = cm.inflated(R2_INSCRIBED, R2_CIRCUM)
+    gx, gy = cm._grid_xy()
+    ok = grid < nav.BLOCKED
+    for z in ZONES.values():
+        ok &= ~((gx >= z[0] - 90.0) & (gx <= z[2] + 90.0) &
+                (gy >= z[1] - 90.0) & (gy <= z[3] + 90.0))
+    for j, _, _, _ in pucks:
+        if j in drop:
+            continue
+        px, py = live(j)
+        ok &= (gx - px) ** 2 + (gy - py) ** 2 > 200.0 ** 2
+    if not ok.any():
+        return None
+    d2 = (gx - near[0]) ** 2 + (gy - near[1]) ** 2
+    d2 = np.where(ok, d2, np.inf)
+    i, j = np.unravel_index(int(np.argmin(d2)), d2.shape)
+    return float(gx[i, j]), float(gy[i, j])
+
+
+def _blocker(pucks, live, i, zone, robot, t0, sched=None):
+    """The neighbour whose removal makes patient i deliverable, if any.
+
+    Only true neighbours are candidates: at 80 mm across and 113 along, a
+    patient blocks the one beside it and nothing further away, so this is a
+    handful of costmap builds rather than a search.
+    """
+    px, py = live(i)
+    cand = sorted((j for j, _, _, _ in pucks if j != i),
+                  key=lambda j: np.hypot(live(j)[0]-px, live(j)[1]-py))
+    for j in cand:
+        if np.hypot(live(j)[0]-px, live(j)[1]-py) > 260.0:
+            break
+        cm = _board_map([(k, *live(k), c) for k, _, _, c in pucks],
+                        skip={i, j}, sched=sched, t_now=t0)
+        if _price(cm, robot, (px, py), zone, t0) is not None:
+            return j
+    return None
+
+
+def _price(cm, robot, puck, zone, t0):
+    """(seconds, approach) for one delivery, or None if it cannot be done.
+
+    Both legs are planned STRICT: a transit that would cross a corridor
+    robot 1 has reserved is not cheap, it is unavailable.
+    """
+    app = nav.capture_approach(cm, puck)
+    if app is None:
+        return None
+    _, s1 = nav.plan(cm, robot, app[:2], R2_INSCRIBED, R2_CIRCUM,
+                     t0=t0, speed=APPROACH_V, strict=True)
+    if not np.isfinite(s1):
+        return None
+    tgt = _zone_pt(zone, puck)
+    _, s2 = nav.plan(cm, _capture_pose(app, puck), tgt, R2_INSCRIBED,
+                     R2_CIRCUM, t0=t0 + s1 + 3.0, speed=CARRY_V, strict=True)
+    if not np.isfinite(s2):
+        return None
+    #        approach   turn+capture   carry   release+back off
+    return float(s1 + 4.0 + s2 + 3.0), app
+
+
+def _deliver(ctl, i, live, target, app, log, t, zone=None, what="patient"):
+    """One patient, end to end: stand off, face it, take it, carry it, let
+    go.  Returns True only if the RESULT is what was wanted -- inside the
+    zone for a delivery, or actually moved for a clearance.  Nothing here
+    assumes; the camera checks after every stage, because a capture that
+    silently failed used to be carried all the way to a zone and released
+    into thin air."""
+    ok = yield from ctl.goto(app[0], app[1], v_max=APPROACH_V, tol=70.0,
+                             tries=3)
+    gap = float(np.hypot(ctl.pose[0] - app[0], ctl.pose[1] - app[1]))
+    if gap > 190.0:
+        log(t() + "  %s %d: never reached the stand-off (%.0f mm)"
+            % (what, i, gap))
+        return False
+    px, py = live(i)
+    yield from ctl.face(float(np.degrees(np.arctan2(py - ctl.pose[1],
+                                                    px - ctl.pose[0]))),
+                        tol=5.0)
+    p0 = live(i)
+    yield from ctl.capture(*live(i))
+    if not ctl.holding(*live(i)):
+        log(t() + "  %s %d: capture missed" % (what, i))
+        return False
+    tx, ty = target
+    ux, uy, _ = _norm(tx - live(i)[0], ty - live(i)[1])
+    yield from ctl.goto(tx - ux * R2.CAPTURE_X, ty - uy * R2.CAPTURE_X,
+                        v_max=CARRY_V, w_max=CARRY_W, tol=55.0, tries=3,
+                        carry=True)
+    yield from ctl.back_off(150.0)
+    fx, fy = live(i)
+    if zone is None:
+        good = np.hypot(fx - p0[0], fy - p0[1]) > 120.0
+    else:
+        good = zone[0] <= fx <= zone[2] and zone[1] <= fy <= zone[3]
+    log(t() + "  %s %d: %s at (%.0f, %.0f)"
+        % (what, i, "done" if good else "short", fx, fy))
+    return bool(good)
+
+
+def _work_patients(ctl, pucks, live, log, t, now, deadline=112.0,
+                   sched=None):
+    """Value-per-second greedy over whatever is legal right now, with the
+    peel the packing forces.
+
+    Two kinds of move.  A DELIVERY earns the referee's marginal points for
+    putting a patient in a zone robot 2 owns.  A CLEARANCE earns nothing
+    directly and costs nothing either -- a patient outside every zone is
+    -3 wherever it stands -- but it is how the inner column becomes
+    reachable at all, because this chassis cannot pass between neighbours
+    80 mm apart.  Deliveries first; a clearance only when nothing can be
+    delivered, and only when it unlocks something that can.
+    """
+    placed, spent = {}, set()
+    _sc = sched if callable(sched) else (lambda: sched)
+
+    def wanted(i, c, p):
+        """The zone robot 2 may deliver this patient to, or None."""
+        zn = DEST.get(c) if c != "yellow" else \
+            ("PCC_R" if p[0] > 570.0 else "PCC_L")
+        return ZONES[zn] if zn in R2_ZONES else None
+
+    while now() < deadline:
+        board = _board_now(pucks, live, placed)
+        full = [(i, *live(i), c) for i, _, _, c in pucks]
+        best = None
+        for i, _, _, c in pucks:
+            if i in placed or i in spent:
+                continue
+            p = live(i)
+            zone = wanted(i, c, p)
+            if zone is None:
+                continue                   # robot 1 owns that rectangle
+            if zone[0] <= p[0] <= zone[2] and zone[1] <= p[1] <= zone[3]:
+                placed[i] = p              # already home
+                continue
+            gain = _marginal(board, i, zone)
+            if gain <= 0.0:
+                continue
+            cmi = _board_map(full, skip=i, sched=_sc(), t_now=now())
+            pr = _price(cmi, ctl.pose[:2], p, zone, now())
+            if pr is None:
+                continue
+            secs, app = pr
+            if now() + secs > deadline + 6.0:
+                continue
+            rate = gain / max(secs, 1.0)
+            if best is None or rate > best[0]:
+                best = (rate, i, gain, secs, app, zone, cmi,
+                        _zone_pt(zone, p), "patient")
+
+        if best is None:
+            # ---- nothing deliverable: is something merely IN THE WAY? ----
+            for i, _, _, c in pucks:
+                if i in placed or i in spent:
+                    continue
+                zone = wanted(i, c, live(i))
+                if zone is None:
+                    continue
+                j = _blocker(pucks, live, i, zone, ctl.pose[:2], now(),
+                             sched=_sc())
+                if j is None or j in spent:
+                    continue
+                cmj = _board_map(full, skip=j, sched=_sc(), t_now=now())
+                sp = _spoil_point(cmj, pucks, live, live(j), {i, j})
+                if sp is None:
+                    continue
+                app = nav.capture_approach(cmj, live(j))
+                if app is None:
+                    continue
+                _, s1 = nav.plan(cmj, ctl.pose[:2], app[:2], R2_INSCRIBED,
+                                 R2_CIRCUM, t0=now(), speed=APPROACH_V,
+                                 strict=True)
+                if not np.isfinite(s1):
+                    continue
+                log(t() + "patient %d is blocked by %d -- clearing it to "
+                    "(%.0f, %.0f)" % (i, j, sp[0], sp[1]))
+                best = (0.0, j, 0.0, s1 + 12.0, app, None, cmj, sp, "blocker")
+                break
+
+        if best is None:
+            log(t() + "nothing deliverable from here")
+            return
+        _, i, gain, secs, app, zone, cm, tgt, what = best
+        if what == "patient":
+            log(t() + "patient %d: %+.0f pts in %.0f s (%.2f pts/s)"
+                % (i, gain, secs, gain / max(secs, 1.0)))
+        ctl.cmap = cm
+        good = yield from _deliver(ctl, i, live, tgt, app, log, t,
+                                   zone=zone, what=what)
+        if what == "blocker":
+            if not good:
+                spent.add(i)           # could not be shifted: stop trying
+        elif good:
+            placed[i] = live(i)
+        else:
+            spent.add(i)               # one honest attempt each; the clock
+                                       # is worth more than a second try
+
+
+def mission_robot2(ctl, m, d=None, log=print, clock=None, rb=None):
+    """Survey, plan, execute, repair.  One yield per 50 Hz tick.
+
+    rb is robot 1, when the fleet is running one: robot 2's controller
+    lives on robot 1's Pi, so it reads that robot's published Schedule and
+    reserves its corridors in space-time from the plan robot 1 is actually
+    following (F112) rather than from a remembered one.
+    """
     t = (lambda: "") if clock is None else (lambda: "T+%5.1f R2 " % clock())
     now = clock if clock else (lambda: 0.0)
     pucks = survey(m, d)
@@ -762,89 +1121,24 @@ def mission_robot2(ctl, m, d=None, log=print, clock=None):
     def refresh():
         return [(i, *live(i), c) for i, _, _, c in pucks]
 
-    done = set()
+    def sched():
+        return getattr(rb, "schedule", None) if rb is not None else None
 
     # ---- the kits: PCC_R, from the east-box spawn -----------------------
-    ctl.cmap = _board_map(pucks)
+    ctl.cmap = _board_map(pucks, sched=sched(), t_now=now())
     ok = yield from ctl.goto(1043.0, 1075.0, v_max=360.0, tol=45.0)
     yield from ctl.face(270.0, tol=8.0)
     log(t() + "SHAKE: kits into PCC_R")
     yield from ctl.shake_out(4)
     yield from ctl.goto(1040.0, 900.0, v_max=340.0, tol=50.0)
 
-    # ---- the patients, cheapest-first, re-priced after every delivery ---
-    while now() < 108.0:
-        board = refresh()
-        best = None
-        for i, x, y, c in board:
-            if i in done:
-                continue
-            z = zone_of(c, x)
-            if z[0] <= x <= z[2] and z[1] <= y <= z[3]:
-                done.add(i)
-                continue
-            cm = _board_map(board, skip=i)
-            # leave-clean: never park a patient where robot 1 still has to go
-            avoid = np.zeros((cm.nx, cm.ny), dtype=bool)
-            for mask, w0, w1 in cm._windows:
-                if w1 > now():
-                    avoid |= mask
-            legs, secs = nav.plan_push(cm, (x, y), z, robot=ctl.pose[:2],
-                                       avoid=avoid)
-            if legs is None:
-                continue
-            # value is the referee's: +5 delivered and +3 not-adrift = 8
-            if best is None or secs < best[1]:
-                best = (i, secs, legs, cm, (x, y))
-        if best is None:
-            log(t() + "nothing deliverable from here")
-            break
-        i, secs, legs, cm, p0 = best
-        if now() + secs > 112.0:
-            log(t() + "%.0f s of work left, %.0f s of clock -- stopping"
-                % (secs, 112.0 - now()))
-            break
-        log(t() + "puck %d: %d legs, %.1f s" % (i, len(legs), secs))
-        ctl.cmap = cm
-        failed = False
-        for k, (tx, ty) in enumerate(legs):
-            px, py = live(i)
-            ux, uy, n = _norm(tx - px, ty - py)
-            if n < 55.0:
-                continue
-            # THE APPROACH DOES NOT NEED TO BE PRECISE (F101), and asking
-            # for precision is what cost the deliveries.  What the push
-            # actually requires is: be BEHIND the puck, FACING the push
-            # direction, with the puck inside a 120 mm pocket.  The first
-            # version drove to an exact pose 130 mm back on a 34 mm
-            # tolerance and abandoned the puck when the tracker could not
-            # nail it -- 12-20 s a puck, nothing delivered.  So: park loosely
-            # well behind it, turn onto the push line, then CLOSE the last
-            # 120 mm in a straight line.  The straight run is what funnels
-            # the puck into the pocket, and it needs no planner at all.
-            hd = float(np.degrees(np.arctan2(uy, ux)))
-            sx, sy = px - ux * 250.0, py - uy * 250.0
-            ok = yield from ctl.goto(sx, sy, v_max=330.0, tol=70.0,
-                                     tries=2, strict=True)
-            if not ok and np.hypot(ctl.pose[0] - sx, ctl.pose[1] - sy) > 190.0:
-                failed = True
-                break
-            yield from ctl.face(hd, tol=6.0)
-            # close on the puck: the plow's mouth does the centring
-            yield from ctl.push_to(px - ux * 40.0, py - uy * 40.0, v=200.0,
-                                   tol=45.0, cap_s=4.0)
-            yield from ctl.push_to(tx - ux * 60.0, ty - uy * 60.0, v=180.0,
-                                   cap_s=6.0 + n / 150.0)
-            yield from ctl.back_off(95.0)
-            if now() > 112.0:
-                break
-        done.add(i)
-        if failed:
-            log(t() + "puck %d: approach blocked, moving on" % i)
+    # ---- the patients: go there, GRAB it, carry it, let go --------------
+    yield from _work_patients(ctl, pucks, live, log, t, now,
+                              sched=sched)
 
     # ---- park in the dead corner ----------------------------------------
     log(t() + "parking")
-    ctl.cmap = _board_map(refresh())
+    ctl.cmap = _board_map(refresh(), sched=sched(), t_now=now())
     yield from ctl.goto(1085.0, 880.0, v_max=340.0, tol=60.0)
     ctl.stop()
     while True:

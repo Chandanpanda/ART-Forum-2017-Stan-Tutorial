@@ -13,6 +13,12 @@ from rfgyc26 import mjcf, referee
 from rfgyc26.params import Field, AgentA, M2
 from rfgyc26.robot import AgentARobot
 from rfgyc26.route import mission_agent_a
+from rfgyc26 import planner
+
+# NO ROBOT 2 MEANS NO PCC_R KITS.  The planner prices robot 1's PCC_L drop
+# against what the fleet will deliver (F109); telling it to expect two kits
+# that nothing is carrying would make this control flatter itself.
+planner.FLEET_PCC_R = 0
 
 CHUTE_OFFSET = AgentA.AXLE_X - AgentA.CHUTE_X
 

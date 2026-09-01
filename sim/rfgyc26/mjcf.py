@@ -905,7 +905,7 @@ def agent_a_body(name="agentA", pose=None, with_beams=False):
          down (+droop) saturates against the floor, up (-lift) clears transit -->
     <position name="a_shim" joint="A_shim_j" kp="0.8" kv="0.05"
               ctrlrange="{-radians(AgentA.SHIM_LIFT):.5f} {radians(AgentA.SHIM_DROOP):.5f}"
-              forcerange="-0.02 0.02"/>
+              forcerange="-0.06 0.06"/>
     <!-- brush roller: velocity servo capped at the N20's stall torque -->
     <velocity name="a_roller" joint="A_drum_j" kv="0.010"
               ctrlrange="0 {2*pi*AgentA.ROLL_RPM_MAX/60.0:.4f}"
@@ -1156,7 +1156,103 @@ def scene_pick_place(disc_positions, robot_pose=None, with_beams=False):
                  contacts=contact_pairs(n_discs=len(disc_positions), n_cyls=0), equality=eq)
 
 
-def scene_full_match(disc_positions, robot_pose=None, rng=None, kits_aboard=True):
+def robot2_body(pose=None):
+    """Robot 2 (design doc section 10, params.Robot2): the detached actuator.
+
+    Body frame at the AXLE midpoint, wheel-radius high, like robot 1's -- the
+    camera tracks the ArUco directly above it, so pose IS axle pose.  Two
+    velocity-servo wheels whose force cap plays the DC motors' softness, three
+    ball casters, the plow pocket, the tilted kit tray, and the marker.
+    Returns (xml, actuators)."""
+    from .params import Robot2 as R2
+    px, py, ph = pose or R2.START_POSE
+    z0 = R2.WHEEL_R
+    fa = radians(R2.FENCE_ANG)
+    fy = R2.PLOW_POCKET/2.0 + (R2.FENCE_L/2.0)*cos(fa)
+    fx = R2.PLOW_X - (R2.FENCE_L/2.0)*sin(fa)
+    plow_zc = R2.PLOW_CLEAR + R2.PLOW_H/2.0 - z0
+    tray_zc = R2.TRAY_Z - z0
+    parts = [
+        f'<body name="robot2" pos="{mm(px):.5f} {mm(py):.5f} {mm(z0):.5f}" '
+        f'euler="0 0 {ph:.2f}">',
+        f'  <freejoint name="r2_f"/>',
+        # chassis plate + motor block carry the mass, low
+        f'  <geom name="r2_plate" class="robot" type="box" '
+        f'pos="{mm(-R2.AXLE_X + R2.AXLE_X + 20.0):.5f} 0 {mm(12.0 - z0):.5f}" '
+        f'size="{mm(R2.L/2):.5f} {mm(R2.W/2 - 5.0):.5f} {mm(3.0):.5f}" '
+        f'mass="{0.16:.3f}" rgba="0.25 0.28 0.33 1"/>',
+        f'  <geom name="r2_block" class="robot" type="box" '
+        f'pos="0 0 {mm(26.0 - z0):.5f}" '
+        f'size="{mm(38.0):.5f} {mm(34.0):.5f} {mm(12.0):.5f}" '
+        f'mass="{0.20:.3f}" rgba="0.30 0.33 0.38 1"/>',
+        # plow: blade + two swept-back fences = the 120 mm pocket
+        f'  <geom name="r2_blade" class="robot" type="box" '
+        f'pos="{mm(R2.PLOW_X + 2.0):.5f} 0 {mm(plow_zc):.5f}" '
+        f'size="{mm(2.0):.5f} {mm(R2.PLOW_POCKET/2):.5f} {mm(R2.PLOW_H/2):.5f}" '
+        f'mass="0.015" rgba="0.85 0.55 0.15 1"/>',
+        f'  <geom name="r2_fence_l" class="robot" type="box" '
+        f'pos="{mm(fx):.5f} {mm(fy):.5f} {mm(plow_zc):.5f}" '
+        f'euler="0 0 {R2.FENCE_ANG:.1f}" '
+        f'size="{mm(2.0):.5f} {mm(R2.FENCE_L/2):.5f} {mm(R2.PLOW_H/2):.5f}" '
+        f'mass="0.006" rgba="0.85 0.55 0.15 1"/>',
+        f'  <geom name="r2_fence_r" class="robot" type="box" '
+        f'pos="{mm(fx):.5f} {mm(-fy):.5f} {mm(plow_zc):.5f}" '
+        f'euler="0 0 {-R2.FENCE_ANG:.1f}" '
+        f'size="{mm(2.0):.5f} {mm(R2.FENCE_L/2):.5f} {mm(R2.PLOW_H/2):.5f}" '
+        f'mass="0.006" rgba="0.85 0.55 0.15 1"/>',
+        # kit tray: tilted floor, side+front rails, low tail lip
+        f'  <geom name="r2_tray" class="robot" type="box" '
+        f'pos="{mm(R2.TRAY_X):.5f} 0 {mm(tray_zc):.5f}" euler="0 {R2.TRAY_TILT:.1f} 0" '
+        f'size="{mm(R2.TRAY_LX/2):.5f} {mm(R2.TRAY_LY/2):.5f} {mm(1.5):.5f}" '
+        f'mass="0.02" rgba="0.4 0.42 0.46 1"/>',
+        f'  <geom name="r2_rail_f" class="robot" type="box" '
+        f'pos="{mm(R2.TRAY_X + R2.TRAY_LX/2 + 2.0):.5f} 0 {mm(tray_zc + R2.TRAY_RAIL/2):.5f}" '
+        f'size="{mm(2.0):.5f} {mm(R2.TRAY_LY/2):.5f} {mm(R2.TRAY_RAIL/2 + 1.5):.5f}" '
+        f'mass="0.006" rgba="0.4 0.42 0.46 1"/>',
+        f'  <geom name="r2_rail_l" class="robot" type="box" '
+        f'pos="{mm(R2.TRAY_X):.5f} {mm(R2.TRAY_LY/2 + 2.0):.5f} {mm(tray_zc + R2.TRAY_RAIL/2):.5f}" '
+        f'size="{mm(R2.TRAY_LX/2 + 4.0):.5f} {mm(2.0):.5f} {mm(R2.TRAY_RAIL/2 + 1.5):.5f}" '
+        f'mass="0.006" rgba="0.4 0.42 0.46 1"/>',
+        f'  <geom name="r2_rail_r" class="robot" type="box" '
+        f'pos="{mm(R2.TRAY_X):.5f} {mm(-(R2.TRAY_LY/2 + 2.0)):.5f} {mm(tray_zc + R2.TRAY_RAIL/2):.5f}" '
+        f'size="{mm(R2.TRAY_LX/2 + 4.0):.5f} {mm(2.0):.5f} {mm(R2.TRAY_RAIL/2 + 1.5):.5f}" '
+        f'mass="0.006" rgba="0.4 0.42 0.46 1"/>',
+        f'  <geom name="r2_lip" class="robot" type="box" '
+        f'pos="{mm(R2.TRAY_X - R2.TRAY_LX/2 - 2.0):.5f} 0 {mm(tray_zc + R2.TRAY_LIP/2):.5f}" '
+        f'size="{mm(2.0):.5f} {mm(R2.TRAY_LY/2):.5f} {mm(R2.TRAY_LIP/2 + 1.5):.5f}" '
+        f'mass="0.006" rgba="0.5 0.35 0.2 1"/>',
+        # ArUco top plate: VISUAL only
+        f'  <geom name="r2_marker" type="box" contype="0" conaffinity="0" '
+        f'pos="{mm(30.0):.5f} 0 {mm(R2.MARKER_Z - z0):.5f}" '
+        f'size="{mm(R2.MARKER_MM/2):.5f} {mm(R2.MARKER_MM/2):.5f} 0.0005" '
+        f'mass="0.001" rgba="0.05 0.05 0.05 1"/>',
+    ]
+    # casters: one tail, two under the plow root
+    for nm, (cx, cy) in {"t": (-62.0, 0.0), "fl": (58.0, 34.0),
+                         "fr": (58.0, -34.0)}.items():
+        parts.append(
+            f'  <geom name="r2_ball_{nm}" class="ball" type="sphere" '
+            f'pos="{mm(cx):.5f} {mm(cy):.5f} {mm(5.0 - z0):.5f}" '
+            f'size="{mm(5.0):.5f}" mass="0.008" rgba="0.7 0.7 0.75 1"/>')
+    # wheels: hinge + velocity servo; the force cap is the DC softness
+    for tag, sy in (("l", R2.TRACK/2), ("r", -R2.TRACK/2)):
+        parts.append(
+            f'  <body name="r2_wheel_{tag}" pos="0 {mm(sy):.5f} 0">'
+            f'<joint name="r2_w_{tag}" type="hinge" axis="0 1 0" damping="0.0004"/>'
+            f'<geom name="r2_wg_{tag}" class="robot" type="cylinder" zaxis="0 1 0" '
+            f'size="{mm(R2.WHEEL_R):.5f} {mm(R2.WHEEL_W/2):.5f}" mass="0.02" '
+            f'friction="1.2 0.01 0.0002" rgba="0.12 0.12 0.14 1"/></body>')
+    parts.append('</body>')
+    wmax = (R2.V_MAX * 1.35) / R2.WHEEL_R
+    act = (f'\n    <velocity name="r2_drive_l" joint="r2_w_l" kv="4.0" '
+           f'ctrlrange="{-wmax:.1f} {wmax:.1f}" forcerange="-0.06 0.06"/>'
+           f'\n    <velocity name="r2_drive_r" joint="r2_w_r" kv="4.0" '
+           f'ctrlrange="{-wmax:.1f} {wmax:.1f}" forcerange="-0.06 0.06"/>')
+    return "\n".join(parts), act
+
+
+def scene_full_match(disc_positions, robot_pose=None, rng=None, kits_aboard=True,
+                     r2=False, r2_pose=None):
     """The whole 250-point board: 3 samples, 2 beams, 10 kits, 12 patients.
 
     KITS START ABOARD by default, which is not a liberty -- rules g.1 say the
@@ -1197,8 +1293,24 @@ def scene_full_match(disc_positions, robot_pose=None, rng=None, kits_aboard=True
     mine = set()
     for dest in M2.KIT_AGENT_A:
         mine.update(M2.KIT_GROUPS.get(dest, ()))
+    # ROBOT 2 CARRIES PCC_R's PAIR ON ITS TRAY (step 7).  Side by side on the
+    # tilted floor, inside the rails; the SHAKE walks them over the tail lip.
+    r2_act = ""
+    r2_kits = set(M2.KIT_GROUPS["PCC_R"]) if r2 else set()
+    if r2:
+        from .params import Robot2 as R2
+        r2p = r2_pose or R2.START_POSE
+        r2_xml, r2_act = robot2_body(pose=r2p)
+        parts.append(r2_xml)
+        for k, i in enumerate(sorted(r2_kits)):
+            wx, wy = local_to_world(r2p[0], r2p[1], r2p[2],
+                                    R2.TRAY_X, (k - 0.5) * (Piece.KIT_Y + 3.0))
+            parts.append(kit_body(i, wx, wy,
+                                  z=R2.TRAY_Z + 3.0 + Piece.KIT_Z/2.0))
     spare = 0
     for i in range(M2.N_KITS):
+        if r2 and i in r2_kits:
+            continue                       # already on robot 2's tray
         if kits_aboard and i in mine:
             lx_, ly_, lz_ = kit_at[i]
             wx, wy = local_to_world(px, py, ph, lx_, ly_)
@@ -1223,8 +1335,44 @@ def scene_full_match(disc_positions, robot_pose=None, rng=None, kits_aboard=True
                     'solref="0.004 1" solimp="0.98 0.999 0.001"/>\n' % (i, i)
                     for i in range(M2.N_KITS) if kits_aboard and i in mine)
           + "  </equality>")
+    pairs = contact_pairs(n_discs=len(disc_positions), n_cyls=n_cyl)
+    if r2:
+        # robot 2's casters ride the floor like robot 1's balls, and its plow
+        # faces are slick HDPE against the patients so a puck slides to the
+        # pocket's centre instead of gripping the first face it meets.
+        extra = []
+        for nm in ("t", "fl", "fr"):
+            # stiff, unlike robot 1's balls: at 0.42 kg the soft contact let
+            # the nose sink under acceleration until the plow dug in (F93)
+            extra.append(f'    <pair geom1="r2_ball_{nm}" geom2="floor" '
+                         f'friction="{Chassis.MU_BALL} {Chassis.MU_BALL} '
+                         f'0.0001 0.0001 0.0001" '
+                         f'solref="0.005 1.0" solimp="0.9 0.99 0.002"/>')
+        for i in range(n_cyl):
+            for g in ("r2_blade", "r2_fence_l", "r2_fence_r"):
+                extra.append(f'    <pair geom1="{g}" geom2="cyl{i}_g" '
+                             f'friction="0.06 0.06 0.0005 0.0001 0.0001" '
+                             f'solref="0.004 1" solimp="0.95 0.99 0.001"/>')
+        # the tray floor is smooth ABS: kits ride it through every transit
+        # (the controller slews its commands, ~2-3 m/s^2) and the SHAKE's
+        # full-stall jerks (~10 m/s^2) walk them over the tail lip.
+        for ki in sorted(r2_kits):
+            for g in ("r2_tray", "r2_rail_f", "r2_rail_l", "r2_rail_r",
+                      "r2_lip"):
+                extra.append(f'    <pair geom1="{g}" geom2="kit{ki}_g" '
+                             f'friction="0.25 0.25 0.001 0.0001 0.0001" '
+                             f'solref="0.004 1" solimp="0.95 0.99 0.001"/>')
+        pairs = pairs.replace("  <contact>",
+                              "  <contact>\n" + "\n".join(extra), 1)
+    if r2_act and "@@TENDON@@" in act:
+        # agent A's actuator string carries its tendon block behind a marker;
+        # robot 2's actuators must land INSIDE <actuator>, before it.
+        a_main, a_tend = act.split("@@TENDON@@", 1)
+        act = a_main + r2_act + "@@TENDON@@" + a_tend
+    else:
+        act = act + r2_act
     return scene("rfgyc26_full_match", parts, act, sen,
-                 contacts=contact_pairs(n_discs=len(disc_positions), n_cyls=n_cyl), equality=eq)
+                 contacts=pairs, equality=eq)
 
 
 def scene_belt_rig(n_pieces=4, incline=None, speed=None):

@@ -473,6 +473,84 @@ class M2:
     STICKER_D       = 40.0
 
 
+# ============================================================ ROBOT 2 (step 7)
+class Robot2:
+    """The detached actuator (design doc section 10): differential drive, two
+    DC motors through drivers, a plow, a kit tray, a Pico W and an ArUco top
+    plate.  No camera, no encoders, no autonomy -- robot 1's stereo rig is its
+    only sensor and the Pi 5 its only brain, over the LinkHAL v0 wire.
+
+    NARROW ON PURPOSE.  The field has two north-south pinches this robot must
+    thread that robot 1 cannot: west, patients at x 160 against the plate's
+    west face at 351.5 (191 mm of air); east, the plate's east face at 791.5
+    against patients at x 983 (also 191).  At 110 mm overall width the lanes
+    keep >= 35 mm of slack each side -- against ~8 mm of camera noise and DC
+    sloppiness, that is a corridor, not a dare.  The plow is wider than the
+    body (120) because its width IS the position tolerance of every push.
+    """
+    L, W, H         = 150.0, 110.0, 60.0     # chassis envelope (plow excluded)
+    PLATE_Z         = 12.0                   # chassis plate mid-height
+    M_TOTAL         = 0.42                   # kg, battery included
+
+    WHEEL_R         = 22.0
+    WHEEL_W         = 8.0
+    TRACK           = 84.0                   # outside faces at 92 < W
+    AXLE_X          = -20.0                  # axle behind centre; plow leads
+    V_MAX           = 380.0                  # mm/s, straight-line, fresh cells
+    W_MAX           = 240.0                  # deg/s pivot (differential limit)
+
+    # THE PLOW.  A straight blade with swept-back end fences: a shallow
+    # pocket 80 mm across that centres a O20 patient and holds it through
+    # gentle arcs (radius >= 200).  Bottom edge 2 mm off the floor; 26 tall
+    # against a 20 mm puck so nothing rides over.
+    PLOW_X          = 78.0                   # blade face ahead of body centre
+    PLOW_W          = 120.0
+    PLOW_H          = 26.0
+    PLOW_CLEAR      = 5.0                    # 2 dug in: the nose
+                                             # sinks ~2 mm on the
+                                             # caster compliance at
+                                             # full accel and the
+                                             # blade anchored (F93)
+    PLOW_POCKET     = 80.0                   # straight section between fences
+    FENCE_L         = 26.0
+    FENCE_ANG       = 40.0                   # degrees swept back; the pair
+                                             # spans PLOW_W exactly:
+                                             # 80 + 2*26*cos(40) = 120
+
+    # THE TRAY.  The two PCC_R kits ride in a shallow recess, floor tilted
+    # 3 degrees down toward the tail, a 2.5 mm lip on the open tail edge:
+    # driving accelerations (<= 0.5 m/s^2) cannot walk a kit over it, the
+    # SHAKE manoeuvre (firmware: full fwd/rev alternation at ~6 Hz) can.
+    TRAY_Z          = 42.0
+    TRAY_X          = -30.0                  # recess centre, aft: the tail
+                                             # lip overhangs the chassis so an
+                                             # ejected kit falls to the FLOOR
+    TRAY_LX, TRAY_LY = 62.0, 56.0
+    TRAY_TILT       = 3.0                    # degrees, down toward -x
+    TRAY_LIP        = 1.2
+    TRAY_RAIL       = 5.0
+
+    # ArUco top plate (section 5.4): visual only, what robot 1 tracks.
+    MARKER_MM       = 40.0
+    MARKER_Z        = 58.0
+
+    # DC plant model, applied by the sim link exactly where the real driver
+    # sits: per-motor gain spread (manufacturing lottery, drawn per match),
+    # a deadband under which the driver hums and nothing turns, and the
+    # command quantisation of the wire (integer mm/s).
+    GAIN_SD         = 0.07                   # per-motor multiplicative sigma
+    DEADBAND        = 28.0                   # mm/s
+    MOTOR_TAU_N     = 0.35                   # forcerange N at the rim: sets
+                                             # the natural first-order lag
+    # LinkHAL v0 timing (design doc section 10)
+    CMD_HZ          = 20.0
+    DEADMAN_S       = 0.25
+
+    START_POSE      = (700.0, 205.0, 90.0)   # deployment box, west half,
+                                             # facing north; robot 1 holds
+                                             # 2.0 s while it scoots clear
+
+
 # ==================================================== AGENT A station schedule
 class AgentA:
     L, W, H         = 285.0, 235.0, 175.0

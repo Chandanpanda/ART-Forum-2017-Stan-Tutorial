@@ -537,6 +537,37 @@ a behaviour change.
    of it) and finishing inside 115 s.
 7. **Step #3 of the project** — robot 2 (second MJCF body + LinkHAL + its
    schedule), then PiBackend bring-up on the bench.
+   *Robot 2 exists and the fleet plays.*  The body (150×110, narrow for the
+   two 191 mm field pinches, 120 mm plow pocket, front-low kit tray whose
+   1.2 mm tail lip the SHAKE ratchet hops), the SimLink firmware end of the
+   LinkHAL v0 wire (gain lottery, deadband, 250 ms dead-man, SHAKE as a
+   firmware macro), and the Pi-side controller closed over robot 1's camera
+   at 5 Hz with online gain calibration — swap SimLink for the Bluetooth
+   socket and nothing above the wire changes.  **Fleet board: +63.3 mean,
+   max +126 over 12 seeds** (robot-1 solo was +57.2): kits 10/10 with both
+   bonuses proven, patients scoring for the first time (best p−10 against
+   the −36 untouched baseline).  The hard lessons are F94–F98: the push
+   catalog is wall geometry (mid columns push ±65° diagonals, edge columns
+   only along themselves); pushes must be camera-verified per leg (open-loop
+   pushes delivered nothing and nobody knew); there is no robot-2 lane
+   through robot 1's half (six exit routes died on seed dice before the F82
+   east-wall spawn — robot 1's start moved 144 mm west to make room); every
+   interior parking spot belongs to some robot-1 artery, so robot 2 works
+   the east columns EARLY (they are robot-1-free until the T+56 climb),
+   holds the north-east dead corner through the climb, mops the climb-pile
+   after T+74, and parks where nothing ever drives.  The WEST columns are
+   deliberately untouched in this build: five configurations of west-side
+   pushing each re-rolled robot 1's seal into failures — that corridor
+   cannot host a 10–30 s noisy push pipeline and a seal.  **Roadmap to the
+   250-ceiling / mean-200 goal, in order of yield**: (a) halve the push
+   cycle (approach transits dominate; the primitives converge but spend
+   8–20 s where the budget says 6–8) — that alone re-opens the west window
+   before the seal and its ~+45 of patient/bonus value; (b) the beam-1
+   tail rebuild (stall_drive aim-taper, F91) to lift b70 from ~40 % toward
+   85 %; (c) the west-phase re-entry with a corridor-state validator
+   (leave the corridor STRICTLY cleaner than found or do not enter);
+   (d) the est-nav program (F92) for the day the field takes the oracle
+   away.  PiBackend bring-up unchanged: BtLink speaks the same grammar.
 
 ---
 

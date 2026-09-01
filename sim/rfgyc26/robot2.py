@@ -358,7 +358,10 @@ def _generic(i, x, y, c):
         return None                          # already inside
     ux, uy, n = _norm(tx - x, ty - y)
     ax, ay = x - ux * 190.0, y - uy * 190.0
-    if not _infield(ax, ay):
+    # margin 70, not 95: robot 1's climb piles pucks 40 mm off the north
+    # wall, and their east-west approaches live in that band -- arriving
+    # pre-faced keeps the corner circle out of the wall (F97)
+    if not _infield(ax, ay, margin=70.0):
         return None
     # carry 35 mm INTO the zone so the release leaves it inside
     return (2 if n < 200.0 else 6, i, x, y,
@@ -408,10 +411,11 @@ def _push(ctl, px, py, ux, uy, dist, v=175.0):
     sx, sy = px - ux * 240.0, py - uy * 240.0
     ax, ay = px - ux * (R2.PLOW_X + 52.0), py - uy * (R2.PLOW_X + 52.0)
     if _infield(sx, sy):
-        yield from ctl.goto(sx, sy, v_max=310.0, tol=42.0)
-    yield from ctl.goto(ax, ay, v_max=250.0, tol=26.0, slow_into=160.0)
+        yield from ctl.goto(sx, sy, v_max=310.0, tol=42.0, cap_s=6.0)
+    yield from ctl.goto(ax, ay, v_max=250.0, tol=26.0, slow_into=160.0,
+                        cap_s=6.0)
     if abs((hd - ctl.th + 180.0) % 360.0 - 180.0) > 10.0:
-        yield from ctl.face(hd, tol=6.0)
+        yield from ctl.face(hd, tol=6.0, cap_s=3.0)
     tx, ty = px + ux * dist, py + uy * dist
     yield from ctl.push_to(tx - ux * (R2.PLOW_X - 10.0),
                            ty - uy * (R2.PLOW_X - 10.0), v=v,
@@ -472,17 +476,44 @@ def _plan_side(pats, side, want="all"):
                 if g:
                     tasks.append(g)
                 continue
+            if not east and not is_mid:
+                # x-80 stays UNTOUCHED (F98): it is west of the descent's
+                # swath, so it is no seal hazard -- and a failed push there
+                # strands a puck mid-corridor, which is one.  Its yellows'
+                # +5s wait for a faster push pipeline.
+                continue
             if c == "yellow":
-                # north to the own-side PCC along a wall-standoff line: the
-                # edge columns sit 20 mm inside the plow wing, so the ROBOT
-                # tracks x in [100, 1043] and the pocket carries the puck
-                # (F94: at x 80 the wing grazed the wall and shed it)
+                # NORTH, bottom-up (a row's approach nudges the row below;
+                # re-spotting heals it, F96/F97) on a wall-standoff line
+                # (F94: at x 80 the wing grazed the wall).  With non-yellow
+                # mates ABOVE, the pocket would train them into the PCC at
+                # -5 each: stop the train short of the zone, then finish
+                # the yellow alone on a re-spotted second leg.
                 xv = float(np.clip(x, 100.0, 1043.0))
-                tasks.append((10 + (763 - row) // 100, i, xv, y,
-                              [(xv, pccy)]))
+                mates_above = any(cy > y + 40.0 and cc != "yellow"
+                                  for _, _, cy, cc in pucks)
+                legs = [(xv, 925.0), (xv, pccy)] if mates_above \
+                    else [(xv, pccy)]
+                tasks.append((10 + (row - 500) // 100, i, x, y, legs))
+                continue
+            elif not east and is_mid:
+                # WEST mid column non-yellows (F97): the wall locks every
+                # scoring diagonal, but these pucks ARE the seal-corridor
+                # hazard (F87/F90) -- the fleet's founding job.  Park them
+                # NORTH, out of the corridor (y > 780) and south of PCC_L,
+                # after the yellows have gone through; the mop-up upgrades
+                # any that get displaced east.
+                # park at (108, 902): out of the corridor (y > 780), out
+                # of PCC_L (y < 981), and west of robot 1's PCC_L approach
+                # swath (x >= 122) -- the first park spot sat inside that
+                # swath and the drop scattered both park and kits (F98)
+                tasks.append((14 + (row - 500) // 100, i, x, y,
+                              [(108.0, 902.0)]))
                 continue
             elif not is_mid:
-                continue                     # edge reds/greens: priced adrift
+                # edge reds/greens: priced adrift.  x-80 sits west of the
+                # descent's swath (122+), so it is not a seal hazard.
+                continue
             elif c == "green":
                 if row >= 700:
                     # top green: NE out (crosses nothing), then the long
@@ -509,7 +540,8 @@ def _plan_side(pats, side, want="all"):
     return tasks
 
 
-def _run_tasks(ctl, tasks, spot_puck, log, t, clock, stop_at, placed):
+def _run_tasks(ctl, tasks, spot_puck, log, t, clock, stop_at, placed,
+               hard_stop=None):
     """Camera-verified delivery: every leg starts from where the puck IS
     (robot 1's classifier re-spots it), and a leg that left it more than
     75 mm from its target gets ONE straight retry from the actual spot --
@@ -521,13 +553,20 @@ def _run_tasks(ctl, tasks, spot_puck, log, t, clock, stop_at, placed):
         t0 = clock()
         for k, (tx, ty) in enumerate(legs):
             for attempt in (0, 1):
-                if clock() > stop_at or clock() - t0 > 24.0:
+                if clock() > stop_at or clock() - t0 > 16.0:
                     log(t() + "push %d out of time" % i)
                     break
                 px, py = spot_puck(i)
                 ux, uy, n = _norm(tx - px, ty - py)
                 if n < 70.0:
                     break                    # this leg is done enough
+                if hard_stop is not None and \
+                        clock() + 9.0 + n / 160.0 > hard_stop:
+                    # would still be pushing when the window slams: a task
+                    # that overran T+52 put robot 2 inside robot 1's climb
+                    # and cost the whole kit phase (F98)
+                    log(t() + "push %d would overrun the window" % i)
+                    return
                 log(t() + "push %d leg %d%s: %.0f mm at %.0f deg"
                     % (i, k, "r" if attempt else "", n,
                        np.degrees(np.arctan2(uy, ux))))
@@ -539,7 +578,7 @@ def mission_robot2(ctl, m, d=None, log=print, clock=None):
     """The whole match for the detached actuator.  One yield per tick."""
     t = (lambda: "") if clock is None else (lambda: "T+%5.1f R2 " % clock())
     pats = _classify(m, d)
-    west = [p for p in pats if p[1] < 500.0]
+    east = [p for p in pats if p[1] > 500.0]
 
     import mujoco as _mj
     _cb = {i: _mj.mj_name2id(m, _mj.mjtObj.mjOBJ_BODY, "cyl%d" % i)
@@ -577,28 +616,59 @@ def mission_robot2(ctl, m, d=None, log=print, clock=None):
     log(t() + "SHAKE: kits out against the north wall")
     yield from ctl.shake_out(4)
 
-    # ---- P1: cross west on the y-1080 lane (empty until robot 1's kit
-    # phase at T+66) and drop onto the west columns from above.
-    yield from ctl.goto(700.0, 1080.0, v_max=300.0, tol=36.0)
-    yield from ctl.goto(300.0, 990.0, v_max=300.0, tol=36.0)
-
-    # ---- P2: west columns (the seal-corridor cure) ---------------------
-    # greens wait: their RECOVERY leg crosses the dock band (x 380-760,
-    # y<322), which robot 1 vacates around T+58
-    yield from _run_tasks(ctl, _plan_side(west, "W", "nogreens"), spot_puck,
-                          log, t, clock, stop_at=58.0, placed=placed)
-    yield from wait_until(58.0)
-    yield from _run_tasks(ctl, _plan_side(west, "W", "greens"), spot_puck,
-                          log, t, clock, stop_at=76.0, placed=placed)
-
-    # ---- P3: east columns once robot 1 has left the east side.  LOOK
-    # AGAIN first: robot 1's climb has plowed the east column somewhere
-    # else entirely (measured: four pucks in a pile 40 mm from HOSP).
-    yield from wait_until(74.0)
-    east = [p for p in _classify(m, d) if p[1] > 500.0]
-    log(t() + "east re-look: " + " ".join(
-        "%d%s@%.0f,%.0f" % (i, c[0], x, y) for i, x, y, c in east))
+    # ---- P1: the EAST columns, EARLY (F98).  Robot 1 lives in the
+    # south and west until its kit climb at ~T+56; the east stickers are
+    # pristine and robot-1-free until then.  Working them now means the
+    # climb's plow-pile later contains only what is left.  The WEST side
+    # is not visited at all in this build: five configurations of west
+    # pushing each re-rolled robot 1's seal into b0s -- the corridor
+    # cannot host a 10-30 s noisy push pipeline and a seal.  The west
+    # yellows' +20 and the F87 patient cure return when the pushes are
+    # twice as fast; the roadmap owns it.
     yield from _run_tasks(ctl, _plan_side(east, "E"), spot_puck, log, t,
-                          clock, stop_at=112.0, placed=placed)
-    ctl.stop()
-    log(t() + "done: %d pucks delivered or staged" % len(placed))
+                          clock, stop_at=52.0, placed=placed, hard_stop=55.0)
+
+    # hold in the north-east dead corner through robot 1's climb window
+    log(t() + "holding at (1085, 880) through robot 1's climb")
+    while clock() < 74.0:
+        px, py, _ = ctl.pose
+        if abs(px - 1085.0) > 90.0 or abs(py - 880.0) > 90.0:
+            yield from ctl.goto(1085.0, 880.0, v_max=320.0, tol=45.0)
+        ctl.stop()
+        for _ in range(int(1.0 * hal.Clock.HZ)):
+            ctl.tick()
+            yield
+
+    # ---- P3: east side once robot 1 has left it.  LOOK AGAIN each
+    # round: robot 1's climb piles the east column near HOSP (measured),
+    # and every push moves the map -- plan from the live positions until
+    # the clock or the work runs out.
+    yield from wait_until(74.0)
+    while clock() < 108.0:
+        east = [p for p in _classify(m, d) if p[1] > 400.0
+                and p[0] not in placed]
+        log(t() + "east re-look: " + " ".join(
+            "%d%s@%.0f,%.0f" % (i, c[0], x, y) for i, x, y, c in east))
+        tasks = _plan_side(east, "E")
+        if not tasks:
+            break
+        n0 = len(placed)
+        yield from _run_tasks(ctl, tasks, spot_puck, log, t, clock,
+                              stop_at=112.0, placed=placed)
+        if len(placed) == n0:
+            break                            # no progress: stop replanning
+
+    # ---- P4: PARK AND HOLD in the dead ground (F98).  "Done" is not a
+    # state a detached actuator may improvise: left loose it was found in
+    # the seal corridor being plowed by its own teammate.  The box's east
+    # end is robot-1-dead after T+66; the hold re-checks, because robot 1
+    # CAN shove this robot.
+    log(t() + "parking in the north-east dead corner")
+    while True:
+        px, py, _ = ctl.pose
+        if abs(px - 1085.0) > 90.0 or abs(py - 880.0) > 90.0:
+            yield from ctl.goto(1085.0, 880.0, v_max=320.0, tol=45.0)
+        ctl.stop()
+        for _ in range(int(2.0 * hal.Clock.HZ)):
+            ctl.tick()
+            yield

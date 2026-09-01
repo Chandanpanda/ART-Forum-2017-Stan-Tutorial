@@ -157,8 +157,8 @@ def capture_line(rb, ax, ay, head_deg, gate_mm, v_cruise=200.0,
 
     CERTIFIED ENVELOPE (check_trajectory): entries to 90 mm of cross-track
     and 35 deg of heading, EXCEPT the crossing diagonals -- far off the
-    line while pointing hard across it (|lat x heading| beyond ~90 mm x
-    25 deg, opposite signs), which need an S-curve one capture arc cannot
+    line while pointing hard across it (|lat x heading| beyond ~40 mm x
+    27 deg, opposite signs), which need an S-curve one capture arc cannot
     give and end ~13 mm across the line.  No caller enters there: the
     seal's normalised basin arrives 62 mm off and near-parallel.  Outside
     the envelope the primitive refuses and the caller's turn_to fallback

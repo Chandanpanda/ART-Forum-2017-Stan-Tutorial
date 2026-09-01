@@ -494,8 +494,22 @@ a behaviour change.
    ("HOSP", "PCC_L") here**, with the plan that exploits it.
 5. **trajectory.py + tracker** — arc-blended transit, executor on the
    schedule, stall-seated beam 1 re-adopted; per-phase actual-vs-plan report.
+   *Landed.*  Board **+65.5** (from +53.4), docks 85%, the full robot-1
+   subtotal of 134 reached on two seeds.  The step's find (F88): the kit
+   departure pivot at the dock line was never legal — the tail's 185 mm
+   sweep vs 155 mm to the plate edge — and the silent grind was hiding
+   inside the "15.5 s" hospital leg; cured by a 55 mm back-away plus one
+   strict-knee pursuit to the lip (KH block 24 s → 15).  Est-nav re-run
+   after the fix: **−2.3** with docks at 24% and the sweep itself
+   degrading — the estimator suite is green (median 14.6 mm, p95 < 90),
+   so the gap lives in the *behaviours'* tolerance to belief error, not
+   in the filter; the flip stays deferred and step 6 owns the diagnosis.
 6. **Re-profile and close** — the analysis loop on the *optimal* plan; chase
    the residuals the report names, not hunches.  Exit: §11 target on 12 seeds.
+   Named residuals from the step-5 boards: dock service variance 10–16 s
+   (six seeds trade PCC_L's 16 pts for the seal under slow docks), the
+   beam-1 tail (staging 13.3 s measured vs 18.5 budgeted for the whole
+   tail; two crab-arrival 10 mm misses), and the est-nav dock/sweep gap.
 7. **Step #3 of the project** — robot 2 (second MJCF body + LinkHAL + its
    schedule), then PiBackend bring-up on the bench.
 

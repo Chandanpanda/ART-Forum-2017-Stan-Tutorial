@@ -403,7 +403,14 @@ class M2:
     # the hospital's six, which is the run it is already standing next to when
     # it leaves the laboratory.  The four PCC kits then start in the deployment
     # box, which is where the second robot sits.
-    KIT_AGENT_A     = ("HOSP", "PCC_L", "PCC_R")
+    # F82/F86: PCC_R rides on ROBOT 2 -- it starts in the deployment box
+    # against the east wall, and PCC_R is one wall-guided run north, its
+    # first act of the match.  Robot 1 keeps the hospital's six and PCC_L,
+    # which is where its kit loop wants to end anyway (the beams stage
+    # 480 mm from PCC_L).  Flipped together with the planner: without a
+    # plan that exploits the reclaimed ~7 s the flip only loses points,
+    # which is how its first attempt went.
+    KIT_AGENT_A     = ("HOSP", "PCC_L")
     # Hopper discharge points in the ROBOT frame (x from the axle, y, and the
     # height the kit leaves at).
     #

@@ -17,26 +17,15 @@ from .params import Chassis, AgentA, Field, Piece, M2
 
 HZ = 50.0
 MATCH = 120.0            # rules g.1
-HOLE_BUDGET = 10.0       # measured cost of one sensed dock plus its post (F68)
-# 56, and this was measured rather than guessed.  At 44 the laboratory gets a
-# second slot -- worth +18 -- and the seal then starts 15 s later and misses:
-# over twelve seeds the mean went from +69 to about +50, with four matches
-# running past the buzzer with no beams down at all.  The seal is 70 points
-# and it is the phase with no slack, so it gets the clock it needs first.
-# 34, not 39: the seal used to start from the laboratory and now starts from
-# PCC_L, which the kit loop visits last precisely because it is 370 mm from
-# where beam 2 stages rather than 530.
-BEAM_BUDGET = 34.0
-# MEASURED on the isolated rig: 27-28 s from the laboratory's exit to the last
-# drop, delivering the full 6/2/2 for +50.  30 leaves a little for a leg that
-# has to be re-aimed.
-KIT_BUDGET  = 30.0
-# 13, which is what a dock MEASURES: 11-16 s from arriving at the pivot to
-# being clear of the plate again.  At 9 the robot starts approaches it cannot
-# finish -- one match began its third slot at T+66, left the plate at T+84,
-# and the seal then ran 7 s past the buzzer and scored nothing.  A slot is
-# worth 18 and the seal 70; when they compete, the seal wins.
-MIN_DOCK    = 6.0        # floor on the estimate; an F68 dock is 6-11 s
+# F86: BEAM_BUDGET, KIT_BUDGET, HOLE_BUDGET and MIN_DOCK are gone.  They
+# were worst-case reservations, wrong in both directions by construction --
+# the third slot was skipped on all twelve seeds for want of seconds the
+# kit loop was not actually using.  The mission now runs on planner.plan():
+# an exact prize-collecting tour over the measured cost model, replanned at
+# every task boundary, whose latest_start() is the deadline arithmetic the
+# constants used to approximate.  The measured numbers those constants
+# carried live on as the planner's calibration (see planner.DUR/TRAVEL and
+# check_planner).
 # How close the chassis has to be before the trim slide takes over.  The scan
 # recovers +/-22 mm to under a millimetre, so this is deliberately well inside
 # it: every millimetre of chassis error is a millimetre of trim stroke spent,
@@ -700,7 +689,9 @@ def dock_and_post(rb, hole_x, hole_y, chute_offset, stroke=0.60, aboard=0,
 # of each zone before pivoting; it now stays down there, runs to the next
 # station's longitude at y 730, and only then turns north.  An L instead of a
 # diagonal.  At y 730 the body spans 587-872, clear of every drop at y >= 920.
-KIT_ORDER   = ("PCC_R", "HOSP", "PCC_L")
+# The planner orders the kit zones now; this is the standalone-rig default.
+# PCC_R is robot 2's first act of the match (F82) and no longer rides here.
+KIT_ORDER   = ("HOSP", "PCC_L")
 KIT_APPROACH = (950.0, 250.0)          # the dogleg east of the laboratory
 KIT_LOOP_Y   = 730.0                   # = station y - KIT_BACKOFF: the traverse
 # DROP CENTRALLY, THEN REVERSE OUT BEFORE TURNING.
@@ -767,6 +758,15 @@ def deliver_kits(rb, log=print, clk=None, deadline=None, order=KIT_ORDER):
     # get east of the laboratory before turning north
     if rb.pose[1] < 320.0:
         yield from leg(*KIT_APPROACH, speed=230.0, cap=8.0)
+        # ...and CLIMB to the OLD PCC_R PIVOT SPOT (903, 730) before any
+        # west turn.  Two constraints meet here: the diagonal from the
+        # dogleg to a western longitude clips the laboratory's north-east
+        # corner, and a straight climb up the x~950 corridor drifts east
+        # until the west pivot jams on the east wall (measured: stuck at
+        # x 971 needing 958, then 17 s of wander).  The baseline never had
+        # the problem because its kit loop only ever pivoted at PCC_R's
+        # spot -- so aim the climb there, drift and all.
+        yield from leg(903.0, KIT_LOOP_Y, cap=10.0)
     for dest in order:
         if deadline is not None and clk is not None and clk() > deadline:
             log(t() + "  kits: %s abandoned at the beam deadline" % dest)
@@ -887,42 +887,61 @@ def mission_agent_a(rb, holes, hole_y, chute_offset, log=print, clock=None):
     #    on a budget and stops when the beams need the clock.
     log(t() + "reverse-docking the laboratory")
     yield from guard(back_to(rb, PIVOT_W[0], PIVOT_W[1]), 25.0)
-    # THE LABORATORY RUNS TO A DEADLINE, NOT A BUDGET.  A per-slot budget has to
-    # be pessimistic enough for the worst dock, and then it throws away slots
-    # the robot had time for: one measured match abandoned its third slot with
-    # 56 s left and then sealed the quarantine in 39.  A deadline lets the robot
-    # spend every second it actually has and stop the moment the beams need it,
-    # including part-way through an approach.
-    # THE LABORATORY NOW YIELDS TO TWO THINGS, NOT ONE.  A slot is worth +18.
-    # The beam seal is +70 and the kit loop is +80 of swing (-30 to +50), so
-    # both outrank it, and the deadline is what is left after both.
-    dl, est = MATCH - BEAM_BUDGET - KIT_BUDGET, MIN_DOCK
-    for i, hx in enumerate(holes):
-        # ...and the estimate of what a slot costs is MEASURED, not assumed.
-        # Docks run 11-17 s depending on how the approach goes, and a constant
-        # is wrong in both directions: too small and the robot starts a slot it
-        # cannot finish, losing the 70-point seal to gain 18; too large and it
-        # gives up a slot it had time for.  Time the last one instead.
-        if clock is not None and clock() + est > dl:
-            log(t() + "  hole %d not started: T+%.0f + %.0f would pass %.0f"
-                % (i+1, clock(), est, dl))
+    # THE SCHEDULE, NOT THE BUDGETS (F86).  From here the mission executes
+    # planner.plan(): an exact tour over the measured cost model, maximising
+    # the referee's points inside what is left of the clock.  Every task
+    # boundary replans -- a slow dock re-prices the remaining docks
+    # (observe), and the tour re-solves, dropping the cheapest marginal
+    # station rather than whichever one happened to be last in a hard-coded
+    # order.  That is how the old constants' one honest insight ("the
+    # 70-point task must never die downstream of the 50-point one") stops
+    # being a phase rule and becomes arithmetic.
+    from . import planner
+    now = clock if clock is not None else (lambda: planner.SWEEP_NOMINAL)
+    sched = planner.plan(now(), at="SWEEP")
+    log(t() + "plan: %r" % (sched,))
+    HOLE_OF = {"L1": 0, "L2": 1, "L3": 2}
+    prev = "SWEEP"
+    while True:
+        task = sched.next_task()
+        if task is None:
             break
-        log(t() + "  hole %d (x=%.1f)" % (i+1, hx))
-        t0 = clock() if clock else 0.0
-        yield from dock_and_post(rb, hx, hole_y, chute_offset,
-                                 aboard=len(holes) - i, log=log, clk=clock,
-                                 deadline=dl)
-        if clock is not None:
-            est = max(MIN_DOCK, clock() - t0)
-    # KITS BEFORE BEAMS, and northwards from the laboratory.  The beams seal the
-    # quarantine and box the robot into the south-west corner (F44), so they are
-    # always last; the kit loop is chosen to finish at PCC_L, 723 mm from where
-    # beam 2 stages, rather than at PCC_R which is 943 mm further away.
-    log(t() + "delivering the medical kits")
-    yield from guard(deliver_kits(rb, log=log, clk=clock,
-                                  deadline=MATCH - BEAM_BUDGET),
-                     KIT_BUDGET + 8.0)
-    yield from seal_quarantine(rb, log=log, clk=clock)
+        t0 = now()
+        dl = sched.latest_start(task)
+        if task in HOLE_OF:
+            i = HOLE_OF[task]
+            aboard = sum(1 for nm, _, _ in sched.tasks if nm in HOLE_OF)
+            log(t() + "  %s: hole %d (x=%.1f), latest start T+%.0f"
+                % (task, i + 1, holes[i], dl))
+            yield from dock_and_post(rb, holes[i], hole_y, chute_offset,
+                                     aboard=aboard, log=log, clk=clock,
+                                     deadline=dl)
+            # observe the SERVICE time: the travel into the task is the
+            # schedule's own number and must not be double-charged (the
+            # first version fed it 12.0 for dock 1 -- travel included --
+            # priced every later dock at 12 and dropped a feasible
+            # 85-point tail for a 70-point one).
+            sched.observe("L", (now() - t0)
+                          - planner.TRAVEL.get((prev, task), 8.0))
+        elif task in ("KH", "KL"):
+            dest = {"KH": "HOSP", "KL": "PCC_L"}[task]
+            log(t() + "  %s: kits -> %s, latest start T+%.0f" % (task, dest, dl))
+            # The guard is sized by the schedule's own numbers -- a flat
+            # 20 s truncated the hospital leg mid-approach after its travel
+            # was re-measured to 15 s, wasting the whole trip.
+            # deadline=None: the schedule gates DEPARTURE (latest_start);
+            # a second gate at arrival abandoned drops whose whole travel
+            # was already paid -- measured, a hospital leg spent 15 s
+            # getting there and refused the one-second drop.
+            cap = planner.TRAVEL.get((prev, task), 8.0) + planner.DUR[task] + 8.0
+            yield from guard(deliver_kits(rb, log=log, clk=clock,
+                                          order=(dest,)), cap)
+        elif task == "BEAMS":
+            yield from seal_quarantine(rb, log=log, clk=clock)
+        sched.complete(task, now())
+        prev = task
+        if sched.tasks:
+            log(t() + "  replanned: %r" % (sched,))
     rb.stop()
 
 
@@ -1289,6 +1308,25 @@ def seal_quarantine(rb, log=print, clk=None):
     # that.  The robot is always facing away from the slot at this point, so
     # driving forward is driving south; no pivot needed, which is the only
     # thing that works from there.
+    # EAST ENTRY TAKES THE CORRIDOR (F86).  The planner may schedule the
+    # seal straight after the hospital drop (PCC_L dropped under time
+    # pressure), and the diagonal from there to the west lane crosses the
+    # laboratory plate -- which the wheels cannot cross.  Run the y-730
+    # traverse west first, exactly the lane the kit loop itself uses, then
+    # descend the west side as every other entry does.
+    px, py, pth = rb.pose
+    if px > 420.0 and py > 560.0:
+        # ...and then NORMALISE to the proven basin: (240, 730) heading 90
+        # is exactly the pose PCC_L's backoff leaves, the one entry state
+        # the seal has ever been reliable from.  Entered at the same point
+        # on a westward heading instead, beam 2 stalled 11 mm short and
+        # 6 deg yawed and scored nothing.  The extra pivot costs ~2 s.
+        log(t() + "  east entry: corridor west via (240, 730)")
+        yield from guard(turn_to(rb, np.degrees(np.arctan2(730.0-py, 240.0-px)),
+                                 tol=4.0), 9.0)
+        yield from guard(drive_straight(rb, np.hypot(240.0-px, 730.0-py),
+                                        speed=230.0), 12.0)
+        yield from guard(turn_to(rb, 90.0, tol=4.0), 8.0)
     px, py, pth = rb.pose
     if py > 240.0 and abs(_wrap(pth - 270.0)) < 70.0:
         log("      still on the laboratory at Y %.0f -- driving clear" % py)
@@ -1333,6 +1371,16 @@ def seal_quarantine(rb, log=print, clk=None):
     # and loses the T-joint: the pivot then clears beam 2 by 4 mm, not 12.
     yield from place_beam(rb, 2, log=log, clk=clk, withdraw=230.0, back=220.0,
                           gain=1.2, taper_mm=45.0)
+    # BANK BEAM 2 (F86).  Beam 1's tail is 17-20 s of staging dance in a
+    # corridor that passes within millimetres of the beam just placed; run
+    # out of clock in there and the buzzer finds beam 2 shoved off its line
+    # too -- zero points where stopping now keeps 25.  The planner's own
+    # measured tail is the gate.
+    from .planner import BEAM1_TAIL
+    if clk is not None and clk() > MATCH - BEAM1_TAIL:
+        log(t() + "beam 1 not attempted: %.0f s left, its tail needs %.0f "
+            "-- banking beam 2" % (MATCH - clk(), BEAM1_TAIL))
+        return
     log(t() + "beam 1 (west wall)")
     # DERIVE BEAM 1's LINE FROM WHERE BEAM 2 ACTUALLY LANDED (F54).
     # Beam 2's north end face is at its stall axle + STOP2_X, and beam 1 has to

@@ -1204,9 +1204,14 @@ def scene_full_match(disc_positions, robot_pose=None, rng=None, kits_aboard=True
             wx, wy = local_to_world(px, py, ph, lx_, ly_)
             parts.append(kit_body(i, wx, wy, z=lz_))
         elif kits_aboard:
-            bx0, by0, bx1, _ = Field.DEPLOY_BOX
-            parts.append(kit_body(i, bx0 + 40.0 + (spare % 4)*32.0,
-                                  by0 + 40.0 + (spare // 4)*32.0))
+            # PCC_R's kits ride ON ROBOT 2, which scoots out of the box at
+            # the gun.  Parked loose in the box they sat squarely in robot
+            # 1's exit sweep -- measured, pass 1 spent 47 s plowing them --
+            # and the box has no static free corner: robot 1's body plus
+            # its exit path covers it.  Until robot 2 is a body (step 7)
+            # they wait OFF the field, exactly as far from scoring as they
+            # would be on robot 2's deck.
+            parts.append(kit_body(i, 2400.0 + (spare % 4)*50.0, 2400.0))
             spare += 1
         else:
             parts.append(kit_body(i, 700.0 + (i % 5)*35.0, 40.0 + (i // 5)*35.0))

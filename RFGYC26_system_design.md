@@ -506,10 +506,35 @@ a behaviour change.
    in the filter; the flip stays deferred and step 6 owns the diagnosis.
 6. **Re-profile and close** — the analysis loop on the *optimal* plan; chase
    the residuals the report names, not hunches.  Exit: §11 target on 12 seeds.
-   Named residuals from the step-5 boards: dock service variance 10–16 s
-   (six seeds trade PCC_L's 16 pts for the seal under slow docks), the
-   beam-1 tail (staging 13.3 s measured vs 18.5 budgeted for the whole
-   tail; two crab-arrival 10 mm misses), and the est-nav dock/sweep gap.
+   *First increment landed.*  The dock lever paid: the step-across misses
+   all measured 37–45 mm, just past the 36 mm inline-absorption threshold,
+   so the tracked reverse's crab authority went 5°→8° and the threshold to
+   46 — **docks 94 %** (62/66 over 24 seeds), all-three-slots on 18/24,
+   five seeds at the full 144 robot-1 ceiling; slots are effectively
+   solved.  24-seed mean +57.2 with the beams as the one dominant variance
+   term (b70 ×10 / b25 ×9 / b0 ×3, ~25 pts of swing a seed).  Tried and
+   reverted, with the traces kept: moving the dock-line pivots to a
+   "minimum-graze" y (the rigid south wall deflects worse than the plate's
+   5 mm lip — stiffness beats depth, F89), and both a tail-first reverse
+   capture and a capture+dress hybrid for beam 2's descent (staged
+   beautifully and stalled 11 mm high at 83° three-for-three: the run-in's
+   crab law needs its heading rendezvous on the CCW side, which the slow
+   wall-grinding flip accidentally provides — the aim-taper redesign of
+   stall_drive is the named follow-up, F91).  New finds: the beam-1 b25s
+   are the F87 patient pinned between the SW nose corner and the west wall
+   (contact-dump proven, cyl1 removal cures seed 9 outright — F90;
+   robot 2 remains the cure); a planner hole let an aborted seal schedule
+   PCC_L from inside the sealed box (RANK now binds the first hop too).
+   Est-nav diagnosed end-to-end (F92): belief is excellent while fixes
+   flow (camera-era p95 22 mm, post-fix median 3 mm) and the second half
+   is a fix drought — no absolute reference north of the laboratory, 60–90
+   mm by the seal, and the seal's shuffles defeat the sustained-stall
+   freeze (alternating pushes reset the counter; the belief crossed the
+   south wall by 270 mm while the truth wiggled in place).  Cure list for
+   the est-nav pass: scheduled datum touches in the north half, a freeze
+   that survives shuffles, and only then the F85 flip.  Remaining for this
+   step's exit: the beam variance (robot 2's patient clearance buys most
+   of it) and finishing inside 115 s.
 7. **Step #3 of the project** — robot 2 (second MJCF body + LinkHAL + its
    schedule), then PiBackend bring-up on the bench.
 

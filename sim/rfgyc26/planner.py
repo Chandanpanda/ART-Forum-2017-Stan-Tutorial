@@ -205,7 +205,15 @@ def plan(t_now, at="SWEEP", todo=NODES, done=(), dur=None):
     n = len(todo)
     # best[(mask, last)] = earliest finish; parent for reconstruction
     best, parent = {}, {}
+    r_at = RANK.get(at, -1)            # SWEEP has no rank: everything follows
     for name in todo:
+        if RANK[name] < r_at:
+            # The proven topology binds the FIRST hop too.  Without this, a
+            # seal that aborted early "completed" BEAMS and the replan
+            # cheerfully scheduled PCC_L from inside the south-west box the
+            # sealed quarantine leaves the robot in (F44) -- over a default
+            # 8 s corridor that does not exist.  Measured, seed 4.
+            continue
         t = t_now + TRAVEL.get((at, name), 8.0) + dur[name]
         if t <= MATCH_END + 1e-6:      # epsilon: sums this long carry float dust
             m = 1 << idx[name]

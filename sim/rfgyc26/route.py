@@ -490,6 +490,16 @@ def dock_and_post(rb, hole_x, hole_y, chute_offset, stroke=0.60, aboard=0,
         # to curve in from wherever it is and then be squared up afterwards.
         dx = pv[0] - px
         if abs(dx) > 12.0:
+            # F89, tried and REVERTED: no 90-degree turn fits between the
+            # south wall and the plate (corner diagonal 183 vs 360 of
+            # field), so the hop's turns always graze one of them.  Turning
+            # here grazes ~28 mm of the plate's 5 mm LIP; sliding south to
+            # the "minimum-graze" point at y 180 swaps that for a 3 mm
+            # graze on the RIGID south wall -- and the wall deflects the
+            # chassis worse than the lip does (measured: three new 37-45 mm
+            # step-across misses on seeds that were clean, docks 11 -> 15 s,
+            # and the later seals dropped beam 1).  Stiffness beats depth;
+            # the lip graze is the cheap one.  It stays.
             h = 0.0 if dx > 0 else 180.0
             yield from guard(turn_to(rb, h, tol=6.0), 8.0)
             yield from guard(drive_straight(rb, abs(dx), speed=220.0), 8.0)
@@ -521,9 +531,13 @@ def dock_and_post(rb, hole_x, hole_y, chute_offset, stroke=0.60, aboard=0,
     seen = getattr(rb, "lab_seen", [])
     tgt0 = pick_slot(seen, 0.0)
     dy0 = tgt0[1] if tgt0 else (hole_x - rb.pose[0])
-    # 36: the tracked reverse takes out about 16 mm over the 112 mm it has and
-    # the trim slide 25, so anything inside their sum needs no pivot at all.
-    if abs(dy0) > 36.0:
+    # 46: the tracked reverse at psi 8 takes out ~25 mm over the 112 mm it
+    # has (F90: it took 16 at psi 5, and every step-across the boards fired
+    # was a 37-45 mm miss -- just past the old 36 threshold) and the trim
+    # slide 25, so anything inside their sum needs no pivot at all.  The
+    # dock terminal is the camera's, so the extra crab costs range accuracy
+    # nothing it cannot re-measure on the way in.
+    if abs(dy0) > 46.0:
         # AND THE PIVOT CANNOT HAPPEN HERE.  The look station is at Y 158 and
         # the swept radius is 185, so a turn on the spot puts the robot's corner
         # 27 mm through the south wall.  It grinds, the re-look then comes back
@@ -562,7 +576,7 @@ def dock_and_post(rb, hole_x, hole_y, chute_offset, stroke=0.60, aboard=0,
         # which is 8 mm of correction.  Measured: a slot that wanted 33 mm of
         # lateral got 18 and the dock landed 14.6 mm out.
         yield from guard(reverse_track(rb, sw, rb.trim_at(), 270.0,
-                                       speed=170.0, stop_at=112.0, psi_max=5.0), 8.0)
+                                       speed=170.0, stop_at=112.0, psi_max=8.0), 8.0)
         yield from guard(look_lab(rb, n=6), 2.5)
         # TRACK THE SAME SLOT.  Closer in, the nearest slot's rim leaves the
         # frame before its neighbours' do -- so a re-look can come back with the
@@ -1261,10 +1275,16 @@ def place_beam(rb, which, log=print, clk=None, withdraw=0.0,
     # own tolerances.  So back off, square up, and come in again with the crab
     # switched off.  Three seconds, and the beam lands parallel to its wall.
     if abs(_wrap(head - rb.pose[2])) > 1.5:
-        yield from guard(drive_straight(rb, -30.0 if fwd else 30.0, speed=120.0), 3.0)
+        # 45, not 30: a 3-4 deg yaw AT the wall is usually not crab residue
+        # but a patient cylinder pinned between the nose corner and the wall
+        # (F90 -- contact dump: cyl x wall_w under the SW corner, the F87
+        # west-corridor patient the seal's descent parks there).  30 mm of
+        # back-off re-stalled straight into the pin; 45 gives a round
+        # cylinder room to roll off the corner before the retry.
+        yield from guard(drive_straight(rb, -45.0 if fwd else 45.0, speed=120.0), 3.0)
         yield from guard(turn_to(rb, head, tol=1.0), 6.0)
         yield from guard(stall_drive(rb, 90.0 if fwd else -90.0, head,
-                                     max_mm=70.0), 6.0)
+                                     max_mm=85.0), 6.0)
         lap("squared")
     # SET IT DOWN WHILE STILL PRESSING.  Stopping first lets the chassis rebound
     # off the wall it is leaning on -- 25 N of contact, and the beam is still on
@@ -1400,19 +1420,25 @@ def seal_quarantine(rb, log=print, clk=None):
                                                    (240.0, 700.0)],
                                               v_max=220.0, v_end=110.0)
         yield from guard(turn_to(rb, 90.0, tol=5.0), 8.0)
-    # THE APPROACH STAYS THE PROVEN CHAIN (F87).  A tail-first capture of
-    # the lane was built, certified on a grid, and RETIRED here by the map:
-    # there is no descent corridor that misses SIDE_L's east sticker column
-    # (its patient needs centre x > 287; the plate's wheel limit needs
-    # centre x < 256), so every west-side descent plows that patient, and
-    # the capture's lane-hugging arc plowed it all the way into the beam
-    # corner, where it blocked the press 10 mm short at 6 deg (measured:
-    # the patient pinned against the south wall at x 75 under 3 N of our
-    # own push -- the step-4 b25s carried the same signature).  The old
-    # chain shoves it WEST early and turns away, which is as good as this
-    # geometry allows.  The real cure is the fleet's: that patient is
-    # robot 2's cargo, and robot 2 clears the west side before the seal.
-
+    # THE APPROACH STAYS THE PROVEN CHAIN (F87, re-affirmed F91).  Two
+    # captures have now been built for this descent and retired by
+    # measurement.  Step 5's FORWARD capture: its eastern lane-hugging arc
+    # swept the sticker column's patient into the beam corner.  Step 6's
+    # REVERSE capture from the basin (entry 62 mm / 0 deg, certified
+    # envelope): it deleted the 190-degree wall-grinding flip at (178,233)
+    # and the 0-10 s dress, staged beautifully -- and beam 2 then stalled
+    # 11 mm high at 83 deg, three seeds from three, from staging poses
+    # nearly identical to ones the old chain lands 145.5/90.0 from.  The
+    # difference is not position, not entry side (both were tried): the
+    # run-in's crab law commands aim = head + gain*lat for the whole
+    # approach (7.8 deg at 6.5 mm), and whether the chassis's heading
+    # RENDEZVOUS with the shrinking aim happens before the taper zone
+    # decides the landing; the old chain's flip leaves a CCW-side heading
+    # residue that crosses 90 early, the capture arrives CW-side and hangs
+    # at 84 until the beam's corner (200 mm * sin 7 = 24 mm of lead) finds
+    # the wall at y 156.  Fixing that belongs in stall_drive's law (taper
+    # the AIM, not just the output), a rig day of its own -- until then
+    # the slow flip is load-bearing and the chain stays.
     log("      transit: from (%.0f, %.0f, %.0f) to the lane" % rb.pose)
     yield from guard(turn_to(rb, np.degrees(np.arctan2(WP[1]-py, WP[0]-px)),
                              tol=3.0), 9.0)
@@ -1421,21 +1447,10 @@ def seal_quarantine(rb, log=print, clk=None):
                                     speed=220.0), 12.0)
     log("      ran in:  (%.0f, %.0f, %.0f)" % rb.pose)
     yield from guard(turn_to(rb, AgentA.BEAM2_STATION[2], tol=2.0), 9.0)
-    # Then shuffle the last 20-140 mm onto the lane.  How far off the pivot
-    # leaves the robot depends on how far it came -- from the third slot it
-    # arrives 140 mm out -- and beam 2's 220 mm run-in cannot absorb that.
-    # The same park that gets the robot onto beam 1's line gets it onto this
-    # one, and here there is nothing placed yet to swing into.
-    # tol 5, not 10.  The run-in crabs to kill whatever cross-track is left,
-    # and it ends by driving the beam into a wall -- so whatever crab is still
-    # on at the stall is the angle the beam gets laid down at.  10 mm of
-    # residual is 10 deg of yaw, and the referee wants the beam within 10.
-    # tol 18, not 5.  This used to shuffle the last 15 mm onto the lane by hand
-    # at 5.6 s a time, and it does not have to: place_beam line_drives 130 mm to
-    # its own staging point before the run-in, crabbing onto the lane as it goes,
-    # and the run-in itself is 220 mm with a proper line follower on it.  The
-    # shuffle is a safety net for a pivot that lands badly, not the way the robot
-    # is supposed to get onto its line.
+    # tol 18, not 5: place_beam line_drives 130 mm to its own staging point
+    # before the run-in, crabbing onto the lane as it goes; the shuffle is
+    # a safety net for a pivot that lands badly, not the way the robot is
+    # supposed to get onto its line.
     yield from guard(dress_onto_line(rb, AgentA.BEAM2_STATION[2],
                                      AgentA.BEAM2_STATION[:2],
                                      tol=18.0, passes=2), 8.0)

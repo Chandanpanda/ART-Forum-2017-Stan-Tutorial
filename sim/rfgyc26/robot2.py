@@ -170,14 +170,26 @@ class SimLink(hal.LinkHAL):
             vl, vr = self._vl, self._vr
         self.servo_l.target = vl
         self.servo_r.target = vr
-        dt = float(self.m.opt.timestep)
-        for _ in range(max(1, n)):
+        # BATCH THE PHYSICS BETWEEN SERVO TICKS (F103).  Stepping MuJoCo one
+        # step at a time from Python, with a servo update wrapped round each,
+        # cost ~1.7 ms per step against the ~0.03 ms the engine needs -- the
+        # physics was a rounding error next to the interpreter overhead, and
+        # a 12-seed board took ten minutes.  The servo runs at SERVO_HZ and
+        # mj_step loops in C between ticks, which is both 5x faster and a
+        # more honest model of a Pico running MicroPython.
+        step = float(self.m.opt.timestep)
+        every = max(1, int(round(1.0 / (R2.SERVO_HZ * step))))
+        left = max(1, n)
+        while left > 0:
+            k = min(every, left)
             ml, mr = self.wheel_speeds()
+            dt = k * step
             self.d.ctrl[self._al] = self.servo_l.update(ml, dt)
             self.d.ctrl[self._ar] = self.servo_r.update(mr, dt)
             self.servo_l.count(ml, dt)
             self.servo_r.count(mr, dt)
-            mujoco.mj_step(self.m, self.d)
+            mujoco.mj_step(self.m, self.d, nstep=k)
+            left -= k
 
     def busy(self):
         return self.d.time < self._shake

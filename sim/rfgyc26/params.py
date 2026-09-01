@@ -528,7 +528,14 @@ class Robot2:
     # loop (see robot2.WheelServo) instead of setting a PWM proportional to
     # the request and hoping.
     ENC_CPR         = 700.0                  # counts per output revolution
-    SERVO_HZ        = 1000.0                 # firmware inner-loop rate
+    SERVO_HZ        = 200.0                  # firmware inner-loop rate.
+                                             # 200, not 1000: a Pico W
+                                             # running a PI loop in
+                                             # MicroPython does 100-200 Hz,
+                                             # and pretending otherwise cost
+                                             # the sim 5x its wall clock for
+                                             # accuracy the hardware cannot
+                                             # deliver anyway (F103)
     SERVO_KP        = 0.0045                 # N.m per (mm/s) of error
     SERVO_KI        = 0.030                  # N.m per (mm/s . s)
 

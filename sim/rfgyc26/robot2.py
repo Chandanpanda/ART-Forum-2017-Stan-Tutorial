@@ -718,19 +718,27 @@ def mission_robot2(ctl, m, d=None, log=print, clock=None):
             ux, uy, n = _norm(tx - px, ty - py)
             if n < 55.0:
                 continue
-            ax, ay = px - ux * nav.PLOW_REACH, py - uy * nav.PLOW_REACH
-            ok = yield from ctl.goto(ax, ay, v_max=320.0, tol=34.0,
+            # THE APPROACH DOES NOT NEED TO BE PRECISE (F101), and asking
+            # for precision is what cost the deliveries.  What the push
+            # actually requires is: be BEHIND the puck, FACING the push
+            # direction, with the puck inside a 120 mm pocket.  The first
+            # version drove to an exact pose 130 mm back on a 34 mm
+            # tolerance and abandoned the puck when the tracker could not
+            # nail it -- 12-20 s a puck, nothing delivered.  So: park loosely
+            # well behind it, turn onto the push line, then CLOSE the last
+            # 120 mm in a straight line.  The straight run is what funnels
+            # the puck into the pocket, and it needs no planner at all.
+            hd = float(np.degrees(np.arctan2(uy, ux)))
+            sx, sy = px - ux * 250.0, py - uy * 250.0
+            ok = yield from ctl.goto(sx, sy, v_max=330.0, tol=70.0,
                                      tries=2, strict=True)
-            if not ok and np.hypot(ctl.pose[0] - ax, ctl.pose[1] - ay) > 95.0:
-                # 95, not zero: THE PLOW'S WIDTH IS THE POSITION TOLERANCE --
-                # that was the whole argument for a 120 mm pocket on a robot
-                # driven by cheap motors.  The first version abandoned any
-                # puck whose approach goto returned False, which threw away
-                # deliveries the chassis was already standing in front of
-                # (measured: eleven pucks abandoned from inside 60 mm).
+            if not ok and np.hypot(ctl.pose[0] - sx, ctl.pose[1] - sy) > 190.0:
                 failed = True
                 break
-            yield from ctl.face(float(np.degrees(np.arctan2(uy, ux))), tol=7.0)
+            yield from ctl.face(hd, tol=6.0)
+            # close on the puck: the plow's mouth does the centring
+            yield from ctl.push_to(px - ux * 40.0, py - uy * 40.0, v=200.0,
+                                   tol=45.0, cap_s=4.0)
             yield from ctl.push_to(tx - ux * 60.0, ty - uy * 60.0, v=180.0,
                                    cap_s=6.0 + n / 150.0)
             yield from ctl.back_off(95.0)

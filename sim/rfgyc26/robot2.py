@@ -696,7 +696,13 @@ def mission_robot2(ctl, m, d=None, log=print, clock=None):
                 done.add(i)
                 continue
             cm = _board_map(board, skip=i)
-            legs, secs = nav.plan_push(cm, (x, y), z, robot=ctl.pose[:2])
+            # leave-clean: never park a patient where robot 1 still has to go
+            avoid = np.zeros((cm.nx, cm.ny), dtype=bool)
+            for mask, w0, w1 in cm._windows:
+                if w1 > now():
+                    avoid |= mask
+            legs, secs = nav.plan_push(cm, (x, y), z, robot=ctl.pose[:2],
+                                       avoid=avoid)
             if legs is None:
                 continue
             # value is the referee's: +5 delivered and +3 not-adrift = 8

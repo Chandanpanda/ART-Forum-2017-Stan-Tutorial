@@ -448,7 +448,7 @@ def push_actions(masks, res, px, py):
 
 
 def plan_push(cmap, puck, zone, robot=None, max_legs=3, speed=170.0,
-              transit=300.0):
+              transit=300.0, avoid=None):
     """Push `puck` into `zone` = (x0, y0, x1, y1), in at most max_legs legs.
 
     Returns (legs, seconds) with legs = [(tx, ty), ...] -- the puck's target
@@ -466,6 +466,19 @@ def plan_push(cmap, puck, zone, robot=None, max_legs=3, speed=170.0,
     masks = cmap._push_masks if getattr(cmap, "_push_masks", None) is not None \
         else body_masks(cmap)
     cmap._push_masks = masks
+
+    def parks_badly(x, y):
+        """THE LEAVE-CLEAN INVARIANT (design doc 15.7).  A push may not DEPOSIT
+        its puck inside a corridor the other robot still needs.  Robot 2 was
+        obeying the reservations with its own body and then shoving patients
+        into them -- five of twelve seeds finished with no beams at all, and
+        the seed with the best patient score had the worst beams.  Keeping
+        yourself out of the way is not the same as leaving the way clear."""
+        if avoid is None:
+            return False
+        i = int(np.clip(x // cmap.res, 0, avoid.shape[0] - 1))
+        j = int(np.clip(y // cmap.res, 0, avoid.shape[1] - 1))
+        return bool(avoid[i, j])
 
     def inside(x, y):
         return x0 <= x <= x1 and y0 <= y <= y1
@@ -497,6 +510,8 @@ def plan_push(cmap, puck, zone, robot=None, max_legs=3, speed=170.0,
             reposition = (float(np.hypot(ax - frm[0], ay - frm[1])) / transit
                           if frm is not None else 0.0)
             ng = g + reposition + 1.2 + d / speed
+            if parks_badly(tx, ty):
+                continue
             nl = legs + ((tx, ty),)
             if inside(tx, ty):
                 if ng < best[1]:

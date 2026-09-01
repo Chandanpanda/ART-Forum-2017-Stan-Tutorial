@@ -940,6 +940,36 @@ primitives → mission), with each layer patched reactively when a board came
 back bad.  Robot 1 was built outside-in (perception → estimator → planner →
 control → mission) — and robot 1 is the one that works.
 
+**Status: the rebuild is built.**  `nav.py` (costmap, A\*, push search),
+`robot2.WheelServo` (the encoder inner loop), `R2Controller` (odometry belief
++ DWA over the costmap), the planned `mission_robot2`, `route.sweep_lanes`
+(robot 1's survey-driven sweep) and `check_nav.py` (15 checks) all landed.
+What the rebuild taught, beyond the design:
+
+* **The walls were never in the map.**  `gx < 1.0` matches no cell centre —
+  the first cell's is at 10 — so the field boundary was absent and every
+  plan was free to route through it.  `check_nav` caught it on its first
+  run, which is the entire argument for writing the suite before tuning.
+* **A disc model cannot represent this robot.**  Inflating by the inscribed
+  radius (55, the half-*width*) leaves the 75 mm nose free to enter an
+  obstacle, and it did — the chassis pressed against the plate with its
+  wheels spinning while the model reported clear.  Plan on the disc; **veto
+  on the body**.
+* **A blocked start cell is normal**, not an error: the robot finishes a push
+  nose-to-nose with the patient it just delivered, so its own cell sits
+  inside that patient's halo and the search expands nothing.
+* **The soft-window fallback was undermining the reservations it protects.**
+  Strict for *work*, soft only for *escape*.
+* **Set cover assumes the targets hold still, and sweep targets do not.**
+  Planning robot 1's lanes from the survey is right; *removing* the second
+  pass because one lane covered the survey cost ~30 points a seed, because
+  the 235 mm mouth bulldozes every sample it cannot take out of the lane it
+  is driving.  The survey places the lanes; it never removes the recovery.
+* **Owning the substep is a contract.**  Once the link advanced physics for
+  its servo loop, a driver that also stepped ran the sim at double rate and
+  halved *both* robots' control frequency — robot 1's samples fell 50 → 25
+  and nobody had touched robot 1.
+
 **Build order for the rebuild**, each step independently measurable on the
 fleet board:
 

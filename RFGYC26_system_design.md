@@ -641,9 +641,26 @@ actual odometry.  The v0 wire already has an unused return direction
 cheapest accuracy upgrade on the entire robot and it makes the 5 Hz camera a
 *corrector* rather than the only source of truth.
 
-### 15.3 Layer 1 — perception as a continuous board tracker
+### 15.3 Layer 1 — the opening survey, then a tracker that verifies it
 
-Not a snapshot, and not `geom_rgba`.  On robot 1's Pi, at camera rate:
+Perception has **two jobs with different tempos**, and conflating them is part
+of what went wrong.
+
+**The opening survey (once, ~0.5 s at the gun) is the important one.**  It is
+the act that turns a randomised board into a known one: a stereo pass that
+returns the twelve cylinder positions *with colours* and the three disc
+positions.  Everything the joint plan (§15.5) decides rests on it, so it is
+worth spending half a second doing properly — several frames, outlier
+rejection, and an explicit confidence per detection.  A cylinder the survey is
+unsure about is planned as *low confidence*, which the task selector prices
+(verify-before-committing costs a second) rather than gambling on.
+
+**The tracker (5–10 Hz, for the rest of the match) does not re-decide
+anything** — it *verifies*.  It answers "is the world still where the plan
+thinks it is," which feeds the invalidation triggers, the delivery checks and
+the local detours, and nothing else.
+
+Both use the same machinery, on robot 1's Pi, and neither uses `geom_rgba`:
 
 1. **Detect** — colour-gated blobs on the field plane, through the same run-CCL
    and circle-fit machinery `perception.py` already uses to find lab slots.
@@ -679,7 +696,63 @@ radius (55 mm), exponentially decaying cost out to the circumscribed radius
 (93 mm) — so the planner prefers corridor centres but *can* thread a 191 mm
 pinch when the value justifies it.
 
-### 15.5 Layer 3 — planning, three nested loops
+### 15.5 Layer 3 — ONE joint fleet plan, computed once at the gun
+
+**The board is fully observable at T+0 and deterministic thereafter.**  The
+only randomness the match contains — the three sample positions inside the
+quarantine, and which colour stands on which of the twelve stickers — is
+*visible from the start line*.  Everything else (zones, plate, walls, beam
+stations, kit hoppers) is fixed by the rulebook.  So this is not a problem
+that wants continuous re-decision; it is a **fully-observable deterministic
+planning problem**, and the right treatment is the one `planner.py` already
+gives robot 1: **solve it once, properly, and then execute the answer.**
+
+That correction matters, because an early draft of this section had the task
+layer re-solving at 2–5 Hz.  That is wrong, and not merely wasteful:
+continuously re-deciding *what to do* makes a robot thrash between plans as
+noise moves the objective around, and it destroys the property a competition
+robot needs most — **a plan you can inspect, validate and dry-run before the
+match starts.**  Feedback belongs in the *execution* of a plan, not in the
+*choice* of one.  The distinction is the whole architecture:
+
+> **Plan once. Track continuously. Repair on invalidation.**
+
+**The plan is a single fleet-wide object**, not two plans that avoid each
+other at runtime:
+
+1. **Perceive** (~0.5 s at the gun): one stereo pass gives the twelve cylinder
+   positions with colours and the three disc positions.  Combined with the
+   fixed geometry, the world is now completely known.
+2. **Assign** tasks to robots.  Mostly forced by capability — robot 1 owns the
+   discs, the beams, HOSP and PCC_L; robot 2 owns PCC_R and the cylinders —
+   but the *split* is an output, not an axiom: if robot 1's tour comes back
+   with slack it can take a cylinder, and if it comes back overloaded it can
+   shed the PCC_L kits.
+3. **Route each robot** — a prize-collecting tour (§15.5a) over its own tasks,
+   where each task's cost comes from the push planner (§15.5b) and the path
+   planner (§15.5c) rather than from a straight-line guess.
+4. **Coordinate the two into one space–time plan** (§15.5d) so the routes
+   cannot collide, by construction, before the match starts.
+5. **Emit** a *timed reference plan* per robot: an ordered list of
+   `(action, path, expected start, expected end)`, plus the shared
+   reservation table.  This object is the contract.  It can be printed,
+   plotted, replayed, and checked against the referee's scoring *before a
+   single motor turns.*
+
+**Repair, not replan.**  Execution deviates — cheap motors, uncertain pushes,
+bimodal dock times.  The plan is only re-solved when a **precondition is
+actually violated**, and then only the affected suffix:
+
+| trigger | repair |
+|---|---|
+| a push left the cylinder > 60 mm from its predicted spot | re-solve that delivery's remaining legs from the observed position |
+| a robot is > 6 s behind its scheduled task start | re-solve the remaining tour with the true clock (drops the cheapest task) |
+| a task's precondition is gone (zone occupied, cylinder moved by the other robot) | re-solve that task, keep the rest |
+| a path is blocked by something not in the plan | local A* detour around it, same plan |
+
+Nothing else triggers a re-solve.  A re-solve costs microseconds, so the
+constraint is not compute — it is **stability**: the plan should change when
+the world genuinely diverges from it and at no other time.
 
 **(a) Task selection — the same prize-collecting solver robot 1 uses.**
 Nodes are deliverable pucks plus the kit drop.  Value is the referee's
@@ -688,8 +761,9 @@ across the PCCs +8, 4 greens in RECOVERY +6.  Those bonuses make combinations
 worth more than the sum of their parts, which is exactly what a hand-ordered
 priority list can never see and what an optimiser sees for free.  Cost comes
 from (b) and (c), measured.  Constraints: the clock and the space–time
-windows.  Twelve nodes with dominance pruning solves exactly in microseconds —
-and it **re-solves at every task boundary and on any material board change**,
+windows.  Twelve nodes with dominance pruning solves **exactly**, in
+microseconds — so the opening tour is genuinely optimal rather than
+heuristic, and it is re-solved only on the invalidation triggers above,
 precisely as `planner.Schedule.complete()` already does for robot 1.  Reuse
 `planner.py`; do not write a second one.
 
@@ -713,17 +787,95 @@ randomisation.  Crucially, *"this puck is unreachable"* becomes a computed
 output — infinite cost, so the task selector spends those seconds elsewhere —
 instead of a hand-written `continue`.
 
-**(c) Path planning — A* on the costmap, replanned continuously.**
-Grid A* (Theta* if we want any-angle smoothness) from the current pose to the
-approach pose, over the composed map, sampling the space–time layer at
-estimated arrival time.  3 400 cells is sub-millisecond; replan at 2–5 Hz and
-on any material map change.  **This is what ends "gets stuck," and it is what
-routes around the plate — by construction, with no waypoints.**
+**(c) Path planning — A* on the costmap, computed with the plan.**
+Grid A* (Theta* if we want any-angle smoothness) from pose to approach pose,
+over the composed map, sampling the space–time layer at the *planned* arrival
+time.  3 400 cells is sub-millisecond, so every leg of the opening plan gets a
+real, obstacle-free path at the gun — **this is what ends "gets stuck," and it
+is what routes around the plate: by construction, with no hand-picked
+waypoints.**  At run time the path is a *reference to be tracked*, not a
+suggestion to be recomputed; only an obstacle that is not in the plan (the
+other robot out of position, a cylinder somewhere unexpected) triggers a local
+detour, which is a small bounded A* between two points of the existing path.
 
-### 15.6 Layer 4 — control: a local planner, not a heading gain
+**(d) Fleet coordination — the two routes are solved as one.**
+Robot 1 is the higher-priority agent: it carries 144 of the board's points and
+its behaviours have the tighter tolerances, so it plans first and freely,
+producing a **reservation table** — its swept corridor as a function of time.
+Robot 2 then plans in the *space–time residual*, i.e. its A* runs on a map
+where robot 1's corridor is blocked **only during the window robot 1 occupies
+it**.  That is prioritised planning, the standard and by far the cheapest
+multi-agent path-finding scheme, and it is exactly right here because the
+priority order is not a tie.
 
-Replace `goto()`'s proportional heading law with a **Dynamic Window Approach**
-at 10–20 Hz:
+Two properties come out of doing this at the gun rather than reactively:
+
+* **Collisions are impossible in the plan**, so the runtime job shrinks to
+  *tracking* and the two robots stop negotiating for space at 20 Hz.  Every
+  robot-on-robot failure this project has measured — the 35 s wrestle, the
+  mutual corner-lock, the three wrecked sweeps, the seal re-rolls — was two
+  independent plans discovering each other at run time.
+* **The "leave-clean" invariant becomes a planning constraint** rather than a
+  hope: robot 2 may not *deposit* a cylinder inside any corridor robot 1's
+  reservation table claims later.  The push planner simply refuses those
+  push targets.  That is the principled form of F87/F90 (the seal-corridor
+  patient) and F98 (every interior park belongs to some artery), and it means
+  robot 2's parking spot is computed — the free cell maximising distance from
+  all remaining reservations — instead of being a constant I picked.
+
+If the residual ever leaves robot 2 with no feasible route to a valuable
+cylinder, that is a *fleet* answer, not a deadlock: the joint solve can pay
+robot 1 a few seconds of delay to open the corridor, and compare the two
+totals.  A single objective over both robots is the only way that trade is
+even expressible.
+
+### 15.6 Layer 4 — control: three nested loops, and we only have one
+
+A plan is worthless if the robot does not execute it, and "does robot 2 have
+control to make sure it follows commands?" has an uncomfortable answer today:
+**there is an outer loop and no inner loop.**  The full cascade a cheap DC
+differential drive needs is three loops at three rates, each closing a
+different error:
+
+| loop | rate | runs on | feedback | closes |
+|---|---|---|---|---|
+| **wheel velocity** | 100–200 Hz | Pico W | quadrature encoders | *this wheel is not turning at the speed I asked* |
+| **path tracking** | 10–20 Hz | Pi | pose belief | *the chassis is off the planned path* |
+| **task verification** | per leg | Pi | camera | *the cylinder did not end up where the plan said* |
+
+Today we have the middle loop (a proportional heading law on a camera-corrected
+belief) and the outer one (per-leg re-spotting, F96 — worth +21 points the day
+it went in).  **The inner loop does not exist at all.**  The Pico is told
+"200 mm/s" and sets a PWM proportional to it; whether the wheel actually turns
+at 200 mm/s depends on the motor's gain, the battery's charge, the load on the
+plow, and the deadband.  The Pi compensates with a *single learned scalar* per
+robot, which cannot represent any of those — they are per-wheel, nonlinear,
+and time-varying within a match as the cells sag.
+
+**The fix is the cheapest item in this document.**  Two quadrature encoders
+(~$2) and ~30 lines of firmware: a PI controller per wheel on measured
+velocity, at 100 Hz, on the Pico.  Then `V 200 200 150` on the wire *means*
+200 mm/s, and every layer above it stops paying for the lie.  Concretely it
+buys:
+
+* the ±15 % gain lottery, the deadband and battery sag are all rejected by the
+  inner loop instead of being modelled by the outer one;
+* dead reckoning between 5 Hz camera fixes becomes **odometry** (encoder ticks)
+  instead of *commanded velocity × a scalar* — at 300 mm/s that is 60 mm of
+  open-loop travel per fix interval today, and a few millimetres after;
+* the planner's time estimates become trustworthy, which is what makes a
+  *timed* fleet plan (§15.5d) executable at all;
+* it is the one change that ports to the real robot with no calibration
+  argument: encoders measure the truth on both sides of the sim boundary.
+
+The v0 wire already has the return direction to carry it (`recv()` → `None`
+today): add `O <ticks_l> <ticks_r>` at 20 Hz, and the same LinkHAL contract now
+closes the loop on hardware exactly as it does in MuJoCo.
+
+**The middle loop becomes a path tracker, not a point-chaser.**  `goto()`
+today drives at a *point*, which is why it cuts corners into obstacles; the
+plan now hands it a *path*, and the tracker's job is to stay on it.  Replace
+the proportional heading law with a **Dynamic Window Approach** at 10–20 Hz:
 
 * sample the admissible (v, ω) window from current speed and the *physical*
   acceleration limits §15.2 now provides;
@@ -788,11 +940,22 @@ primitives → mission), with each layer patched reactively when a board came
 back bad.  Robot 1 was built outside-in (perception → estimator → planner →
 control → mission) — and robot 1 is the one that works.
 
-**Build order for the rebuild:** costmap + A* first (it alone kills the stuck
-failures and the hand-routing), then the push search (it alone unlocks the
-west columns and the displaced pucks), then DWA, then the tracker, then fold
-task selection into `planner.py`.  Each step is independently measurable on
-the fleet board.
+**Build order for the rebuild**, each step independently measurable on the
+fleet board:
+
+1. **Costmap + A\*** — kills the stuck failures and deletes every hand-picked
+   waypoint.  Largest behaviour change per line of code.
+2. **Encoders + per-wheel PI on the Pico** — ~30 lines and $2, and it is what
+   makes every command above it mean what it says.  Do it early: the layers
+   above are all calibrated against a drive that currently lies.
+3. **Push search** — unlocks the west columns and every displaced cylinder;
+   turns the hand-derived catalogue into a computation.
+4. **The joint fleet plan** — one solve at the gun, reservation table,
+   leave-clean as a constraint.  Retires every wall-clock window constant.
+5. **DWA path tracking**, then the survey/tracker split, then folding robot
+   2's task selection into `planner.py`.
+
+The first four are where the score is; the fifth is where the robustness is.
 
 ---
 

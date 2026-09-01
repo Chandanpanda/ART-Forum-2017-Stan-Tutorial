@@ -555,7 +555,7 @@ def _unit(dx, dy):
 # with no turning arc available.  A* hard-blocks at 75, so 78 is the
 # honest bound and anything larger is throwing away reachable board.
 def capture_approach(cmap, puck, prefer=None, standoffs=(185.0, 150.0, 128.0),
-                     margin=78.0):
+                     margin=78.0, seat=26.0):
     """Where to stand, and facing where, to CAPTURE this patient.
 
     A pushing robot must approach along the push line -- that coupling is
@@ -589,6 +589,23 @@ def capture_approach(cmap, puck, prefer=None, standoffs=(185.0, 150.0, 128.0),
             i = int(np.clip(sx // cmap.res, 0, nx - 1))
             j = int(np.clip(sy // cmap.res, 0, ny - 1))
             if not ok_here[i, j]:
+                continue
+            # AND THE POSE IT ENDS IN, WHICH IS THE TIGHT ONE (F119).
+            # This validated the STAND-OFF and nothing else -- a pose
+            # 150-185 mm back, where the patient's neighbours are
+            # comfortably far away.  The capture ends 26 mm from it,
+            # with a 157 mm chassis among neighbours 80 and 113 mm
+            # apart, and there the TAIL corner lands on the puck
+            # behind.  Measured on the east block: every heading the
+            # search offered put a corner inside a neighbour, the
+            # turn-out check refused them all, and robot 2 called
+            # twelve patients undeliverable on a board where three
+            # had clean two-second carries.  Check the pose the robot
+            # will actually be in when it has the thing.
+            cx, cy = puck[0] - ux * seat, puck[1] - uy * seat
+            ci = int(np.clip(cx // cmap.res, 0, nx - 1))
+            cj = int(np.clip(cy // cmap.res, 0, ny - 1))
+            if not ok_here[ci, cj]:
                 continue
             # the run-in must be clear right up to the pocket's mouth
             run = np.linspace(0.0, max(0.0, standoff - PLOW_REACH), 6)

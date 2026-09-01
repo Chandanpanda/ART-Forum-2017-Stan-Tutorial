@@ -589,6 +589,213 @@ a behaviour change.
 
 ---
 
+## 15. Robot 2 control architecture — the rebuild
+
+Watching the fleet play, the verdict is unambiguous and it is not a tuning
+verdict: **robot 1 was built as an autonomy stack and robot 2 was built as a
+script.**  Everything that looks wrong on screen follows from that one fact.
+
+### 15.1 What is actually wrong
+
+| symptom | mechanism |
+|---|---|
+| "basically blind, not reacting" | `_classify()` runs at T+0 and at two re-look boundaries. The plan is built from a **snapshot** and then executed to the end. Nothing re-decides. |
+| "not looking at colour to make a route" | Colour *is* read — but it only selects one of a handful of **hand-written route templates** keyed on which sticker column the puck started in. The chain should be colour → destination zone → a route *computed* against the live board. It is colour → my hand-derived catalogue. |
+| "gets stuck multiple times" | `goto()` is a straight-line heading-P pursuit. **There is no map.** The lab plate, the walls, robot 1, the other eleven pucks exist in no data structure the controller can see. It cannot avoid an obstacle because it has no obstacles. |
+| "should be easy to route away from elevated areas" | Exactly — and today "routing" is *me* hand-picking waypoint chains like (880, 420) → (885, 700) and pasting them in. The plate must be **data in a costmap**, not a constant in a mission. |
+| coordination is brittle | `stop_at=52`, `wait_until(74)` — wall-clock constants guessing where robot 1 will be, while robot 1's actual `Schedule` sits unread in the same process. |
+| retries fail the same way twice | A jam backs off 90 mm and re-attempts the **identical** approach into the identical obstacle. No memory, no alternative. |
+
+The design document already promised the cure and the build did not honour it:
+*"robot 2's node set … runs through the **same planner machinery**."*  It does
+not.  §15.2–15.7 make that true, and every symptom above becomes structurally
+impossible rather than tuned away.
+
+### 15.2 Layer 0 — the hardware model was wrong in two ways
+
+**Wheels 22 mm → 32 mm radius (64 mm dia).**  Not cosmetic: the axle rises
+10 mm, so plow ground clearance stops being a knife-edge constant (the "plow
+dug into the floor" failure was cured with a 3 mm tweak — at 32 mm it cannot
+happen), obstacles like tape edges and the box lip stop mattering, and the
+caster-compliance nose-dive that caused it disappears with the geometry.
+
+**Model the motor, not a clamp.**  Today: a velocity servo with an arbitrary
+force clamp — unphysically stiff near zero speed and too weak at stall, which
+is precisely the combination that reads as "gets stuck."  Instead model the
+real part, an N20-class 6 V metal-gear motor, with its torque–speed line:
+
+```
+τ(ω) = τ_stall · (1 − ω / ω_noload)      τ_stall ≈ 0.06 N·m, ω_noload ≈ 21 rad/s
+```
+
+At 32 mm that is ~1.9 N of tractive force per wheel, ~3.7 N total against a
+0.45 kg robot — roughly 8 m/s² available, and pushing force an order of
+magnitude beyond what a 5 g puck needs.  The point is not "make it strong";
+it is that **the acceleration limits the local planner (§15.6) reasons about
+become physical numbers** instead of guesses.
+
+**Add the encoders.**  Two quadrature encoders on a Pico W cost about two
+dollars and turn dead-reckoning from *commanded velocity × learned gain* into
+actual odometry.  The v0 wire already has an unused return direction
+(`recv()` → `None`): give it `O <ticks_l> <ticks_r>` at 20 Hz.  This is the
+cheapest accuracy upgrade on the entire robot and it makes the 5 Hz camera a
+*corrector* rather than the only source of truth.
+
+### 15.3 Layer 1 — perception as a continuous board tracker
+
+Not a snapshot, and not `geom_rgba`.  On robot 1's Pi, at camera rate:
+
+1. **Detect** — colour-gated blobs on the field plane, through the same run-CCL
+   and circle-fit machinery `perception.py` already uses to find lab slots.
+2. **Back-project** — `Eye.ground()` puts each blob on the field in millimetres.
+3. **Associate** — nearest-neighbour with a gate (Hungarian if crowded) into
+   persistent tracks: `{id, x, y, P, colour, last_seen}`.
+4. **Occlusion** — an unseen track keeps its position with growing covariance
+   and a `stale` flag; the planner treats stale tracks as "probably there,
+   verify before committing," which is a *policy*, not a crash.
+
+Output is a live **`BoardState`** — twelve puck tracks, robot 2's ArUco pose,
+robot 1's estimator pose, zone occupancy counts — published at 5–10 Hz.  Every
+layer below consumes it.  This is what "reacting to the current state" means
+concretely.
+
+### 15.4 Layer 2 — the world model: a time-varying costmap
+
+A 20 mm occupancy grid over the field: 58 × 60 ≈ 3 400 cells.  Four composed
+layers:
+
+* **Static** — walls, and **the laboratory plate as a hard obstacle**.  This is
+  the user's "route away from elevated areas," and it is one line of map
+  initialisation rather than a hand-drawn corridor.
+* **Dynamic** — the twelve puck tracks and robot 1's current footprint.
+* **Predictive (space–time)** — robot 1's *planned* corridors.  Its `Schedule`
+  knows it docks L2 at T+41 and runs the kit dogleg T+58–73; rasterise each
+  planned task's swept corridor into a time-indexed keep-out.
+* **Sticky** — a decaying cost bump wherever a jam actually happened, so a
+  retry cannot re-run the same failure.
+
+Inflation is the standard two-radius scheme: hard-block inside the inscribed
+radius (55 mm), exponentially decaying cost out to the circumscribed radius
+(93 mm) — so the planner prefers corridor centres but *can* thread a 191 mm
+pinch when the value justifies it.
+
+### 15.5 Layer 3 — planning, three nested loops
+
+**(a) Task selection — the same prize-collecting solver robot 1 uses.**
+Nodes are deliverable pucks plus the kit drop.  Value is the referee's
+marginal points, *including the set bonuses* — 4 reds in HOSP +6, yellows 2/2
+across the PCCs +8, 4 greens in RECOVERY +6.  Those bonuses make combinations
+worth more than the sum of their parts, which is exactly what a hand-ordered
+priority list can never see and what an optimiser sees for free.  Cost comes
+from (b) and (c), measured.  Constraints: the clock and the space–time
+windows.  Twelve nodes with dominance pruning solves exactly in microseconds —
+and it **re-solves at every task boundary and on any material board change**,
+precisely as `planner.Schedule.complete()` already does for robot 1.  Reuse
+`planner.py`; do not write a second one.
+
+**(b) Push planning — non-prehensile manipulation as a search.**
+For a puck at **p** bound for zone Z, search over straight pushes:
+
+* *action*: push along heading θ (16 discrete) for distance d (quantised);
+* *feasible* iff, **computed from the costmap**: the approach pose
+  `p − θ̂·(PLOW_X + margin)` is free *and reachable* by (c); the swept corridor
+  of body-plus-plow along d is clear of everything but the target; and the
+  release pose is free so the robot can back out;
+* *goal*: puck inside Z's inset rectangle;
+* *cost*: approach + push + release time;
+* *search*: A*, heuristic = range-to-zone ÷ push speed.  Depth ≤ 3, branching
+  16 × 5 — milliseconds.
+
+This **derives** the "±65° diagonals from mid columns, edge columns along
+themselves" catalogue instead of asserting it, and it handles the layouts the
+catalogue cannot: displaced pucks, robot 1's plow-pile, any referee
+randomisation.  Crucially, *"this puck is unreachable"* becomes a computed
+output — infinite cost, so the task selector spends those seconds elsewhere —
+instead of a hand-written `continue`.
+
+**(c) Path planning — A* on the costmap, replanned continuously.**
+Grid A* (Theta* if we want any-angle smoothness) from the current pose to the
+approach pose, over the composed map, sampling the space–time layer at
+estimated arrival time.  3 400 cells is sub-millisecond; replan at 2–5 Hz and
+on any material map change.  **This is what ends "gets stuck," and it is what
+routes around the plate — by construction, with no waypoints.**
+
+### 15.6 Layer 4 — control: a local planner, not a heading gain
+
+Replace `goto()`'s proportional heading law with a **Dynamic Window Approach**
+at 10–20 Hz:
+
+* sample the admissible (v, ω) window from current speed and the *physical*
+  acceleration limits §15.2 now provides;
+* roll each candidate forward ~1.2 s through the differential-drive model,
+  using the per-wheel gains the controller already learns online;
+* score = w₁·progress along the global path + w₂·clearance from the costmap
+  + w₃·speed − w₄·path deviation − w₅·control effort;
+* execute the winner, decomposed to wheel commands with deadband compensation.
+
+Pure pursuit — which `trajectory.py` already implements for robot 1 — is a
+*path follower*: it assumes the path is safe.  DWA is a *local planner*: it
+refuses to drive into things, slows for clearance, and produces the
+route-around-the-plate behaviour without hand-holding.  For the push phase the
+same controller runs with a tightened window (low v, small |ω|) so the puck
+stays in the pocket.
+
+The principled version of the final push segment is a short-horizon **MPC on
+the puck**: predict puck motion through the plow contact model and optimise
+(v, ω) so *the puck* tracks the push line.  DWA-with-tight-limits is the 90 %
+version at a tenth of the complexity; start there, and keep MPC in reserve for
+the last few millimetres of zone-edge precision.
+
+### 15.7 Layer 5 — executor and fleet coordination
+
+**Behaviour tree with a real recovery ladder:**
+IDLE → NAVIGATE(approach) → ALIGN → PUSH → RELEASE → VERIFY, and on failure
+escalate only as far as needed: (i) re-spot and re-verify *(exists today)*;
+(ii) back out and replan the **path**; (iii) mark sticky cost and replan the
+**push** — a different approach direction; (iv) abandon and re-solve **task
+selection**.  Today only (i) exists, which is why a jam retries into the same
+wall.
+
+**Coordination becomes prioritised planning, not clock constants.**  Robot 1 is
+the higher-priority agent and plans freely (it already plans optimally); robot
+2 plans in the space–time residual.  Both live on the same Pi, so robot 1's
+schedule is a function call.  Two rules replace every magic number:
+
+* **hard** — robot 2's path may not intersect a corridor robot 1 has reserved
+  during the window it is reserved;
+* **soft, the "leave-clean" invariant** — robot 2 may not *place* anything (a
+  pushed puck, or itself) inside a corridor robot 1 will use later.
+
+That single invariant is the principled form of two findings we paid for
+empirically: the F87/F90 seal-corridor patient, and the F98 discovery that
+every interior parking spot belongs to some robot-1 artery.  Parking stops
+being a constant and becomes a computation: *the free cell maximising distance
+from all of robot 1's remaining reserved corridors.*
+
+### 15.8 Cost, and why this is the cheap path
+
+Everything above fits comfortably on a Pi 5 at 10 Hz: A* over 3 400 cells,
+~200 DWA rollouts, a ≤12-node prize-collecting solve — single-digit
+milliseconds per cycle.  In code it is roughly: costmap 150 lines, A* 80, push
+search 120, DWA 120, tracker 150, behaviour tree 150 — ~800 lines, plus
+`planner.py` reused rather than duplicated.
+
+That is less code than the accumulated hand-tuned mission it replaces, and the
+difference in kind matters more than the size: the score would then follow
+from **capability** rather than from constants I fitted to twelve seeds.  The
+honest retrospective on why this happened: robot 2 was built inside-out (body →
+primitives → mission), with each layer patched reactively when a board came
+back bad.  Robot 1 was built outside-in (perception → estimator → planner →
+control → mission) — and robot 1 is the one that works.
+
+**Build order for the rebuild:** costmap + A* first (it alone kills the stuck
+failures and the hand-routing), then the push search (it alone unlocks the
+west columns and the displaced pucks), then DWA, then the tracker, then fold
+task selection into `planner.py`.  Each step is independently measurable on
+the fleet board.
+
+---
+
 *The mechanisms are measured and settled; the clock is a computation we have
 not yet done.  This design does it once, properly, and the same code that
 proves it in MuJoCo drives the aluminium.*

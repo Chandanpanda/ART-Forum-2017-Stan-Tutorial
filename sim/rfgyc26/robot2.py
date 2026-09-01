@@ -697,7 +697,22 @@ def mission_robot2(ctl, m, d=None, log=print, clock=None):
     yield from ctl.goto(1040.0, 900.0, v_max=340.0, tol=50.0)
 
     # ---- the patients, cheapest-first, re-priced after every delivery ---
-    while now() < 108.0:
+    #
+    # THE DEADLINE IS THE FLEET'S, NOT ROBOT 2'S (F104).  Measured, 12 seeds:
+    # letting robot 2 work patients to the buzzer gained ~2 points of patient
+    # score and lost ~11 -- beams went from 0/70 on three seeds to eight,
+    # because a robot 2 still moving anywhere near the west at T+80 disrupts
+    # the seal, whatever the reservations say.  (The version that "quit too
+    # early" at T+49 was not throwing the match away; it was accidentally
+    # protecting the 70 points that matter most.)
+    #
+    # A patient is worth 8 marginal points; the seal is worth 70.  So the
+    # patient phase gets a hard deadline before robot 1 commits to the seal,
+    # and after it robot 2's only job is to be somewhere harmless.  This is
+    # the crude form of the trade -- the principled one reads robot 1's live
+    # Schedule instead of a constant, and is the remaining merge.
+    PATIENT_DEADLINE = 70.0
+    while now() < PATIENT_DEADLINE:
         board = refresh()
         best = None
         for i, x, y, c in board:
@@ -730,10 +745,9 @@ def mission_robot2(ctl, m, d=None, log=print, clock=None):
             if best is None or secs < best[1]:
                 best = (i, secs, legs, cm, (x, y))
         if best is None:
-            # NOT a reason to stop: reservations expire, and the board keeps
-            # changing under robot 1's wheels.  Wait for the next window and
-            # look again -- quitting here threw away sixty seconds.
-            if now() > 104.0:
+            # NOT a reason to stop while the window is open: reservations
+            # expire and the board keeps changing under robot 1's wheels.
+            if now() > PATIENT_DEADLINE - 6.0:
                 break
             log(t() + "nothing deliverable yet; waiting")
             for _ in range(int(3.0 * hal.Clock.HZ)):
@@ -741,7 +755,7 @@ def mission_robot2(ctl, m, d=None, log=print, clock=None):
                 yield
             continue
         i, secs, legs, cm, p0 = best
-        if now() + secs > 112.0:
+        if now() + secs > PATIENT_DEADLINE + 4.0:
             log(t() + "%.0f s of work left, %.0f s of clock -- stopping"
                 % (secs, 112.0 - now()))
             break
@@ -780,7 +794,7 @@ def mission_robot2(ctl, m, d=None, log=print, clock=None):
             yield from ctl.push_to(tx - ux * 60.0, ty - uy * 60.0, v=180.0,
                                    cap_s=6.0 + n / 150.0)
             yield from ctl.back_off(95.0)
-            if now() > 112.0:
+            if now() > PATIENT_DEADLINE + 4.0:
                 break
         done.add(i)
         if failed:

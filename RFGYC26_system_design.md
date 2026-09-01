@@ -440,6 +440,25 @@ the contract so the planner and HAL are ready:
 
 ## 11. Scoring model used by the planner
 
+**HOW SCORES ARE REPORTED IN THIS PROJECT: `X / 250`, always.**  X is the mean
+referee total over the seed board; 250 is the full-game maximum with both
+robots perfect.  Not deltas, not per-phase codes, not "+63.3" with no
+denominator — a number nobody can size at a glance is a number that hides
+whether the work is winning.  The 250 decomposes as:
+
+| | max | whose |
+|---|---:|---|
+| samples (3 slots + all-three bonus) | 50 | robot 1 |
+| beams (2 placed + perimeter closed) | 70 | robot 1 |
+| kits (10 placed + 6/2/2 distribution) | 50 | 8 robot 1, 2 robot 2 |
+| patients (12 delivered + 3 colour-set bonuses) | 80 | robot 2 |
+| **total** | **250** | |
+
+Per-seed lines print the same way — `sam 50/50  beam 70/70  kit 50/50
+pat 44/80` — so a board says at once which subsystem is leaving points on
+the table.
+
+
 From the referee (all measured, Senior table): samples 50 (three slots),
 beams 70 (both, T-joint within tolerance), kits: +3/kit in zone, −10/empty
 zone, +20 exact 6/2/2; patients +5 right / −5 wrong / −3 adrift (robot 2's

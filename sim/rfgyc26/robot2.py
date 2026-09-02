@@ -29,6 +29,7 @@ from . import hal, nav, trajectory, fleet as fleetmod
 from .params import Robot2 as R2, Field, Piece
 
 R2_INSCRIBED = 75.0        # no orientation fits inside this
+CARRY_PAD    = 20.0        # extra room a LOADED drive asks for (F136)
 R2_CIRCUM = 98.0          # every orientation fits outside it
                            # (the capture pocket is part of the body)
 
@@ -678,9 +679,24 @@ class R2Controller:
             else:
                 t0 = t_now if t_now is not None else (
                     self.clock() if self.clock else 0.0)
+                # A LOADED CARRY ASKS FOR MORE ROOM THAN AN EMPTY DRIVE
+                # (F136).  Planning at the inscribed radius says the body
+                # fits, which is true of the PATH and not of the driving:
+                # the tracker corners inside its own tolerance, and in a
+                # corridor the plan only just fits that difference is a
+                # patient shoved out of the way.  Measured on the cycle rig,
+                # carrying patient 0 up the west edge pushed patient 2 from
+                # (80, 650) to (81, 1069) -- 419 mm, and into PCC_L, where a
+                # green is -5 rather than -3.  So ask for the margin, and
+                # take the tight route only when there is no other.
+                pad = CARRY_PAD if carry else 0.0
                 path, _ = nav.plan(self.cmap, (self.x, self.y), (tx, ty),
-                                   R2_INSCRIBED, R2_CIRCUM, t0=t0, speed=v_max,
-                                   strict=strict)
+                                   R2_INSCRIBED + pad, R2_CIRCUM + pad,
+                                   t0=t0, speed=v_max, strict=strict)
+                if path is None and pad:
+                    path, _ = nav.plan(self.cmap, (self.x, self.y), (tx, ty),
+                                       R2_INSCRIBED, R2_CIRCUM, t0=t0,
+                                       speed=v_max, strict=strict)
                 if path is None:
                     self.blocked = True
                     return False
@@ -1525,12 +1541,43 @@ def _price(cm, robot, puck, zone, t0, zname=None, avoid=()):
                      t0=t0, speed=APPROACH_V, strict=False)
     if not np.isfinite(s1):
         return None
-    _, s2 = nav.plan(cm, _capture_pose(app, puck), tgt, R2_INSCRIBED,
-                     R2_CIRCUM, t0=t0 + s1 + 3.0, speed=CARRY_V, strict=False)
+    _, s2 = nav.plan(cm, _capture_pose(app, puck), tgt,
+                     R2_INSCRIBED + CARRY_PAD, R2_CIRCUM + CARRY_PAD,
+                     t0=t0 + s1 + 3.0, speed=CARRY_V, strict=False)
+    if not np.isfinite(s2):        # quote the tight route rather than refuse
+        _, s2 = nav.plan(cm, _capture_pose(app, puck), tgt, R2_INSCRIBED,
+                         R2_CIRCUM, t0=t0 + s1 + 3.0, speed=CARRY_V,
+                         strict=False)
     if not np.isfinite(s2):
         return None
     #        approach   turn+capture   carry   release+back off
     return float(s1 + 4.0 + s2 + 3.0), app
+
+
+# THE STOPWATCH SAYS TWICE (F134).  _price quotes path-length over speed for
+# the two legs plus fixed allowances for the turn, the capture and the
+# release.  Measured on the isolating rig, every one of seven deliveries took
+# about double the quote:
+#
+#     quoted  13.2 13.3 11.1 10.1 16.8 14.6 13.9
+#     took    26.0 27.5 18.6 18.4 39.1 35.1 23.9      mean ratio 2.0
+#
+# A path length is not a drive.  The tracker corners inside its own
+# tolerance, replans when it drifts off, and pays for every acceleration; on
+# top of that a delivery begins wherever the LAST one ended, so the quote's
+# first leg is measured from a pose the robot has yet to reach.  None of
+# that is a bug to remove -- it is what driving costs -- but a scheduler
+# betting on the quoted number buys twelve deliveries out of a budget that
+# affords five, and then discovers it at the buzzer.
+#
+# So the quote is scaled: by the measured mean at the gun, and by this
+# robot's own stopwatch once the match has provided one.  Successes only --
+# a failed attempt's duration is mostly timeout, and would teach the wrong
+# lesson.  This is what planner.observe() does for robot 1, and it is the
+# same argument.
+PACE0 = 2.0                # measured actual/quoted, seven deliveries
+PACE_GAIN = 0.3            # how fast the stopwatch overrides the prior
+PACE_CLAMP = (1.2, 3.5)
 
 
 def _wrong_zone(x, y, want):
@@ -1666,16 +1713,30 @@ def _work_patients(ctl, pucks, live, log, t, now, deadline=112.0,
     delivered, and only when it unlocks something that can.
     """
     placed, spent = {}, set()
+    pace = [PACE0]                              # F134, corrected as we go
     idling = False
     yields = 0
     _flt = flt
     _sc = sched if callable(sched) else (lambda: sched)
 
     def wanted(i, c, p):
-        """The zone robot 2 may deliver this patient to right now, or None."""
-        zn = DEST.get(c) if c != "yellow" else \
-            ("PCC_R" if p[0] > 570.0 else "PCC_L")
-        return ZONES[zn] if zone_open(zn, now(), _sc(), _flt) else None
+        """The zones robot 2 may deliver this patient to right now.
+
+        A YELLOW HAS TWO HOMES AND THE CHOICE IS WORTH 8 POINTS (F135).  The
+        referee pays that bonus for yellows split EXACTLY two and two
+        between the PCCs, and this used to send each one to whichever PCC
+        was nearer in x -- so a board that deals three yellows east sends
+        all three east and the bonus is gone before the first is carried.
+        Offering both and letting _marginal price them is all it takes: the
+        referee already knows about the split, and the fourth yellow's
+        marginal value tells the truth about which side needs it.  Distance
+        still decides when the points are equal, because the rate does.
+        """
+        names = ["PCC_R", "PCC_L"] if c == "yellow" else [DEST.get(c)]
+        if c == "yellow" and p[0] <= 570.0:
+            names.reverse()                     # nearer one first, for ties
+        return [ZONES[z] for z in names
+                if z and zone_open(z, now(), _sc(), _flt)]
 
     while now() < deadline:
         # THE EXECUTIVE SPEAKS FIRST.  Robot 2 is a detached actuator: when
@@ -1722,37 +1783,44 @@ def _work_patients(ctl, pucks, live, log, t, now, deadline=112.0,
             if i in placed or i in spent:
                 continue
             p = live(i)
-            zone = wanted(i, c, p)
-            if zone is None:
-                continue                   # robot 1 owns that rectangle
-            if zone[0] <= p[0] <= zone[2] and zone[1] <= p[1] <= zone[3]:
+            zones = wanted(i, c, p)
+            if not zones:
+                continue                   # robot 1 owns those rectangles
+            if any(z[0] <= p[0] <= z[2] and z[1] <= p[1] <= z[3]
+                   for z in zones):
                 placed[i] = p              # already home
                 continue
-            gain = _marginal(board, i, zone)
-            if gain <= 0.0:
-                continue
-            cmi = _board_map(full, skip=i, sched=_sc(), t_now=now(), flt=_flt)
-            zn_ = ZONE_NAME.get(zone)
-            here = _placed_in(placed, zone)
-            pr = _price(cmi, ctl.pose[:2], p, zone, now(), zn_, here)
-            if pr is None:
-                continue
-            secs, app = pr
-            if now() + secs > deadline + 6.0:
-                continue
-            rate = gain / max(secs, 1.0)
-            if best is None or rate > best[0]:
-                best = (rate, i, gain, secs, app, zone, cmi,
-                        _zone_pt(zone, p, zn_, here), "patient")
+            cmi = None
+            for zone in zones:
+                gain = _marginal(board, i, zone)
+                if gain <= 0.0:
+                    continue
+                if cmi is None:            # one map serves both zones
+                    cmi = _board_map(full, skip=i, sched=_sc(),
+                                     t_now=now(), flt=_flt)
+                zn_ = ZONE_NAME.get(zone)
+                here = _placed_in(placed, zone)
+                pr = _price(cmi, ctl.pose[:2], p, zone, now(), zn_, here)
+                if pr is None:
+                    continue
+                raw, app = pr
+                secs = raw * pace[0]
+                if now() + secs > deadline + 6.0:
+                    continue
+                rate = gain / max(secs, 1.0)
+                if best is None or rate > best[0]:
+                    best = (rate, i, gain, secs, app, zone, cmi,
+                            _zone_pt(zone, p, zn_, here), "patient", raw)
 
         if best is None:
             # ---- nothing deliverable: is something merely IN THE WAY? ----
             for i, _, _, c in pucks:
                 if i in placed or i in spent:
                     continue
-                zone = wanted(i, c, live(i))
-                if zone is None:
+                zs = wanted(i, c, live(i))
+                if not zs:
                     continue
+                zone = zs[0]
                 j = _blocker(pucks, live, i, zone, ctl.pose[:2], now(),
                              sched=_sc(), flt=_flt)
                 if j is None or j in spent:
@@ -1774,7 +1842,8 @@ def _work_patients(ctl, pucks, live, log, t, now, deadline=112.0,
                     continue
                 log(t() + "patient %d is blocked by %d -- clearing it to "
                     "(%.0f, %.0f)" % (i, j, sp[0], sp[1]))
-                best = (0.0, j, 0.0, s1 + 12.0, app, None, cmj, sp, "blocker")
+                best = (0.0, j, 0.0, s1 + 12.0, app, None, cmj, sp, "blocker",
+                        s1 + 12.0)
                 break
 
         if best is None:
@@ -1807,7 +1876,8 @@ def _work_patients(ctl, pucks, live, log, t, now, deadline=112.0,
             continue
         idling = False
         yields = 0
-        _, i, gain, secs, app, zone, cm, tgt, what = best
+        _, i, gain, secs, app, zone, cm, tgt, what, raw = best
+        t_go = now()
         if what == "patient":
             log(t() + "patient %d: %+.0f pts in %.0f s (%.2f pts/s)"
                 % (i, gain, secs, gain / max(secs, 1.0)))
@@ -1819,6 +1889,10 @@ def _work_patients(ctl, pucks, live, log, t, now, deadline=112.0,
                 spent.add(i)           # could not be shifted: stop trying
         elif good:
             placed[i] = live(i)
+            if raw > 3.0:                       # F134: correct the quote
+                r = (now() - t_go) / raw
+                pace[0] = float(np.clip(
+                    (1.0 - PACE_GAIN) * pace[0] + PACE_GAIN * r, *PACE_CLAMP))
         else:
             spent.add(i)               # one honest attempt each; the clock
                                        # is worth more than a second try

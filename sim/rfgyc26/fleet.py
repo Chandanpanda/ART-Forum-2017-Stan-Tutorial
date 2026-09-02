@@ -307,6 +307,23 @@ class Fleet:
                     out.append((x + c*r, y + s*r, a.radius))
         return out
 
+    def gap(self, whose, pose=None):
+        """Millimetres of SURFACE clearance to the nearest other agent.
+
+        Negative means the two body models overlap.  Measured positions
+        only -- this is what a speed limit should follow, and a prediction
+        is not a measurement.
+        """
+        me = self.agents.get(whose)
+        if me is None:
+            return 1e9
+        x, y = (pose or me.pose or (0.0, 0.0, 0.0))[:2]
+        rad = me.radius
+        best = 1e9
+        for hx, hy, hr in self.hazard(whose, horizon=0.0):
+            best = min(best, float(np.hypot(hx-x, hy-y)) - hr - rad)
+        return best
+
     def stamp(self, cmap, whose, horizon=1.6, grow=0.0):
         """Put the other agents into this costmap as static obstacles."""
         for x, y, r in self.hazard(whose, horizon=horizon):

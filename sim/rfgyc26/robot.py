@@ -25,6 +25,12 @@ GYRO_BIAS_SD  = 0.04
 GYRO_NOISE_SD = 0.08
 
 
+# How close robot 2 has to be before robot 1 slows for it, and how slow
+# it gets.  Surface gap in mm between the two body models (F137).
+FLEET_NEAR  = 150.0
+FLEET_CRAWL = 80.0
+
+
 class AgentARobot(hal.DriveHAL, hal.DeviceHAL):
     def __init__(self, model, data, step_loss=0.0, rng=None, vision="model",
                  nav="truth"):
@@ -240,9 +246,30 @@ class AgentARobot(hal.DriveHAL, hal.DeviceHAL):
         if self.fleet is not None:
             x, y, th = self.pose
             self.fleet.observe(self.fleet_name, (x, y, th), vel=abs(v_mm_s))
-            # and that is all.  No veto: see the docstring.  fleet_blocked
-            # stays False for the runners and probes that report on it.
-            self.fleet_blocked = False
+            # SPEED FOLLOWS CLEARANCE (F137).  Not braking for robot 2 is
+            # right; driving at it unchanged is not.  With the veto gone
+            # entirely, seed 1 measured 3511 ticks of robot-on-robot
+            # contact between T+36.0 and T+37.8, peaking at 38 N -- eighteen
+            # times the 2.1 N that started this whole line of work, and
+            # quite enough to put both robots somewhere they did not plan
+            # to be.
+            #
+            # A STOP is what deadlocks: two agents that both wait have a
+            # cycle in their wait-for graph and sit in it, measured, for
+            # forty-eight seconds.  A SPEED LIMIT has no such failure mode
+            # -- robot 1 keeps moving, so nothing can wait on it -- and it
+            # buys the same thing the stop was for: at 80 mm/s a touch is a
+            # nudge rather than a shove, and robot 2's escape reflex has
+            # time to work.  This is the clearance taper robot 2 already
+            # uses on the laboratory plate (F121), applied to the one
+            # obstacle robot 1 can see move.
+            g = self.fleet.gap(self.fleet_name)
+            self.fleet_blocked = g < FLEET_NEAR
+            if self.fleet_blocked and v_mm_s != 0.0:
+                f = float(np.clip(g / FLEET_NEAR, 0.0, 1.0))
+                lim = FLEET_CRAWL + (abs(v_mm_s) - FLEET_CRAWL) * f
+                v_mm_s = float(np.sign(v_mm_s)) * min(abs(v_mm_s),
+                                                      max(lim, FLEET_CRAWL))
         self._odo_flush()
         v, w = v_mm_s/1000.0, np.radians(omega_deg_s)
         wl = (v - w*HALF_TRACK) / WHEEL_R

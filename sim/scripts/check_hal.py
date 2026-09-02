@@ -164,10 +164,26 @@ def main():
     # that belongs in a solver.  These caps only ever come DOWN.  If a
     # change needs one raised, it is adding an offender, and the offender
     # is the change.
-    r2src = open(os.path.join(os.path.dirname(__file__), "..",
-                              "rfgyc26", "robot2.py")).read()
-    for nm, text, cap in (("route.py", src, 246), ("robot2.py", r2src, 246)):
-        got = len(re.findall(r"(?<![\w.])\d{2,4}\.\d+", text))
+    # Counted with the TOKENIZER, not a regex: a regex over the source
+    # counts the measurements quoted in comments, which are the one place a
+    # number is welcome -- "took the kit column from 17.0 to -17.4" is the
+    # evidence for a change, not an offender in it.
+    def coord_literals(path):
+        import tokenize
+        n = 0
+        with tokenize.open(path) as f:
+            for tok in tokenize.generate_tokens(f.readline):
+                if tok.type == tokenize.NUMBER and "." in tok.string:
+                    try:
+                        if abs(float(tok.string)) >= 10.0:
+                            n += 1
+                    except ValueError:
+                        pass
+        return n
+
+    here = os.path.join(os.path.dirname(__file__), "..", "rfgyc26")
+    for nm, cap in (("route.py", 221), ("robot2.py", 209)):
+        got = coord_literals(os.path.join(here, nm))
         check("%s carries no MORE hardcoded coordinates than it did (<= %d)"
               % (nm, cap), got <= cap, "found %d" % got)
 

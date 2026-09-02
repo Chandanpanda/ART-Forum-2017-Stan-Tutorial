@@ -780,9 +780,30 @@ def kit_stand(rb, dest, flt=None, log=None):
     here than by driving there."""
     pieces = [] if flt is None else flt.pieces({"patient"})
     cm = world.board_map(pieces=pieces, fleet=flt, whose="r1", horizon=0.0)
+    # A REFUSAL NEEDS A FALLBACK (F151).  The first version of this asked
+    # for a pose with room to spare and SKIPPED the zone when the board did
+    # not offer one -- and the board usually does not, because robot 1 plans
+    # with the twelve patients on its map now.  Measured over 24 seeds that
+    # took the kit column from 17.0 to -17.4: an empty destination zone is
+    # -10 and forfeits the 6/2/2 bonus, so the worst pose that delivers
+    # beats the best one that does not exist.  Ask for comfort, settle for
+    # tight, and say which it was.
+    # A REFUSAL NEEDS A FALLBACK (F151).  The first version asked for a pose
+    # with room to spare and SKIPPED the zone when the board did not offer
+    # one -- and the board usually does not, because robot 1 plans with the
+    # twelve patients on its map now.  Measured over 24 seeds that took the
+    # kit column from 17.0 to -17.4: an empty destination zone is -10 and
+    # forfeits the 6/2/2 bonus, so the worst pose that delivers beats the
+    # best one that does not exist.
+    #
+    # The fix is not a ladder of slacks -- stand_for already RANKS by
+    # margin, so asking once with no clearance requirement and taking the
+    # best gives the same answer without inventing three numbers.  What the
+    # payload needs is still absolute: it has to land inside the tape.
     stands = station.stand_for(KIT_TAPE[dest], kit_effector(dest), A1_FOOT,
                                cm, headings=16, res=20.0,
-                               prefer=rb.pose[:2], top=14)
+                               prefer=rb.pose[:2], top=14,
+                               need_clear=-np.inf)
     got = station.reachable(
         stands,
         lambda pose: world.route_to(cm, rb.pose, pose, A1_FOOT, speed=230.0))
@@ -804,8 +825,10 @@ def kit_stand(rb, dest, flt=None, log=None):
                           + [(x, y, M2.HOPPER_SPREAD)
                              for x, y in kit_effector(dest).deposits(*st.pose)])
     if log:
-        log("      %s: standing at (%.0f, %.0f, %.0f), margin %.0f mm"
-            % (dest, st.pose[0], st.pose[1], st.pose[2], st.margin))
+        log("      %s: standing at (%.0f, %.0f, %.0f), margin %.0f mm%s"
+            % (dest, st.pose[0], st.pose[1], st.pose[2], st.margin,
+               "" if st.clear > 0.0 else "  -- TIGHT, body clearance %.0f"
+               % st.clear))
     return st, path
 
 

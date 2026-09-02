@@ -536,6 +536,12 @@ class Robot2:
     # 116 -- a 45 mm error in where robot 2 stands to throw them, against a
     # zone 200 mm deep.
     EJECT_BACK      = 116.0
+    # ...and how precisely the pocket puts a patient down once the chassis
+    # is where it meant to be.  Measured by scripts/check_effectors.py: the
+    # mechanism's own slop only -- the tracker's arrival error is a separate
+    # thing, and conflating the two is what made a 40 mm "aiming inset" look
+    # like a property of the zone.
+    RELEASE_SPREAD  = 20.0
     # THE CHASSIS, AS THE PLANNERS MUST SEE IT.  These points live here
     # because they are a measurement of this robot, and they used to live in
     # nav.py -- one robot's body inside the navigation library, which made

@@ -138,7 +138,7 @@ def _edge_distance(pt, box):
 
 def stand_for(region, eff, foot, cmap, headings=16, res=None, prefer=None,
               keep_out=(), avoid=(), avoid_r=0.0, top=8, need=0.0,
-              bounds=None):
+              need_clear=None, bounds=None):
     """Poses from which `eff` puts its payload inside `region`, best first.
 
     region    (x0, y0, x1, y1) the payload must land in

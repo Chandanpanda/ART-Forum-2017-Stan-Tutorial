@@ -25,9 +25,12 @@ Three layers, split exactly where the hardware splits:
     push whose tolerance is the plow's width.
 """
 import numpy as np
-from . import hal, nav, trajectory, world, fleet as fleetmod
+from . import hal, nav, trajectory, world, station, fleet as fleetmod
 from .params import Robot2 as R2, Field, Piece
 
+R2_FOOT = station.Footprint(R2.BODY_PTS, 55.0, 98.0)
+POCKET = station.Effector(offset=(R2.CAPTURE_X, 0.0),
+                          spread=R2.RELEASE_SPREAD)
 R2_INSCRIBED = 75.0        # no orientation fits inside this
 CARRY_PAD    = 20.0        # extra room a LOADED drive asks for (F136)
 CLEAR_NEAR   = 85.0        # mm of clearance at which speed is floored
@@ -967,20 +970,16 @@ class R2Controller:
 # every delivery with the push planner, take them in value order, and re-price
 # against the live board after each one.
 
-ZONES = {"HOSP": (511.0, 941.0, 631.0, 1141.0),
-         "RECOVERY": (730.0, 200.0, 870.0, 260.0),
-         "PCC_L": (40.0, 1021.0, 160.0, 1141.0),
-         "PCC_R": (983.0, 1021.0, 1103.0, 1141.0)}
+# THE ZONES ARE THE TAPE (F149).  These were pre-inset by 40 mm so that a
+# carry stopping inside its tolerance still landed inside the line -- an
+# aiming box masquerading as a zone, which then got judged against as if it
+# were the zone (F143: a patient four millimetres under the box's edge and
+# forty inside PCC_R's real one was marked failed and spent).  Arrival error
+# is the margin's job now, not the rectangle's.
+ZONES = {"HOSP": Field.HOSPITAL, "RECOVERY": Field.RECOVERY,
+         "PCC_L": Field.PCC_L, "PCC_R": Field.PCC_R}
 ZONE_NAME = {v: k for k, v in ZONES.items()}   # rect -> name, for the chooser
-# ZONES IS AN AIMING BOX, NOT THE TAPE (F143).  Every rectangle above is
-# inset 40 mm so a carry that stops inside its tolerance still lands inside
-# the line.  Judging the RESULT by the same box calls a delivery short when
-# the referee would pay for it -- measured on seed 19, patient 7 came to
-# rest at (1042, 1017), four millimetres under the aiming box's south edge
-# and forty inside PCC_R's actual one.  It was marked failed, marked spent,
-# and left out of the board the colour bonuses are priced against.
-TAPE = {"HOSP": Field.HOSPITAL, "RECOVERY": Field.RECOVERY,
-        "PCC_L": Field.PCC_L, "PCC_R": Field.PCC_R}
+TAPE = ZONES        # kept as a name: the aiming box and the line are one
 DEST = {"red": "HOSP", "green": "RECOVERY"}
 
 # ROBOT 1'S RESERVATIONS, read from robot 1's own live plan (F112).
@@ -1312,68 +1311,38 @@ CARRY_W = 130.0
 APPROACH_V = 330.0
 
 
-EDGE_HARD = 12.0           # ZONES is already inset 40 mm from the tape
+# THE CARRY TOLERANCE IS NOT A PROPERTY OF THE ZONE (F149).  Every
+# destination rectangle used to be carried around pre-inset by 40 mm so
+# that a carry stopping inside its tolerance still landed inside the line,
+# and _zone_pt then inset it again by its own 12.  Two different things
+# were being added together: what the POCKET does when it lets go, which is
+# a mechanism, and how close the TRACKER stops, which is a controller.  The
+# first belongs to the effector; the second is exactly what a margin is.
+#
+# So the zones are the real tape now, the pocket is a station.Effector, and
+# where to stand is station.stand_for -- the same solver robot 1 uses for
+# its hoppers.  The bespoke grid search that used to live here, with its own
+# scoring and its own inset, is gone.
+ARRIVE_TOL = 55.0          # what ctl.goto promises on a loaded carry
 
 
-def _zone_pt(zone, puck, zname=None, avoid=(), keep=()):
-    """Where inside the zone to put this patient.
+def place_stand(tape, cm, puck, avoid=(), keep=(), prefer=None):
+    """Where to stand to leave a patient inside `tape`, or None.
 
-    35 mm of inset was arithmetic, not engineering.  The carry ends when
-    the tracker is within its 55 mm tolerance and the release then backs
-    away, so a target 35 mm inside the line can land 20 mm outside it --
-    measured, a green carried the whole width of the board and stopped at
-    x 691 against RECOVERY's edge at 700, nine millimetres short, for
-    nothing.  Inset by the tolerance instead, and collapse to the middle
-    when the zone is too small to allow it (RECOVERY is only 80 mm deep).
-
-    INSIDE THE TAPE IS NOT ENOUGH IN A SHARED ZONE (F126).  Three of the
-    four destination zones also take robot 1's kits, and a patient left on
-    the floor robot 1 parks on is a patient robot 1 shoulders back out --
-    that is what cost 34 points a match the first time these zones were
-    opened.  Robot 1's floor is known (fleet.kit_hazard: it parks beside
-    the zone and discharges over its flank, so it covers well under half of
-    one), so the choice is made by clearance rather than by proximity:
-    among the legal points, take the one furthest from everything already
-    down, and break ties by the shortest carry.  With nothing down yet that
-    is the middle of the free floor, which is exactly right.
+    keep is [(x, y, r)] another agent has said it will occupy; avoid is
+    whatever is already lying in the zone.
     """
-    lo = []
-    for a, b in ((zone[0], zone[2]), (zone[1], zone[3])):
-        # RECOVERY is 60 mm deep in ZONES terms and must hold four: an
-        # inset that is generous in a 200 mm box leaves nothing in a 60 mm
-        # one, so it yields once the zone is the smaller constraint.
-        inset = min(EDGE_HARD, (b - a) / 2.0 - 20.0)
-        lo.append((a + inset, b - inset))
-    (x0, x1), (y0, y1) = lo
-    # WHERE ROBOT 1 SAID IT WILL BE, not a rectangle drawn round a station
-    # constant (F148).  Robot 1 now solves for its own pose and publishes
-    # the floor that pose occupies -- its footprint and its kit pile -- so
-    # this keeps off the real thing instead of a model of a former one.
-    haz = [(x, y, r + Piece.CYL_D/2.0 + 12.0) for x, y, r in keep]
-    best, bs = None, -1e18
-    for x in np.linspace(x0, x1, 21):
-        for y in np.linspace(y0, y1, 21):
-            if any((x-hx)**2 + (y-hy)**2 <= hr*hr for hx, hy, hr in haz):
-                continue
-            clear = min((float(np.hypot(x-ax, y-ay)) for ax, ay in avoid),
-                        default=400.0)
-            if clear < Piece.CYL_D + 5.0:   # 20 mm bodies: do not touch
-                continue
-            edge = min(x-zone[0], zone[2]-x, y-zone[1], zone[3]-y)
-            # Keeping off the tape and keeping off the last patient are the
-            # same requirement, so they are the same term: the worst of the
-            # two, capped where more room stops helping.  Then the shorter
-            # carry, at a millimetre of score per centimetre of drive.
-            sc = min(clear, edge, 90.0) - 0.1*float(np.hypot(x-puck[0],
-                                                             y-puck[1]))
-            if sc > bs:
-                best, bs = (float(x), float(y)), sc
-    if best is not None:
-        return best
-    # Nowhere clear: fall back to the old nearest-comfortably-inside point
-    # rather than refusing the delivery.  A patient in the zone is +8 even
-    # if robot 1 later nudges it; a patient never carried is -3 for certain.
-    return (float(np.clip(puck[0], x0, x1)), float(np.clip(puck[1], y0, y1)))
+    blocked = [(x, y, r + Piece.CYL_D/2.0 + 12.0) for x, y, r in keep]
+    stands = station.stand_for(
+        tape, POCKET, R2_FOOT, cm, headings=16, res=20.0,
+        prefer=prefer or puck, avoid=avoid,
+        avoid_r=Piece.CYL_D + 25.0, top=10)
+    for st in stands:
+        if any((st.deposits[0][0]-hx)**2 + (st.deposits[0][1]-hy)**2 <= hr*hr
+               for hx, hy, hr in blocked):
+            continue
+        return st
+    return stands[0] if stands else None
 
 
 def _placed_in(placed, zone):
@@ -1621,7 +1590,10 @@ def _price(cm, robot, puck, zone, t0, zname=None, avoid=(), keep=()):
     # straight run in, a stop, and a straight run out.  This is the one
     # thing a plow always got right and the first pocket mission threw
     # away.
-    tgt = _zone_pt(zone, puck, zname, avoid, keep)
+    st = place_stand(zone, cm, puck, avoid=avoid, keep=keep)
+    if st is None:
+        return None
+    tgt = st.pose[:2]
     heading = float(np.degrees(np.arctan2(tgt[1] - puck[1],
                                           tgt[0] - puck[0])))
     app = nav.capture_approach(cm, puck, R2.BODY_PTS, prefer=heading)
@@ -1653,7 +1625,7 @@ def _price(cm, robot, puck, zone, t0, zname=None, avoid=(), keep=()):
     #        approach   turn+capture   carry   release+back off
     # ...divided by how likely the leaving is (F147): expected seconds per
     # point, not best-case seconds per point.
-    return float((s1 + 4.0 + s2 + 3.0) / conf), app
+    return float((s1 + 4.0 + s2 + 3.0) / conf), app, st
 
 
 # THE STOPWATCH SAYS TWICE (F134).  _price quotes path-length over speed for
@@ -1693,7 +1665,8 @@ def _wrong_zone(x, y, want):
     return None
 
 
-def _deliver(ctl, i, live, target, app, log, t, zone=None, what="patient"):
+def _deliver(ctl, i, live, target, app, log, t, zone=None,
+             what="patient", stand=None):
     """One patient, end to end: stand off, face it, take it, carry it, let
     go.  Returns True only if the RESULT is what was wanted -- inside the
     zone for a delivery, or actually moved for a clearance.  Nothing here
@@ -1735,8 +1708,18 @@ def _deliver(ctl, i, live, target, app, log, t, zone=None, what="patient"):
     if not ctl.holding(*live(i)):
         log(t() + "  %s %d: lost it coming round" % (what, i))
         return False
+    # AIM AS PRECISELY AS THE ZONE DEMANDS (F150).  A flat 55 mm arrival
+    # tolerance is fine for the hospital, which is 280 mm deep, and wrong
+    # for RECOVERY, which is 80 -- the best margin any pose can offer there
+    # is about 40 mm, so a carry allowed to stop 55 mm out lands outside as
+    # often as in.  Measured on check_delivery: a green left at its start
+    # and a yellow one millimetre short of PCC_R's line.  The stand already
+    # knows how much room it has; spend the extra seconds only where the
+    # geometry actually needs them.
+    tol = ARRIVE_TOL if stand is None else \
+        float(np.clip(stand.margin, 18.0, ARRIVE_TOL))
     yield from ctl.goto(tx - ux * R2.CAPTURE_X, ty - uy * R2.CAPTURE_X,
-                        v_max=CARRY_V, w_max=CARRY_W, tol=55.0, tries=3,
+                        v_max=CARRY_V, w_max=CARRY_W, tol=tol, tries=3,
                         carry=True)
     # NEVER LET GO INSIDE THE WRONG ZONE (F131).  A carry that falls short
     # is only worth -3, the same as a patient nobody touched -- but a carry
@@ -1909,15 +1892,14 @@ def _work_patients(ctl, pucks, live, log, t, now, deadline=112.0,
                 pr = _price(cmi, ctl.pose[:2], p, zone, now(), zn_, here, keep)
                 if pr is None:
                     continue
-                raw, app = pr
+                raw, app, st = pr
                 secs = raw * pace[0]
                 if now() + secs > deadline + 6.0:
                     continue
                 rate = gain / max(secs, 1.0)
                 if best is None or rate > best[0]:
                     best = (rate, i, gain, secs, app, zone, cmi,
-                            _zone_pt(zone, p, zn_, here, keep),
-                            "patient", raw)
+                            st.pose[:2], "patient", raw, st)
 
         if best is None:
             # ---- nothing deliverable: is something merely IN THE WAY? ----
@@ -1950,7 +1932,7 @@ def _work_patients(ctl, pucks, live, log, t, now, deadline=112.0,
                 log(t() + "patient %d is blocked by %d -- clearing it to "
                     "(%.0f, %.0f)" % (i, j, sp[0], sp[1]))
                 best = (0.0, j, 0.0, s1 + 12.0, app, None, cmj, sp, "blocker",
-                        s1 + 12.0)
+                        s1 + 12.0, None)
                 break
 
         if best is None:
@@ -1983,14 +1965,14 @@ def _work_patients(ctl, pucks, live, log, t, now, deadline=112.0,
             continue
         idling = False
         yields = 0
-        _, i, gain, secs, app, zone, cm, tgt, what, raw = best
+        _, i, gain, secs, app, zone, cm, tgt, what, raw, stand = best
         t_go = now()
         if what == "patient":
             log(t() + "patient %d: %+.0f pts in %.0f s (%.2f pts/s)"
                 % (i, gain, secs, gain / max(secs, 1.0)))
         ctl.cmap = cm
         good = yield from _deliver(ctl, i, live, tgt, app, log, t,
-                                   zone=zone, what=what)
+                                   zone=zone, what=what, stand=stand)
         if what == "blocker":
             if not good:
                 spent.add(i)           # could not be shifted: stop trying

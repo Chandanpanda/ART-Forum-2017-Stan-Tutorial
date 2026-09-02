@@ -27,6 +27,7 @@ FAST = [
     ("check_model",     "the built model's geometry, with physics"),
     ("check_effectors", "where each effector's payload actually lands"),
     ("check_r2_pocket", "robot 2's capture pocket and gate"),
+    ("check_delivery",  "one patient, end to end, and the referee's verdict"),
     ("check_station",   "the pose solver, incl. a field it has never seen"),
     ("check_nav",       "costmap, A*, space-time windows"),
     ("check_planner",   "the task DP against exhaustive enumeration"),

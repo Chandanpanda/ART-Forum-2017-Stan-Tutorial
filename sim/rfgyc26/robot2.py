@@ -30,6 +30,9 @@ from .params import Robot2 as R2, Field, Piece
 
 R2_INSCRIBED = 75.0        # no orientation fits inside this
 CARRY_PAD    = 20.0        # extra room a LOADED drive asks for (F136)
+CLEAR_NEAR   = 85.0        # mm of clearance at which speed is floored
+CLEAR_FAR    = 130.0       # ...and above which it is unrestricted
+CLEAR_SLOW   = 110.0       # mm/s through a pinch (F121, F138)
 R2_CIRCUM = 98.0          # every orientation fits outside it
                            # (the capture pocket is part of the body)
 
@@ -426,6 +429,28 @@ class R2Controller:
                 # it is the best information available.
             else:
                 self.escaping = False
+        # SPEED FOLLOWS CLEARANCE, BUT ONLY WHERE THE CLEARANCE IS LOW
+        # (F138).  This limit used to be computed in goto() from
+        # min_clearance over the WHOLE path and applied to the whole drive,
+        # so one 85 mm pinch anywhere along 900 mm of route put the robot at
+        # 110 mm/s for all of it -- and with eleven patients, two walls, the
+        # laboratory plate and robot 1 all stamped, nearly every path has
+        # one such point.  Measured on the phase rig, that is most of the
+        # delivery cycle: approach 9.9 s and carry 8.2 s of 28.5, an
+        # effective 61 mm/s against a 330 mm/s cap.
+        #
+        # A pinch is a property of a PLACE, not of a route through it.  Here
+        # the governor sees where the chassis actually is, every tick, so
+        # the tight bit is slow and the open floor is not.
+        if self.cmap is not None and v != 0.0:
+            gap = float(self.cmap.clearance()[self.cmap.cell(self.x, self.y)])
+            if gap < CLEAR_FAR:
+                lim = float(np.interp(gap, [CLEAR_NEAR, CLEAR_FAR],
+                                      [CLEAR_SLOW, abs(v)]))
+                lim = max(lim, CLEAR_SLOW)
+                if abs(v) > lim:
+                    k = lim / abs(v)
+                    vl, vr = vl * k, vr * k
         self._cmd = (vl, vr)
         if self._tick % _CMD_EVERY == 0:
             self.link.cmd(vl, vr, 150)
@@ -603,10 +628,9 @@ class R2Controller:
         # seed.  It fits at a walk and it does not fit at a run, so the
         # tightest point on the path sets the speed for the leg.
         if self.cmap is not None:
-            gap = self.cmap.min_clearance(pts)
-            if gap < 130.0:
-                v_max = min(v_max, float(np.interp(gap, [85.0, 130.0],
-                                                   [110.0, v_max])))
+            # (the speed limit itself now lives in _drive, where it can be
+            #  evaluated WHERE THE ROBOT IS -- see F138 there)
+            pass
         if cap_s is None:
             cap_s = 5.0 + nav.path_length(path) / 110.0
         gx, gy = pts[-1]
@@ -802,21 +826,36 @@ class R2Controller:
                     return False
             return True
 
+        def probe(sgn, r):
+            th_probe = self.th
+            for _ in range(6):
+                th_probe += sgn * 15.0
+                if not fits(self.x, self.y, th_probe, r * 0.9):
+                    return False
+            return True
+
         err = _wrap(th_t - self.th)
         sign = 1.0 if err > 0 else -1.0
-        # look a third of the way round each way and take a direction that
-        # is clear; prefer the short way when both are
-        for s_try in (sign, -sign):
-            th_probe = self.th
-            ok = True
-            for _ in range(6):
-                th_probe += s_try * 15.0
-                if not fits(self.x, self.y, th_probe, radius * 0.9):
-                    ok = False
+        # A LADDER OF RADII, NOT ONE (F139).  At 170 mm/s and 75 deg/s the
+        # arc is 130 mm, and where 130 does not fit this used to drive it
+        # anyway: neither probe direction cleared, `sign` kept its opening
+        # guess, and the loop ran its whole seven-second budget as a blind
+        # 1.2 m arc with a patient aboard.  Measured on the phase rig that
+        # was four deliveries in nine, and it is how the neighbours end up
+        # scattered.  A tighter arc is the same manoeuvre at a lower speed
+        # -- what F113 forbids is the PIVOT, not the radius -- so try 130,
+        # then 95, then 70, each way, and only then borrow room behind.
+        found = None
+        for r in (radius, radius * 0.73, radius * 0.54):
+            for s_try in (sign, -sign):
+                if probe(s_try, r):
+                    found = (s_try, r)
                     break
-            if ok:
-                sign = s_try
+            if found:
                 break
+        if found:
+            sign, radius = found
+            v = radius * np.radians(w)          # keep w, shrink the speed
         else:
             # NOTHING FITS FORWARD: BACK OUT FIRST (F133).  The gate is shut
             # and holds the patient through the reverse, so the room a
@@ -828,16 +867,26 @@ class R2Controller:
                 yield from self.back_off(room)
                 err = _wrap(th_t - self.th)
                 sign = 1.0 if err > 0 else -1.0
-                for s_try in (sign, -sign):
-                    th_probe, ok = self.th, True
-                    for _ in range(6):
-                        th_probe += s_try * 15.0
-                        if not fits(self.x, self.y, th_probe, radius * 0.9):
-                            ok = False
+                for r in (radius, radius * 0.73, radius * 0.54):
+                    for s_try in (sign, -sign):
+                        if probe(s_try, r):
+                            found = (s_try, r)
                             break
-                    if ok:
-                        sign = s_try
+                    if found:
                         break
+                if found:
+                    sign, radius = found
+                    v = radius * np.radians(w)
+            if not found:
+                # Nothing fits from anywhere: say so rather than grinding.
+                self.stop()
+                for _ in range(3):
+                    self.tick(); yield
+                return False
+        # budget the arc rather than a flat seven seconds: what it needs is
+        # the angle over the rate, and anything past that is a failure
+        # burning clock the delivery has not got
+        cap_s = min(cap_s, 1.5 + abs(_wrap(th_t - self.th)) / max(w, 1.0) * 1.7)
         for _ in range(int(cap_s * hal.Clock.HZ)):
             err = _wrap(th_t - self.th)
             if abs(err) < tol:

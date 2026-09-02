@@ -32,7 +32,7 @@ from . import nav
 def board_map(pieces=(), skip=(), cmap=None, res=None, size=None,
               schedule=None, reserve=None, t_now=0.0,
               fleet=None, whose=None, horizon=1.6, piece_r=12.0,
-              extra=()):
+              shove=False, shove_cost=900.0, extra=()):
     """The costmap to plan on.
 
     pieces     [(id, x, y, ...), ...] observed loose pieces
@@ -41,9 +41,26 @@ def board_map(pieces=(), skip=(), cmap=None, res=None, size=None,
     reserve    reserve(cmap, schedule, t_now) -- the task's own booking rule
     fleet      a fleet.Fleet, to stamp other agents' measured footprints
     whose      which agent is asking (so it is not stamped as its own wall)
+    shove      treat the pieces as EXPENSIVE rather than impassable
     extra      [(x, y, r), ...] anything else to block out
 
     Everything is optional: a map with no arguments is just the field.
+
+    A 5 g CYLINDER IS NOT A WALL TO A 4 kg ROBOT (F153).  Whether a loose
+    piece blocks a route depends on who is asking.  Robot 2 is light and
+    usually carrying, so a patient in the way is a wall.  Robot 1 is
+    seventeen times its mass and shoves them aside without noticing -- it
+    did exactly that, on a scripted path, for the whole life of this
+    project.  The first version of its costmap made them hard obstacles for
+    everyone, and robot 1 promptly declared both kit zones unreachable:
+    the sticker columns leave 80 mm gaps and robot 1 is 235 mm wide, so
+    there is no route at all.  Measured, that cost the kit column 34 points
+    and skipped the zones outright.
+
+    `shove` says the piece may be driven through at a price.  The price is
+    what makes it a last resort rather than a habit -- the planner will pay
+    several hundred millimetres of detour to avoid one, and will still get
+    to the hospital when the only way there is through.
     """
     cm = nav.CostMap.field() if cmap is None else cmap
     if reserve is not None and schedule is not None:
@@ -54,7 +71,11 @@ def board_map(pieces=(), skip=(), cmap=None, res=None, size=None,
     for p in pieces:
         if p[0] in drop:
             continue
-        cm.add_disc(float(p[1]), float(p[2]), piece_r)
+        if shove:
+            cm.add_sticky(float(p[1]), float(p[2]), r=piece_r,
+                          cost=shove_cost)
+        else:
+            cm.add_disc(float(p[1]), float(p[2]), piece_r)
     for x, y, r in extra:
         cm.add_disc(float(x), float(y), float(r))
     return cm

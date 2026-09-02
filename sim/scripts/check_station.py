@@ -198,6 +198,43 @@ def main():
         check("the margin is a promise: nudging by less keeps the payload in",
               worst is None, str(worst))
 
+    # ------------------------------- robot 1 can actually GET to its zones
+    # This is the check that was missing when robot 1 was given a map for
+    # the first time: with the twelve patients on it as hard obstacles
+    # there is NO route to either kit zone -- the sticker columns leave
+    # 80 mm gaps and robot 1 is 235 mm wide -- so it skipped both and the
+    # kit column fell 34 points.  A 5 g cylinder is not a wall to a 4 kg
+    # robot (F153); it is a cost.
+    from rfgyc26 import route, world, mjcf as _mj
+    for seed in (5, 6, 17):
+        lay = _mj.m2_layout(np.random.default_rng(seed))
+        pcs = [(k, px, py, "patient") for k, (px, py, _c) in enumerate(lay)]
+        soft = world.board_map(pieces=pcs, shove=True)
+        hard = world.board_map(pieces=pcs)
+        for dest, tape in (("HOSP", Field.HOSPITAL), ("PCC_L", Field.PCC_L)):
+            eff = route.kit_effector(dest)
+            got = station.stand_for(tape, eff, route.A1_FOOT, soft,
+                                    headings=16, res=20.0,
+                                    need_clear=-np.inf, top=8)
+            reach = station.reachable(
+                got, lambda pose: world.route_to(soft, (240.0, 205.0), pose,
+                                                 route.A1_FOOT, speed=230.0))
+            check("seed %d: robot 1 can reach %s with the patients there"
+                  % (seed, dest), bool(reach),
+                  "%d poses, %d reachable" % (len(got), len(reach)))
+        # ...and the hard-obstacle version is the thing that fails, which is
+        # why this check exists at all
+        eff = route.kit_effector("HOSP")
+        got = station.stand_for(Field.HOSPITAL, eff, route.A1_FOOT, hard,
+                                headings=16, res=20.0, need_clear=-np.inf,
+                                top=8)
+        hard_reach = station.reachable(
+            got, lambda pose: world.route_to(hard, (240.0, 205.0), pose,
+                                             route.A1_FOOT, speed=230.0))
+        if seed == 5:
+            check("...and treating them as walls is what made it impossible",
+                  not hard_reach, "%d reachable as walls" % len(hard_reach))
+
     bad_n = sum(1 for _, ok, _ in RESULTS if not ok)
     for nm, ok, det in RESULTS:
         if VERBOSE or not ok:

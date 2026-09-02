@@ -779,7 +779,11 @@ def kit_stand(rb, dest, flt=None, log=None):
     cannot be done from here -- which is a real answer, and better learned
     here than by driving there."""
     pieces = [] if flt is None else flt.pieces({"patient"})
-    cm = world.board_map(pieces=pieces, fleet=flt, whose="r1", horizon=0.0)
+    # The patients are a COST to robot 1, not a wall (F153): it outweighs
+    # one seventeen to one and has been shoving them aside all along.  The
+    # other robot, which it cannot shove, stays a wall.
+    cm = world.board_map(pieces=pieces, fleet=flt, whose="r1", horizon=0.0,
+                         shove=True)
     # A REFUSAL NEEDS A FALLBACK (F151).  The first version of this asked
     # for a pose with room to spare and SKIPPED the zone when the board did
     # not offer one -- and the board usually does not, because robot 1 plans

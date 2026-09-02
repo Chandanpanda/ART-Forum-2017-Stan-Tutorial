@@ -29,6 +29,7 @@ FAST = [
     ("check_r2_pocket", "robot 2's capture pocket and gate"),
     ("check_delivery",  "one patient, end to end, and the referee's verdict"),
     ("check_station",   "the pose solver, incl. a field it has never seen"),
+    ("check_morphology", "the chassis outline as a packing + board problem"),
     ("check_nav",       "costmap, A*, space-time windows"),
     ("check_planner",   "the task DP against exhaustive enumeration"),
     ("check_trajectory", "the pure-pursuit tracker"),

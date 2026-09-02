@@ -33,6 +33,8 @@ CARRY_PAD    = 20.0        # extra room a LOADED drive asks for (F136)
 CLEAR_NEAR   = 85.0        # mm of clearance at which speed is floored
 CLEAR_FAR    = 130.0       # ...and above which it is unrestricted
 CLEAR_SLOW   = 110.0       # mm/s through a pinch (F121, F138)
+EJECT_BACK   = 71.0        # the shake's tail lip, behind the axle
+KIT_V        = 230.0       # mm/s with kits loose on the tray
 R2_CIRCUM = 98.0          # every orientation fits outside it
                            # (the capture pocket is part of the body)
 
@@ -970,6 +972,15 @@ ZONES = {"HOSP": (511.0, 941.0, 631.0, 1141.0),
          "PCC_L": (40.0, 1021.0, 160.0, 1141.0),
          "PCC_R": (983.0, 1021.0, 1103.0, 1141.0)}
 ZONE_NAME = {v: k for k, v in ZONES.items()}   # rect -> name, for the chooser
+# ZONES IS AN AIMING BOX, NOT THE TAPE (F143).  Every rectangle above is
+# inset 40 mm so a carry that stops inside its tolerance still lands inside
+# the line.  Judging the RESULT by the same box calls a delivery short when
+# the referee would pay for it -- measured on seed 19, patient 7 came to
+# rest at (1042, 1017), four millimetres under the aiming box's south edge
+# and forty inside PCC_R's actual one.  It was marked failed, marked spent,
+# and left out of the board the colour bonuses are priced against.
+TAPE = {"HOSP": Field.HOSPITAL, "RECOVERY": Field.RECOVERY,
+        "PCC_L": Field.PCC_L, "PCC_R": Field.PCC_R}
 DEST = {"red": "HOSP", "green": "RECOVERY"}
 
 # ROBOT 1'S RESERVATIONS, read from robot 1's own live plan (F112).
@@ -1485,7 +1496,14 @@ def _can_turn_out(cm, pose, th0, th_t, radius=130.0):
     match.  So: try the arc from the capture pose, and if nothing fits,
     back straight out as far as the map allows and try again from there.
     """
+    # AND IT MUST MODEL WHAT carry_turn ACTUALLY DOES.  That behaviour
+    # tries three radii each way before it borrows room behind (F139); a
+    # predicate that only ever asks about the widest one refuses deliveries
+    # the robot could make.  Measured over twelve seeds' opening boards,
+    # radius-130-only refused 57 of 144 patients -- forty per cent of the
+    # column, every one of them on this test alone.
     occ = cm.inflated(6.0, 8.0) >= nav.BLOCKED
+    ladder = (radius, radius * 0.73, radius * 0.54)
     for back in (0.0, None):
         if back is None:
             back = _back_room(occ, cm, pose, th0)
@@ -1493,8 +1511,9 @@ def _can_turn_out(cm, pose, th0, th_t, radius=130.0):
                 return False
             a = np.radians(th0)
             pose = (pose[0] - back*np.cos(a), pose[1] - back*np.sin(a))
-        if _arc_out(occ, cm, pose, th0, th_t, radius):
-            return True
+        for r in ladder:
+            if _arc_out(occ, cm, pose, th0, th_t, r):
+                return True
     return False
 
 
@@ -1707,7 +1726,8 @@ def _deliver(ctl, i, live, target, app, log, t, zone=None, what="patient"):
     if zone is None:
         good = np.hypot(fx - p0[0], fy - p0[1]) > 120.0
     else:
-        good = zone[0] <= fx <= zone[2] and zone[1] <= fy <= zone[3]
+        box = TAPE.get(ZONE_NAME.get(zone), zone)     # the line, not the box
+        good = box[0] <= fx <= box[2] and box[1] <= fy <= box[3]
     log(t() + "  %s %d: %s at (%.0f, %.0f)"
         % (what, i, "done" if good else "short", fx, fy))
     return bool(good)
@@ -2005,9 +2025,22 @@ def mission_robot2(ctl, m, d=None, log=print, clock=None, rb=None,
              (Field.PCC_R[1] + Field.PCC_R[3]) / 2.0
     for attempt in range(4):
         ctl.cmap = _board_map(pucks, sched=sched(), t_now=now(), flt=flt)
+        # AIM THE EJECTION POINT, NOT THE AXLE (F144).  The shake walks the
+        # kits over the TAIL lip, measured 71 mm behind the axle, and facing
+        # south that puts them 71 mm NORTH of wherever the chassis stands.
+        # From the zone's centre they land 29 mm short of the north line
+        # with nothing in hand for arrival error; standing 71 mm south of it
+        # instead puts them on the middle of the zone, a hundred either way.
+        #
+        # And carry them at a carrying speed.  This leg used to ask for
+        # 360 mm/s, which was harmless while a path-global clearance limit
+        # held the robot to 110 (F138) and is not now that the limit is
+        # local.  A kit on an open tray has a lateral acceleration budget
+        # like any other cargo.
+        ax, ay = zx, zy - EJECT_BACK
         for _ in range(2):
-            yield from ctl.goto(zx, zy, v_max=360.0, tol=30.0, tries=3)
-            if np.hypot(ctl.pose[0] - zx, ctl.pose[1] - zy) < 55.0:
+            yield from ctl.goto(ax, ay, v_max=KIT_V, tol=30.0, tries=3)
+            if np.hypot(ctl.pose[0] - ax, ctl.pose[1] - ay) < 55.0:
                 break
         for _ in range(2):
             yield from ctl.face(270.0, tol=6.0)

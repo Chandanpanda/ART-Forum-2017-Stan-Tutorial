@@ -33,8 +33,13 @@ import numpy as np
 from .params import Field
 
 RES = 20.0                    # mm per cell -- 58 x 60 over the field
-FIELD_W = 1143.0
-FIELD_H = 1181.0
+# THE FIELD IS A DEFAULT, NOT A LAW.  These two were module constants read
+# directly by CostMap and by _infield, which quietly made every map in the
+# project this competition's map.  They stay as the default so nothing has
+# to pass them, but a CostMap may be built at any size -- that is the
+# difference between a library and a transcript.
+FIELD_W = Field.W
+FIELD_H = Field.H
 
 # The cost a cell carries at the very edge of the inscribed zone, decaying to
 # zero at the circumscribed radius.  120 is chosen against the A* step cost
@@ -47,10 +52,12 @@ BLOCKED = 1e9
 class CostMap:
     """An occupancy grid with obstacle discs, rectangles and time windows."""
 
-    def __init__(self, res=RES):
+    def __init__(self, res=RES, size=None):
         self.res = float(res)
-        self.nx = int(np.ceil(FIELD_W / self.res))
-        self.ny = int(np.ceil(FIELD_H / self.res))
+        self.w, self.h = (float(FIELD_W), float(FIELD_H)) if size is None \
+            else (float(size[0]), float(size[1]))
+        self.nx = int(np.ceil(self.w / self.res))
+        self.ny = int(np.ceil(self.h / self.res))
         self.static = np.zeros((self.nx, self.ny), dtype=bool)
         self._windows = []          # (mask, t0, t1)
         self._sticky = np.zeros((self.nx, self.ny), dtype=float)
@@ -154,8 +161,8 @@ class CostMap:
         """
         if "_dist" not in self._cache:
             gx, gy = self._grid_xy()
-            dist = np.minimum(np.minimum(gx, FIELD_W - gx),
-                              np.minimum(gy, FIELD_H - gy))
+            dist = np.minimum(np.minimum(gx, self.w - gx),
+                              np.minimum(gy, self.h - gy))
             if self.static.any():
                 oi, oj = np.nonzero(self.static)
                 ox = (oi + 0.5) * self.res
@@ -199,8 +206,8 @@ class CostMap:
             # centre is at 10 -- so the field boundary was simply ABSENT
             # from the map and every plan was free to route through it.
             # Distance to the boundary is exact and costs nothing.
-            dist = np.minimum(dist, np.minimum(gx, FIELD_W - gx))
-            dist = np.minimum(dist, np.minimum(gy, FIELD_H - gy))
+            dist = np.minimum(dist, np.minimum(gx, self.w - gx))
+            dist = np.minimum(dist, np.minimum(gy, self.h - gy))
         if occ.any():
             oi, oj = np.nonzero(occ)
             ox = (oi + 0.5) * self.res

@@ -700,9 +700,26 @@ class AgentA:
     # a patient placed inside one of them is a patient robot 1 will push
     # (F126).  Heading is +90 at every station, so the body spans
     # x +- W/2 and y +- L/2 about the point.
+    # PCC_L SITS EAST OF THE PATIENTS, NOT ON THEM (F141).  At x 240 the
+    # 235 mm-wide body spans 122..357 and the west sticker column stands at
+    # x 160 (150..170) -- a 47 mm overlap, so every PCC_L approach drives
+    # THROUGH four patients.  Usually it shoves them aside; measured on the
+    # kit rig, two runs in six it beached on one and sat motionless for
+    # twenty-eight seconds, 164 mm short, and laid both kits at y 853
+    # against a zone that starts at 981.  That is -10 for the empty zone and
+    # the 6/2/2 bonus with it: 36 of the 50 that column is worth.
+    #
+    # The window is narrow but real.  The hopper discharges 140 mm over the
+    # west flank, so the body must stay east of the stickers and the lip
+    # west of the zone's east edge:
+    #     station >= 292.5   body clear of x 170 by 5 mm
+    #     station <= 310.0   lip 30 mm inside PCC_L
+    # 300 takes the middle: 12.5 mm of clearance, lip at x 160.
+    # HOSP needs no such move -- its body spans 594..829, clear of both
+    # sticker columns, which is why it lands 6 of 6 on every rig run.
     KIT_STATION  = {"PCC_R": (903.0, 930.0),
                     "HOSP":  (711.5, 965.0),
-                    "PCC_L": (240.0, 930.0)}
+                    "PCC_L": (300.0, 930.0)}
     KIT_HEADING  = 90.0
 
     SWEEP_PIVOT_X   = 278.0

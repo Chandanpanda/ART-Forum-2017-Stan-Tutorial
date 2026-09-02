@@ -828,15 +828,32 @@ def deliver_kits(rb, log=print, clk=None, deadline=None, order=KIT_ORDER):
         # 8 deg is enough: the hopper mouth is 78 mm off the centreline, so
         # 8 deg of heading error moves the landing point 11 mm, against zone
         # margins of 50 mm and more.
-        yield from guard(turn_to(rb, KIT_HEADING, tol=8.0), 8.0)
-        rb.stop()
-        yield from wait(rb, 0.2)
+        #
+        # LOOK BEFORE YOU THROW (F140).  Where the kits will land is a
+        # closed-form function of the measured pose and the hopper's own
+        # offset -- this code has always computed it, and only ever used it
+        # to write "OUTSIDE THE ZONE" into the log AFTER discharging.  A
+        # hopper does not close again.  Measured on the kit rig, one PCC_L
+        # approach in five stops 150 mm short and lays both kits at y 834
+        # and 862 against a zone that begins at 981; the board pays -10 for
+        # the empty zone and loses the 6/2/2 bonus with it, which is 36 of
+        # the 50 that column is worth.  Robot 2 learned this at PCC_R and
+        # was given a re-shake for it (F115); robot 1 never was.
+        for attempt in range(3):
+            yield from guard(turn_to(rb, KIT_HEADING, tol=8.0), 8.0)
+            rb.stop()
+            yield from wait(rb, 0.2)
+            px, py, th = rb.pose
+            hx_, hy_ = M2.HOPPER[dest]
+            tr = np.radians(th)
+            kx = px + hx_*np.cos(tr) - hy_*np.sin(tr)
+            ky = py + hx_*np.sin(tr) + hy_*np.cos(tr)
+            if _in_zone(dest, kx, ky) or attempt == 2:
+                break
+            log(t() + "      lip would land at (%.0f, %.0f), outside %s "
+                "-- going round again" % (kx, ky, dest))
+            yield from leg(tx, ty, tol=22.0)
         n = rb.open_hopper(dest)
-        px, py, th = rb.pose
-        hx_, hy_ = M2.HOPPER[dest]
-        tr = np.radians(th)
-        kx = px + hx_*np.cos(tr) - hy_*np.sin(tr)
-        ky = py + hx_*np.sin(tr) + hy_*np.cos(tr)
         log("      dropped %d kit(s); lip at (%.0f, %.0f)%s"
             % (n, kx, ky, "" if _in_zone(dest, kx, ky) else "  -- OUTSIDE THE ZONE"))
         yield from wait(rb, 0.5)

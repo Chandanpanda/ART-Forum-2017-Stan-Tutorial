@@ -91,8 +91,11 @@ def geoms():
     return out
 
 
+# The gate flaps ARE the pocket's door, so they live inside the clear
+# volume by design (F123).  What has to be true of them is checked
+# separately below: shut they stop a patient, open they let one past.
 POCKET = {"r2_stop", "r2_wall_l", "r2_wall_r", "r2_flare_l",
-          "r2_flare_r", "r2_finger_l", "r2_finger_r"}
+          "r2_flare_r", "r2_gate_l", "r2_gate_r"}
 WHEELS = {"r2_wg_l", "r2_wg_r"}       # outboard, above the puck
 
 
@@ -166,6 +169,46 @@ def main():
           2.0 * robot2.R2_INSCRIBED < 191.0 - 20.0,
           "2*%.0f = %.0f mm of 191" % (robot2.R2_INSCRIBED,
                                        2.0*robot2.R2_INSCRIBED))
+
+    # ---- THE GATE (F123): shut it stops a patient, open it does not ----
+    import mujoco as _mj
+    _xml = mjcf.scene_full_match([(2500., 2400.), (2600., 2500.), (2700., 2600.)],
+                                 rng=np.random.default_rng(0), r2=True,
+                                 r2_pose=(300., 700., 0.))
+    _m = _mj.MjModel.from_xml_string(_xml)
+    _d = _mj.MjData(_m)
+    from rfgyc26 import robot2 as _r2
+    _link = _r2.SimLink(_m, _d, rng=np.random.default_rng(0))
+
+    def _tips():
+        out = []
+        for g in ("r2_gate_l", "r2_gate_r"):
+            gi = _mj.mj_name2id(_m, _mj.mjtObj.mjOBJ_GEOM, g)
+            R = _d.geom_xmat[gi].reshape(3, 3)
+            c = _d.geom_xpos[gi] * 1000.0
+            t = c + R @ np.array([R2.GATE_L / 2.0, 0.0, 0.0])
+            out.append(t[1] - 700.0)
+        return abs(out[0] - out[1])
+
+    for _ in range(12):
+        _link.step(20)
+    shut = _tips()
+    _link.gate(True)
+    for _ in range(30):
+        _link.step(20)
+    open_ = _tips()
+    _link.gate(False)
+    for _ in range(30):
+        _link.step(20)
+    shut2 = _tips()
+    check("the gate SHUT stops a patient leaving", shut < Piece.CYL_D - 2.0,
+          "%.1f mm gap vs a %.0f mm patient" % (shut, Piece.CYL_D))
+    check("the gate OPEN lets one in", open_ > Piece.CYL_D + 15.0,
+          "%.1f mm gap" % open_)
+    check("...and it shuts again", abs(shut2 - shut) < 3.0,
+          "%.1f then %.1f mm" % (shut, shut2))
+    check("the servo travels in a time a delivery can afford",
+          0.05 <= R2.GATE_T <= 0.6, "%.2f s" % R2.GATE_T)
 
     # ---- 3. holding() AGREES WITH THE POCKET IT TESTS ------------------
     # A seated puck sits at CAPTURE_X on the centreline; holding() must say

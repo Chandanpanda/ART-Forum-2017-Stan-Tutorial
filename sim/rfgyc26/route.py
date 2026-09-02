@@ -731,10 +731,8 @@ KIT_LOOP_Y   = 730.0                   # = station y - KIT_BACKOFF: the traverse
 # six-kit scatter reached 896 -- five millimetres out, and it cost the +20
 # distribution bonus.  At 965 the same scatter lands 30 mm inside, and the
 # robot's north edge is still 74 mm clear of the top wall.
-KIT_STATION = {"PCC_R": (903.0, 930.0),
-               "HOSP":  (711.5, 965.0),
-               "PCC_L": (240.0, 930.0)}
-KIT_HEADING = 90.0
+KIT_STATION = AgentA.KIT_STATION      # physical: see params
+KIT_HEADING = AgentA.KIT_HEADING
 # FAR ENOUGH THAT THE PIVOT CLEARS THE KITS IT JUST DROPPED.  They land 140 mm
 # to one side, so after reversing R the robot's centre is sqrt(140^2 + R^2) from
 # them, and the swept radius is 185 plus the kit's own 18 -- so R must exceed
@@ -1023,6 +1021,17 @@ def mission_agent_a(rb, holes, hole_y, chute_offset, log=print, clock=None,
     # robot 1 was about to drive through.
     rb.schedule = sched
     log(t() + "plan: %r" % (sched,))
+    # WHAT ROBOT 1 IS ABOUT TO OCCUPY, DECLARED (F124).  Robot 2 plans on
+    # the residual, and anything of robot 2's standing inside a region robot
+    # 1 holds is told to leave.  Robot 1 never waits for robot 2: it
+    # outranks it, and robot 2 is a detached actuator, so the executive's
+    # answer to an obstruction is to move robot 2.
+    TASK_REGIONS = {"L1": ["BOX"], "L2": [], "L3": [],
+                    "KH": ["PINCH_E", "HOSP"], "KL": ["PCC_L"],
+                    "BEAMS": ["SEAL"]}
+    flt = getattr(rb, "fleet", None)
+    if flt is not None:
+        flt.claim("r1", ["BOX", "SEAL"])      # the gun: the box and the sweep
     HOLE_OF = {"L1": 0, "L2": 1, "L3": 2}
     prev = "SWEEP"
     report = []
@@ -1032,6 +1041,9 @@ def mission_agent_a(rb, holes, hole_y, chute_offset, log=print, clock=None,
             break
         t0 = now()
         dl = sched.latest_start(task)
+        if flt is not None:
+            flt.release("r1")
+            flt.claim("r1", TASK_REGIONS.get(task, []))
         if task in HOLE_OF:
             i = HOLE_OF[task]
             aboard = sum(1 for nm, _, _ in sched.tasks if nm in HOLE_OF)
@@ -1070,6 +1082,8 @@ def mission_agent_a(rb, holes, hole_y, chute_offset, log=print, clock=None,
         if sched.tasks:
             log(t() + "  replanned: %r" % (sched,))
     rb.stop()
+    if flt is not None:
+        flt.release("r1")
     # THE STOPWATCH REPORT: model vs match, per task -- the analysis loop
     # built in, so a drifting cost model is seen the day it drifts, not
     # rediscovered three boards later.

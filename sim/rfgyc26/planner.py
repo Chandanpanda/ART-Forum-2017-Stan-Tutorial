@@ -288,8 +288,10 @@ def plan(t_now, at="SWEEP", todo=NODES, done=(), dur=None):
             # sealed quarantine leaves the robot in (F44) -- over a default
             # 8 s corridor that does not exist.  Measured, seed 4.
             continue
-        t = t_now + TRAVEL.get((at, name), 8.0) + dur[name]
-        if t <= MATCH_END + 1e-6:      # epsilon: sums this long carry float dust
+        start = t_now + TRAVEL.get((at, name), 8.0)
+        t = start + dur[name]
+        floor = BEAM2_TIME if name == "BEAMS" else dur[name]   # F127, below
+        if start + floor <= MATCH_END + 1e-6:   # epsilon: float dust
             m = 1 << idx[name]
             key = (m, idx[name])
             if t < best.get(key, 1e9):
@@ -308,8 +310,26 @@ def plan(t_now, at="SWEEP", todo=NODES, done=(), dur=None):
                     continue
                 if RANK[todo[nxt]] < RANK[todo[last]]:
                     continue           # the proven topology is one-way
-                t = t0 + TRAVEL.get((todo[last], todo[nxt]), 8.0) + dur[todo[nxt]]
-                if t > MATCH_END + 1e-6:
+                start = t0 + TRAVEL.get((todo[last], todo[nxt]), 8.0)
+                t = start + dur[todo[nxt]]
+                # THE SEAL IS TWO TASKS WEARING ONE NAME (F127).  dur is the
+                # mean of the WHOLE seal, and testing the whole of it against
+                # the buzzer makes a late seal infeasible rather than partial
+                # -- so the DP drops the 70-point task outright, and the
+                # mission ends with both beams still aboard and half a minute
+                # on the clock.  Measured, seed 3: robot 1 stopped at T+83.8
+                # holding both beams, and five seeds of twelve scored 0/70
+                # where beam 2 alone was there for the taking.
+                #
+                # seal_quarantine has always known better: it places beam 2,
+                # then attempts beam 1 only with BEAM1_TAIL left, and banks
+                # the 25 otherwise.  So the commitment the schedule must fit
+                # is beam 2's, not the seal's -- and the start-time pricing
+                # below already charges the missing 45 when beam 1 will not
+                # fit.  Admit it on the part that always gets attempted; let
+                # the value, not the calendar, decide whether it is worth it.
+                floor = BEAM2_TIME if todo[nxt] == "BEAMS" else dur[todo[nxt]]
+                if start + floor > MATCH_END + 1e-6:
                     continue
                 k2 = (mask | (1 << nxt), nxt)
                 if t < best.get(k2, 1e9):

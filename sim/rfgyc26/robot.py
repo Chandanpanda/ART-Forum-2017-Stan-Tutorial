@@ -31,6 +31,9 @@ class AgentARobot(hal.DriveHAL, hal.DeviceHAL):
         self.m, self.d = model, data
         self.rng = rng or np.random.default_rng(0)
         self.step_loss = step_loss
+        self.fleet = None            # set by the runner; see rfgyc26.fleet
+        self.fleet_name = "r1"
+        self.fleet_blocked = False
         # "model": the synthetic camera (geometry + the Vision error budget,
         # fast -- the regression double).  "render": real frames through
         # mujoco.Renderer into perception.LabPipeline -- the same pixels-in
@@ -207,7 +210,39 @@ class AgentARobot(hal.DriveHAL, hal.DeviceHAL):
         return float(w)
 
     def drive(self, v_mm_s, omega_deg_s):
-        """Differential drive.  Wheel speeds are quantised to whole steps/s."""
+        """Differential drive.  Wheel speeds are quantised to whole steps/s.
+
+        ROBOT 1 NEVER BRAKES FOR ROBOT 2 (F125).  This is the whole of the
+        collision protocol on this side, and the omission is the design.
+
+        It used to stop here, mirroring a stop on robot 2's side, and two
+        agents that both yield do not avoid each other -- they wedge.  Seed
+        3, rendered: from T+72 the two chassis are in contact in the
+        north-west and neither moves again for forty-eight seconds, robot 1
+        holding a beam it never seals.  Robot 1 stopped because robot 2 was
+        near; robot 2 could not leave because robot 1's body was the wall.
+        The wait-for graph had a cycle, so it deadlocked, and no amount of
+        adjusting the standoff removes a cycle.
+
+        Prioritised planning (Erdmann and Lozano-Perez) breaks it by making
+        the graph acyclic: the high-priority agent plans as though the other
+        does not exist and simply executes; the low-priority agent plans in
+        the space-time complement of that published trajectory and carries
+        the entire avoidance burden.  Exactly one agent ever waits, so
+        nothing can wait on a waiter.
+
+        Robot 1 is that high-priority agent -- its stations are worth 18 to
+        45 points for 10 to 35 seconds, against robot 2's +8 patient -- so
+        all it owes the fleet is to say where it is, loudly and every tick,
+        which is the observe() below.  Being predictable IS its half of the
+        contract.  See rfgyc26.fleet for robot 2's half.
+        """
+        if self.fleet is not None:
+            x, y, th = self.pose
+            self.fleet.observe(self.fleet_name, (x, y, th), vel=abs(v_mm_s))
+            # and that is all.  No veto: see the docstring.  fleet_blocked
+            # stays False for the runners and probes that report on it.
+            self.fleet_blocked = False
         self._odo_flush()
         v, w = v_mm_s/1000.0, np.radians(omega_deg_s)
         wl = (v - w*HALF_TRACK) / WHEEL_R

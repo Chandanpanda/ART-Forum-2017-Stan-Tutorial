@@ -585,6 +585,34 @@ class Robot2:
     # where a captured puck's centre sits, ahead of the axle
     CAPTURE_X       = STOP_X + 12.0
 
+    # THE GATE: ONE SERVO, AND IT IS WHAT MAKES HALF THE PATIENTS REACHABLE
+    # (F123).  Six of the twelve stand 80 mm off a side wall.  Capturing one
+    # leaves the nose 27 mm from that wall, facing it, with no forward arc
+    # out -- checked against the body footprint, not guessed -- so the only
+    # way to leave is backwards, and backwards needs something holding the
+    # patient in.
+    #
+    # A PASSIVE gate cannot do it, and that is measured, not assumed.  Flaps
+    # raked back across the throat retain perfectly (patient still aboard
+    # after 250 mm of reverse, 6 of 6) and cannot then be released by two
+    # drive motors: shake, spin, spin-and-reverse and wiggle all scored 0/3,
+    # and softening the spring until release works also softens it below the
+    # 0.025 N of floor drag that retention needs.  Entry and release are both
+    # driven THROUGH the puck, so they share one force budget and a passive
+    # gate has nowhere to put the asymmetry.
+    #
+    # One 9 g servo puts the asymmetry in the actuator instead: open to take
+    # a patient, closed to keep it through a reverse and a carry, open to let
+    # it go.  Both flaps run off the one horn through a pushrod, which is why
+    # there is a single GATE_* set of numbers and two mirrored joints.
+    GATE_X          = STOP_X + POCKET_D + 8.0   # hinge, ahead of the walls
+    GATE_L          = 18.0                   # hinge to tip
+    GATE_SHUT       = 35.0                   # degrees inward from -x, closed
+    GATE_OPEN       = 62.0                   # degrees of travel to clear
+    GATE_KP         = 0.9                    # servo position gain, N.m/rad
+    GATE_DAMP       = 0.004
+    GATE_T          = 0.28                   # seconds horn to horn (SG90)
+
     # THE POCKET HAS TO BE EMPTY (F108).  It was not.  The chassis deck ran
     # from x -55 to x +95 at z 9..15 -- twenty-five millimetres PAST the
     # flare tips, straight through the height band a 21 mm patient occupies
@@ -645,7 +673,13 @@ class Robot2:
     CMD_HZ          = 20.0
     DEADMAN_S       = 0.25
 
-    START_POSE      = (1055.0, 140.0, 90.0)  # deployment box, east half
+    # 68 mm of clearance to robot 1, not 34 (F124).  The two chassis
+    # spawned close enough that either one MOVING touched the other --
+    # A_rear against r2_flare_l, eight tenths of a second into the
+    # match -- and no amount of collision logic recovers a fleet that
+    # starts in contact.  This is the best the 480 mm box affords with
+    # robot 1's 285 mm chassis in it.
+    START_POSE      = (1060.0, 175.0, 90.0)  # deployment box, east half
                                              # (F82/F95): PCC_R is one run
                                              # north-west of here, robot
                                              # 1's world is never entered.
@@ -659,6 +693,17 @@ class AgentA:
     L, W, H         = 285.0, 235.0, 175.0
     AXLE_X          = 142.5            # fore-aft centroid; local origin
     MASS            = 2600.0 - Piece.BEAM1_M - Piece.BEAM2_M   # chassis only
+
+    # WHERE THE CHASSIS STANDS TO DISCHARGE A HOPPER.  Here rather than in
+    # route.py because robot 2 needs it too: these three rectangles are the
+    # floor robot 1 will occupy in three of the four destination zones, and
+    # a patient placed inside one of them is a patient robot 1 will push
+    # (F126).  Heading is +90 at every station, so the body spans
+    # x +- W/2 and y +- L/2 about the point.
+    KIT_STATION  = {"PCC_R": (903.0, 930.0),
+                    "HOSP":  (711.5, 965.0),
+                    "PCC_L": (240.0, 930.0)}
+    KIT_HEADING  = 90.0
 
     SWEEP_PIVOT_X   = 278.0
     # F20.  The fingers pivot at the NOSE and reach aft, so "open" (tips outboard
@@ -1193,7 +1238,10 @@ class AgentA:
     BEAM2_STATION   = (177.5, 142.5,  90.0)   # 5 inboard, per spec 7
     BEAM_BACKOFF    = 45.0
 
-    START_POSE      = (830.0, 140.0, 180.0)   # field x, y, heading deg
+    START_POSE      = (800.0, 140.0, 180.0)   # field x, y, heading deg
+                                              # 30 mm west of where it
+                                              # used to sit, to give
+                                              # robot 2 room (F124)
     # (was 974.5: shifted west in step 7 so robot 2 gets the east half of
     #  the deployment box -- the doc's F82 posture, "robot 2 starts against
     #  the east wall".  The exit drive only shortens; the sweep is west.)

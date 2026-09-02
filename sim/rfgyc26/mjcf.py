@@ -1222,6 +1222,35 @@ def robot2_body(pose=None):
         f'euler="0 0 {-R2.FLARE_ANG:.1f}" '
         f'size="{mm(R2.FLARE_L/2):.5f} {mm(3.0):.5f} {mm(R2.PLOW_H/2):.5f}" '
         f'mass="0.008" rgba="0.85 0.55 0.15 1"/>',
+        # THE GATE (F123): two flaps raked inward and BACKWARD across the
+        # throat, driven together off one servo horn through a pushrod.  A
+        # patient shoulders past nothing on the way in -- the gate is open;
+        # it closes behind, and the robot can then REVERSE out of a corner
+        # with its cargo, which is the whole reason the inner patient
+        # columns are reachable at all.  Passive flaps were tried first and
+        # could not be released by the drive motors (see params.Robot2).
+        f'  <body name="r2_gate_lb" pos="{mm(R2.GATE_X):.5f} '
+        f'{mm(R2.POCKET_W/2):.5f} {mm(plow_zc):.5f}" '
+        f'euler="0 0 {180.0 + R2.GATE_SHUT:.1f}">',
+        f'    <joint name="r2_gj_l" type="hinge" axis="0 0 1" '
+        f'range="{-R2.GATE_OPEN:.0f} 0" damping="{R2.GATE_DAMP:.5f}" '
+        f'armature="0.0000004"/>',
+        f'    <geom name="r2_gate_l" class="robot" type="box" '
+        f'pos="{mm(R2.GATE_L/2):.5f} 0 0" '
+        f'size="{mm(R2.GATE_L/2):.5f} {mm(1.5):.5f} {mm(R2.PLOW_H/2 - 2):.5f}" '
+        f'mass="0.003" rgba="0.95 0.65 0.1 1"/>',
+        f'  </body>',
+        f'  <body name="r2_gate_rb" pos="{mm(R2.GATE_X):.5f} '
+        f'{mm(-R2.POCKET_W/2):.5f} {mm(plow_zc):.5f}" '
+        f'euler="0 0 {180.0 - R2.GATE_SHUT:.1f}">',
+        f'    <joint name="r2_gj_r" type="hinge" axis="0 0 1" '
+        f'range="0 {R2.GATE_OPEN:.0f}" damping="{R2.GATE_DAMP:.5f}" '
+        f'armature="0.0000004"/>',
+        f'    <geom name="r2_gate_r" class="robot" type="box" '
+        f'pos="{mm(R2.GATE_L/2):.5f} 0 0" '
+        f'size="{mm(R2.GATE_L/2):.5f} {mm(1.5):.5f} {mm(R2.PLOW_H/2 - 2):.5f}" '
+        f'mass="0.003" rgba="0.95 0.65 0.1 1"/>',
+        f'  </body>',
         # kit tray: tilted floor, side+front rails, low tail lip
         f'  <geom name="r2_tray" class="robot" type="box" '
         f'pos="{mm(R2.TRAY_X):.5f} 0 {mm(tray_zc):.5f}" euler="0 {R2.TRAY_TILT:.1f} 0" '
@@ -1277,7 +1306,15 @@ def robot2_body(pose=None):
     act = (f'\n    <motor name="r2_drive_l" joint="r2_w_l" gear="1" '
            f'ctrlrange="{-tmax:.4f} {tmax:.4f}"/>'
            f'\n    <motor name="r2_drive_r" joint="r2_w_r" gear="1" '
-           f'ctrlrange="{-tmax:.4f} {tmax:.4f}"/>')
+           f'ctrlrange="{-tmax:.4f} {tmax:.4f}"/>'
+           # The gate servo, as a POSITION actuator: an SG90 is a position
+           # device and modelling it as anything else would be a controller
+           # we could never ship.  Two joints, one horn, one command -- the
+           # pushrod is a real part, not a modelling convenience.
+           f'\n    <position name="r2_gate_l_srv" joint="r2_gj_l" '
+           f'kp="{R2.GATE_KP:.3f}" ctrlrange="{-radians(R2.GATE_OPEN):.4f} 0"/>'
+           f'\n    <position name="r2_gate_r_srv" joint="r2_gj_r" '
+           f'kp="{R2.GATE_KP:.3f}" ctrlrange="0 {radians(R2.GATE_OPEN):.4f}"/>')
     return "\n".join(parts), act
 
 
@@ -1391,6 +1428,11 @@ def scene_full_match(disc_positions, robot_pose=None, rng=None, kits_aboard=True
             for g in ("r2_flare_l", "r2_flare_r"):
                 extra.append(f'    <pair geom1="{g}" geom2="cyl{i}_g" '
                              f'friction="0.06 0.06 0.0005 0.0001 0.0001" '
+                             f'solref="0.004 1" solimp="0.95 0.99 0.001"/>')
+            # the gate flaps are slick: they are a door, not a grip
+            for g in ("r2_gate_l", "r2_gate_r"):
+                extra.append(f'    <pair geom1="{g}" geom2="cyl{i}_g" '
+                             f'friction="0.08 0.08 0.0005 0.0001 0.0001" '
                              f'solref="0.004 1" solimp="0.95 0.99 0.001"/>')
         # the tray floor is smooth ABS: kits ride it through every transit
         # (the controller slews its commands, ~2-3 m/s^2) and the SHAKE's

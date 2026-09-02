@@ -48,12 +48,18 @@ def brute_best(t0, at="SWEEP", done=()):
                 t, prev, ok, seal_start = t0, at, True, None
                 for name in order:
                     t += planner.TRAVEL.get((prev, name), 8.0)
+                    # F127: the seal is two tasks wearing one name, and what
+                    # has to fit before the buzzer is beam 2's commitment.
+                    # Beam 1 is attempted only if BEAM1_TAIL is left, and the
+                    # start-time pricing below charges for it when it is not.
+                    floor = planner.BEAM2_TIME if name == "BEAMS" \
+                        else planner.DUR[name]
+                    if t + floor > planner.MATCH_END + 1e-6:
+                        ok = False
+                        break
                     if name == "BEAMS":
                         seal_start = t
                     t += planner.DUR[name]
-                    if t > planner.MATCH_END + 1e-6:
-                        ok = False
-                        break
                     prev = name
                 if not ok:
                     continue
@@ -258,9 +264,29 @@ def main():
                          done=["L1", "L2"])
     late = planner.plan(78.0, at="KH", todo=["KL", "BEAMS"], done=["L1", "KH"])
     starts = {n: t for n, t, _ in late.tasks}
+    # Test the price of the SEAL, not the total of the plan it rides in:
+    # once a late seal is admitted (F127) the tour can afford PCC_L beside
+    # it, and a threshold on late.value then fails for the right answer.
+    late_nb = planner.plan(78.0, at="KH", todo=["KL"], done=["L1", "KH"])
+    worth = late.value - late_nb.value
     check("a seal that cannot finish both beams is priced at 25, not 70",
           ("BEAMS" not in starts) or starts["BEAMS"] <= planner.BEAM_FULL_BY
-          or late.value < 60.0, repr(late))
+          or abs(worth - (planner.BEAM_SEAL_VALUE - planner.BEAM1_VALUE))
+          < 1e-6, "%r -- seal worth %+.0f" % (late, worth))
+    # F127.  The DP used to test the seal's FULL duration against the buzzer,
+    # so a late robot found it infeasible and dropped it: measured, five
+    # seeds of twelve ended with both beams still aboard and half a minute
+    # on the clock, scoring 0 where beam 2 alone was worth 25.
+    done4 = ["L1", "L2", "KH", "KL"]
+    partial = planner.plan(90.0, at="KL", todo=["BEAMS"], done=done4)
+    check("a seal too late for beam 1 is still attempted for beam 2",
+          "BEAMS" in [n for n, _, _ in partial.tasks], repr(partial))
+    check("...and priced at 25 when it is",
+          abs(partial.value - (planner.BEAM_SEAL_VALUE
+                               - planner.BEAM1_VALUE)) < 1e-6, repr(partial))
+    hopeless = planner.plan(100.0, at="KL", todo=["BEAMS"], done=done4)
+    check("...and refused once even beam 2 cannot land",
+          "BEAMS" not in [n for n, _, _ in hopeless.tasks], repr(hopeless))
     check("...and one that can is still worth taking early", "BEAMS" in
           [n for n, _, _ in early.tasks], repr(early))
 

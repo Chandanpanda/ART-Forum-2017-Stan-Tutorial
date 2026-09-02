@@ -19,6 +19,7 @@ from rfgyc26 import mjcf, referee, robot2
 from rfgyc26.params import Field, AgentA, M2
 from rfgyc26.robot import AgentARobot
 from rfgyc26.route import mission_agent_a
+from rfgyc26 import fleet as fleetmod
 
 CHUTE_OFFSET = AgentA.AXLE_X - AgentA.CHUTE_X
 CTRL_DECIM = 20
@@ -51,11 +52,15 @@ def main():
     rb = AgentARobot(m, d, rng=rng)
     link = robot2.SimLink(m, d, rng=np.random.default_rng(a.seed + 5000))
     spot = robot2.sim_spot(m, d, np.random.default_rng(a.seed + 9000))
+    FLT = fleetmod.Fleet()
+    FLT.join('r1', 185.0)
+    FLT.join('r2', robot2.R2_CIRCUM)
+    rb.fleet = FLT
     ctl = robot2.R2Controller(link, spot, clock=lambda: d.time)
     g1 = mission_agent_a(rb, list(Field.LAB_HOLE_X), mjcf.LAB_HOLE_Y,
                          CHUTE_OFFSET, log=print, clock=lambda: d.time,
                          discs=discs0)      # the opening survey plans the sweep
-    g2 = robot2.mission_robot2(ctl, m, d=d, rb=rb, log=print, clock=lambda: d.time)
+    g2 = robot2.mission_robot2(ctl, m, d=d, rb=rb, flt=FLT, log=print, clock=lambda: d.time)
 
     shown = {"xray": a.xray}
     mjcf.set_xray(m, a.xray)
@@ -89,6 +94,7 @@ def main():
         # the link advances physics with the wheel servo closed around each
         # substep -- a driver that also stepped would run the sim at double
         # rate and halve every control loop's effective frequency
+        FLT.track(rb, ctl, t=d.time)
         link.step(CTRL_DECIM)
         k += 1
         if viewer is not None and k % 2 == 0:

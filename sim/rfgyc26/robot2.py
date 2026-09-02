@@ -25,8 +25,8 @@ Three layers, split exactly where the hardware splits:
     push whose tolerance is the plow's width.
 """
 import numpy as np
-from . import hal, nav, trajectory
-from .params import Robot2 as R2, Field
+from . import hal, nav, trajectory, fleet as fleetmod
+from .params import Robot2 as R2, Field, Piece
 
 R2_INSCRIBED = 75.0        # no orientation fits inside this
 R2_CIRCUM = 98.0          # every orientation fits outside it
@@ -102,6 +102,14 @@ class SimLink(hal.LinkHAL):
         rng = rng or np.random.default_rng(0)
         self._al = _aid(m, "r2_drive_l")
         self._ar = _aid(m, "r2_drive_r")
+        try:
+            self._ag_l = _aid(m, "r2_gate_l_srv")
+            self._ag_r = _aid(m, "r2_gate_r_srv")
+        except Exception:
+            self._ag_l = self._ag_r = None
+        self._gate_want = 0.0                # 0 shut, 1 open
+        self._gate_at = 0.0
+        self._gate_t0 = 0.0
         import mujoco
         self._jl = m.jnt_dofadr[mujoco.mj_name2id(
             m, mujoco.mjtObj.mjOBJ_JOINT, "r2_w_l")]
@@ -134,6 +142,11 @@ class SimLink(hal.LinkHAL):
             self._shake_t0 = now
             self._shake = now + n * 0.55     # n ratchet cycles
             self._vl = self._vr = 0.0
+        elif f[0] == "G" and len(f) == 2:
+            # the servo takes GATE_T to travel; the firmware just writes the
+            # pulse width and the horn gets there when it gets there
+            self._gate_want = 1 if int(f[1]) else 0
+            self._gate_t0 = now
 
     def recv(self):
         """`O <ticks_l> <ticks_r>` -- the return direction the first build
@@ -178,6 +191,16 @@ class SimLink(hal.LinkHAL):
         # a 12-seed board took ten minutes.  The servo runs at SERVO_HZ and
         # mj_step loops in C between ticks, which is both 5x faster and a
         # more honest model of a Pico running MicroPython.
+        # the gate servo, slewed at the horn's real speed
+        if self._ag_l is not None:
+            frac = 1.0 if R2.GATE_T <= 0 else min(
+                1.0, (now - self._gate_t0) / R2.GATE_T)
+            here = self._gate_at + (self._gate_want - self._gate_at) * frac
+            if frac >= 1.0:
+                self._gate_at = float(self._gate_want)
+            span = np.radians(R2.GATE_OPEN)
+            self.d.ctrl[self._ag_l] = -span * here
+            self.d.ctrl[self._ag_r] = span * here
         step = float(self.m.opt.timestep)
         every = max(1, int(round(1.0 / (R2.SERVO_HZ * step))))
         left = max(1, n)
@@ -242,7 +265,10 @@ class R2Controller:
 
     def __init__(self, link, spot, clock, cmap=None):
         self.link, self.spot, self.clock = link, spot, clock
+        self.fleet = None          # rfgyc26.fleet.Fleet, set by the runner
+        self.fleet_name = "r2"
         self.cmap = cmap
+        self.escaping = False
         # THE BELIEF IS BORN LAZILY, on first use -- not here (F99).  A pose
         # read at construction time comes from an un-forwarded MjData and is
         # all zeros, so every plan started from the south-west corner and the
@@ -297,6 +323,12 @@ class R2Controller:
         self._birth()
         self._integrate()
         self._maybe_fix()
+        # tell the executive where we are, every control tick.  This is the
+        # only thing robot 2 owes the fleet, and it is what lets robot 1
+        # refuse to drive into it (F124).
+        if self.fleet is not None:
+            self.fleet.observe(self.fleet_name, (self.x, self.y, self.th),
+                               vel=abs(self._cmd[0] + self._cmd[1]) / 2.0)
 
     @property
     def pose(self):
@@ -304,11 +336,86 @@ class R2Controller:
         return self.x, self.y, self.th
 
     # ---- wire ------------------------------------------------------------
+    # ---- the escape reflex ----------------------------------------------
+    ESC_V = 220.0             # mm/s of retreat -- brisk, this is a reflex
+    ESC_K = 2.2               # deg/s of turn per degree of bearing error
+    ESC_MARGIN = 10.0         # mm of slack on top of the two radii
+
+    def _closing_hazard(self):
+        """The nearest other-robot footprint inside the reflex bubble, or None.
+
+        Measured positions only.  A prediction belongs in the costmap, where
+        a planner can route round it; down here a prediction is just a way
+        to flinch at something that is not there (F124).
+        """
+        best, bd = None, 1e9
+        me = self.fleet.agents.get(self.fleet_name)
+        rad = me.radius if me else R2_CIRCUM
+        for hx, hy, hr in self.fleet.hazard(self.fleet_name, horizon=0.0):
+            d = float(np.hypot(hx - self.x, hy - self.y))
+            if d < hr + rad + self.ESC_MARGIN and d < bd:
+                best, bd = (hx, hy, hr), d
+        return best
+
+    def _escape(self, haz):
+        """Wheel speeds that strictly increase separation from `haz`.
+
+        Reversing straight out is right only when the hazard is dead ahead;
+        from a glancing bearing it walks the tail into it.  Distance grows
+        at -v.cos(b) for a bearing b, so the sign of v follows the sign of
+        cos(b) -- back away from something in front, drive away from
+        something behind -- and the turn drives |b| to 0 or 180, which is
+        where that rate is largest.  One command, and it converges from any
+        relative bearing.
+
+        The arc is checked against the static map before it is sent, and the
+        other sign tried if it is blocked: a reflex that reverses into a
+        wall has only changed which obstacle it hits.
+        """
+        b = np.radians(self.th)
+        brg = np.arctan2(haz[1] - self.y, haz[0] - self.x) - b
+        brg = (brg + np.pi) % (2*np.pi) - np.pi
+        ahead = abs(brg) <= np.pi/2
+        # err: how far to swing the nose so the escape runs along the axis
+        want = 0.0 if ahead else np.copysign(np.pi, brg)   # aim the axis
+        err = np.degrees(brg - want)
+        body = None
+        if self.cmap is not None:
+            body = self.cmap.inflated(6.0, 8.0)
+        for sgn in ((-1.0, 1.0) if ahead else (1.0, -1.0)):
+            v = sgn * self.ESC_V
+            if body is not None:
+                a2 = b + np.radians(np.clip(self.ESC_K*err, -120.0, 120.0)) * 0.3
+                nx = self.x + v * 0.30 * np.cos(a2)
+                ny = self.y + v * 0.30 * np.sin(a2)
+                if self._hits(nx, ny, a2, body):
+                    continue
+            w = float(np.clip(self.ESC_K * err, -R2.W_MAX, R2.W_MAX))
+            dv = np.radians(w) * R2.TRACK / 2.0
+            return (float(np.clip(v - dv, -R2.V_MAX, R2.V_MAX)),
+                    float(np.clip(v + dv, -R2.V_MAX, R2.V_MAX)))
+        return (0.0, 0.0)          # boxed in: hold, and let robot 1 pass
+
     def _drive(self, v, w):
         """(v mm/s, w deg/s) -> wheel speeds -> the wire, at 20 Hz."""
         dv = np.radians(w) * R2.TRACK / 2.0
         vl = float(np.clip(v - dv, -R2.V_MAX, R2.V_MAX))
         vr = float(np.clip(v + dv, -R2.V_MAX, R2.V_MAX))
+        # THE ESCAPE REFLEX (F125).  This layer used to zero the command,
+        # mirroring a veto on robot 1's side, and two agents that both stop
+        # for each other wedge instead of avoiding: rendered on seed 3 they
+        # sat in contact from T+72 to the end of the match.  Robot 1 no
+        # longer brakes at all, so the whole avoidance burden is here -- and
+        # a burden discharged by standing still is not discharged.  Robot 2
+        # therefore MOVES AWAY, which is the one response that cannot
+        # deadlock: it strictly increases separation every tick it runs.
+        if self.fleet is not None:
+            haz = self._closing_hazard()
+            if haz is not None:
+                vl, vr = self._escape(haz)
+                self.escaping = True
+            else:
+                self.escaping = False
         self._cmd = (vl, vr)
         if self._tick % _CMD_EVERY == 0:
             self.link.cmd(vl, vr, 150)
@@ -580,10 +687,31 @@ class R2Controller:
                 return True
         return False
 
+    def gate(self, open_, settle=None):
+        """Drive the capture gate and wait for the horn to arrive."""
+        self.link.gate(open_)
+        for _ in range(int((R2.GATE_T if settle is None else settle)
+                           * hal.Clock.HZ) + 4):
+            self.tick()
+            yield
+
+    def release(self, mm_=150.0):
+        """Let a patient go: open the gate, then back away from it.
+
+        This is the half a passive pocket could not do (F123).  With the
+        gate shut the patient is captive through a reverse -- which is what
+        makes the inner columns reachable -- so it has to be told when to
+        stop being captive."""
+        yield from self.gate(True)
+        yield from self.back_off(mm_)
+        yield from self.gate(False)
+
     def capture(self, px, py, cap_s=5.0):
         """Close the last ~120 mm onto a patient so it seats in the pocket.
         Straight, slow, and blind to the costmap on purpose: the target IS
-        an obstacle and we mean to touch it."""
+        an obstacle and we mean to touch it.  The gate opens to take it and
+        shuts behind it."""
+        yield from self.gate(True)
         for _ in range(int(cap_s * hal.Clock.HZ)):
             dx, dy = px - self.x, py - self.y
             n = float(np.hypot(dx, dy))
@@ -594,12 +722,13 @@ class R2Controller:
                         float(np.clip(1.4 * err, -40.0, 40.0)))
             self.tick()
             yield
-        # settle against the stop
+        # settle against the stop, THEN shut the gate behind it
         for _ in range(int(0.4 * hal.Clock.HZ)):
             self._drive(110.0, 0.0)
             self.tick()
             yield
         self.stop()
+        yield from self.gate(False)
         for _ in range(3):
             self.tick(); yield
 
@@ -745,6 +874,7 @@ ZONES = {"HOSP": (511.0, 941.0, 631.0, 1141.0),
          "RECOVERY": (730.0, 200.0, 870.0, 260.0),
          "PCC_L": (40.0, 1021.0, 160.0, 1141.0),
          "PCC_R": (983.0, 1021.0, 1103.0, 1141.0)}
+ZONE_NAME = {v: k for k, v in ZONES.items()}   # rect -> name, for the chooser
 DEST = {"red": "HOSP", "green": "RECOVERY"}
 
 # ROBOT 1'S RESERVATIONS, read from robot 1's own live plan (F112).
@@ -886,11 +1016,19 @@ def zone_of(colour, x):
     return ZONES[DEST[colour]]
 
 
-def _board_map(pucks, skip=None, sched=None, t_now=0.0):
-    """A fresh costmap with robot 1's reservations and every patient except
-    the one(s) being handled.  skip is an index or a set of them."""
+def _board_map(pucks, skip=None, sched=None, t_now=0.0, flt=None):
+    """A fresh costmap with robot 1's reservations, robot 1's LIVE position,
+    and every patient except the one(s) being handled.
+
+    The reservations are a promise about the future; the live stamp is a
+    measurement of the present (F124).  Robot 2 needs both, and it had
+    neither of the second: it set off across robot 1's tail in the first
+    second of the match because robot 1 simply was not on its map.
+    """
     cm = nav.CostMap.field()
     robot1_reservations(cm, schedule=sched, t_now=t_now)
+    if flt is not None:
+        flt.stamp(cm, "r2", horizon=1.6)
     drop = set() if skip is None else (
         {skip} if isinstance(skip, (int, np.integer)) else set(skip))
     for i, x, y, c in pucks:
@@ -977,51 +1115,101 @@ def _board_map(pucks, skip=None, sched=None, t_now=0.0):
 # there is worth its full +8.  Robot 2 closes each zone at robot 1's
 # scheduled arrival, with a margin, and never reopens it.
 #
-# THE WINDOW WAS TRIED, AND THE BOARD SAID NO.  Opening HOSPITAL and
-# PCC_L until robot 1's scheduled arrival is a defensible idea and it lost
-# 34 points a match: kits 19.75 -> 3.0, beams 58.75 -> 33.3, for a patient
-# column that gained 2.5.  An empty rectangle is not a safe one -- robot 2
-# leaves a patient standing in the spot robot 1 must drive through to make
-# its drop, and it is still in the neighbourhood when robot 1 arrives.  The
-# original arithmetic was right and did not need re-litigating: +8 of
-# upside against -48 of downside is not a trade, whatever the clock says.
+# THE WINDOW WAS TRIED ONCE AND THE BOARD SAID NO -- to the mechanism, not
+# to the idea.  Opening HOSPITAL and PCC_L until robot 1's scheduled arrival
+# lost 34 points a match: kits 19.75 -> 3.0, beams 58.75 -> 33.3, for 2.5
+# points of patients.  The diagnosis then was "an empty rectangle is not a
+# safe one -- robot 2 leaves a patient standing in the spot robot 1 must
+# drive through".  That diagnosis was right, and it is a statement about a
+# robot that PUSHED: a plow cannot choose where a puck comes to rest, so
+# "put it in the zone" was the whole of the placement policy and the zone
+# is only 120 mm of usable width.
 #
-#     RECOVERY   the only destination zone that never holds kits
-#     everything else belongs to robot 1
+# Two things have changed since, and both bear directly on it.  The gate
+# means robot 2 now PLACES a patient at a chosen point rather than shoving
+# it to a stop, and fleet.kit_hazard means the point can be chosen against
+# a model of the floor robot 1 actually needs -- which is well under half
+# of each zone, because robot 1 parks BESIDE a zone and discharges over its
+# flank rather than driving in.  _zone_pt maximises clearance from that
+# floor, from the kit pile beside it, and from every patient already down.
 #
-# The gate below stays because it is the correct MECHANISM -- it is what
-# would let a future robot 2 with a deeper tray share a zone safely -- but
-# the list it filters is one entry long.
-R2_ZONES = ("RECOVERY",)
+# And the arithmetic says this is not optional.  Against the referee:
+#
+#     robot 2 in RECOVERY only         patients  +2      board ceiling ~142
+#     + HOSPITAL                       patients +40      board ceiling ~180
+#     + both PCCs                      patients +80      board ceiling  250
+#
+# All twelve patients start outside every destination zone, which is -36
+# before either robot moves.  RECOVERY holds four of them, so the partition
+# that reserved every other zone for robot 1 caps the patient column at +2
+# and the whole board around 142 -- the target is out of reach by
+# construction, however well the two robots drive.  A -34 experiment is a
+# reason to change the mechanism, not a reason to accept a ceiling.
+R2_ZONES = ("RECOVERY", "HOSP", "PCC_L", "PCC_R")
 ZONE_TASK = {"HOSP": "KH", "PCC_L": "KL"}
 CLOSE_MARGIN = 10.0        # be out before robot 1 sets off, not as it arrives
+REOPEN_MARGIN = 4.0        # and back in only once it has actually gone
 
 
-def zone_open(zname, now, sched):
-    """May robot 2 still deliver into this zone?"""
+def _r1_clear(zname, flt):
+    """Is robot 1 physically out of that rectangle right now?"""
+    if flt is None:
+        return True
+    a = flt.agents.get("r1")
+    if a is None or a.pose is None:
+        return True
+    box = fleetmod.REGIONS.get(zname)
+    if box is None:
+        return True
+    r = a.radius
+    return not (box[0]-r <= a.pose[0] <= box[2]+r and
+                box[1]-r <= a.pose[1] <= box[3]+r)
+
+
+def zone_open(zname, now, sched, flt=None):
+    """May robot 2 deliver into this zone right now?
+
+    Three windows, not one.  Robot 1 visits a kit zone once, for about ten
+    seconds, somewhere near the middle of the match; the rectangle is
+    robot 2's before that and robot 2's again afterwards, and the second
+    window is the larger of the two.  The old test knew only the first and
+    read "not in the plan any more" -- which is what a FINISHED task looks
+    like -- as a reason to stay out for good.
+    """
     if zname not in R2_ZONES:
         return False
     task = ZONE_TASK.get(zname)
     if task is None:
-        return True
+        return True                       # RECOVERY, PCC_R: no robot 1 kits
     if sched is None or not getattr(sched, "tasks", None):
         from . import planner
         sched = planner.plan(planner.SWEEP_NOMINAL, at="SWEEP")
-    for name, t0, _dur in sched.tasks:
+    from . import planner
+    travel = planner.TRAVEL.get(("L3", task), 8.0)
+    for name, t0, dur in sched.tasks:
         if name == task:
-            from . import planner
-            travel = planner.TRAVEL.get(("L3", task), 8.0)
-            return now < t0 - travel - CLOSE_MARGIN
-    return False           # not in the plan any more: it has been or is done
+            if now < t0 - travel - CLOSE_MARGIN:
+                return True               # robot 1 has not set off yet
+            if now > t0 + dur + REOPEN_MARGIN:
+                return _r1_clear(zname, flt)
+            return False                  # it is on its way, or there
+    # Not in the plan: robot 1 has either finished the task or dropped it
+    # under time pressure.  Either way nothing more is coming, so the only
+    # question left is whether it is still standing in the rectangle.
+    return _r1_clear(zname, flt)
 
+
+HOLD = (1085.0, 880.0)     # the north-east dead corner
 CARRY_V = 190.0            # F106: arcs only, never a pivot, with a puck
 CARRY_W = 90.0
 APPROACH_V = 330.0
 
 
-def _zone_pt(zone, puck):
-    """Where inside the zone to put this patient: the nearest point that is
-    COMFORTABLY inside, not merely inside.
+EDGE_HARD = 12.0           # ZONES is already inset 40 mm from the tape
+
+
+def _zone_pt(zone, puck, zname=None, avoid=()):
+    """Where inside the zone to put this patient.
 
     35 mm of inset was arithmetic, not engineering.  The carry ends when
     the tracker is within its 55 mm tolerance and the release then backs
@@ -1030,12 +1218,58 @@ def _zone_pt(zone, puck):
     x 691 against RECOVERY's edge at 700, nine millimetres short, for
     nothing.  Inset by the tolerance instead, and collapse to the middle
     when the zone is too small to allow it (RECOVERY is only 80 mm deep).
+
+    INSIDE THE TAPE IS NOT ENOUGH IN A SHARED ZONE (F126).  Three of the
+    four destination zones also take robot 1's kits, and a patient left on
+    the floor robot 1 parks on is a patient robot 1 shoulders back out --
+    that is what cost 34 points a match the first time these zones were
+    opened.  Robot 1's floor is known (fleet.kit_hazard: it parks beside
+    the zone and discharges over its flank, so it covers well under half of
+    one), so the choice is made by clearance rather than by proximity:
+    among the legal points, take the one furthest from everything already
+    down, and break ties by the shortest carry.  With nothing down yet that
+    is the middle of the free floor, which is exactly right.
     """
-    out = []
-    for lo, hi, p in ((zone[0], zone[2], puck[0]), (zone[1], zone[3], puck[1])):
-        inset = min(70.0, (hi - lo) / 2.0 - 5.0)
-        out.append(float(np.clip(p, lo + inset, hi - inset)))
-    return out[0], out[1]
+    lo = []
+    for a, b in ((zone[0], zone[2]), (zone[1], zone[3])):
+        # RECOVERY is 60 mm deep in ZONES terms and must hold four: an
+        # inset that is generous in a 200 mm box leaves nothing in a 60 mm
+        # one, so it yields once the zone is the smaller constraint.
+        inset = min(EDGE_HARD, (b - a) / 2.0 - 20.0)
+        lo.append((a + inset, b - inset))
+    (x0, x1), (y0, y1) = lo
+    haz = fleetmod.kit_hazard(zname, pad=Piece.CYL_D/2.0 + 20.0) if zname else []
+    best, bs = None, -1e18
+    for x in np.linspace(x0, x1, 21):
+        for y in np.linspace(y0, y1, 21):
+            if fleetmod.covered(haz, x, y):
+                continue
+            clear = min((float(np.hypot(x-ax, y-ay)) for ax, ay in avoid),
+                        default=400.0)
+            if clear < Piece.CYL_D + 5.0:   # 20 mm bodies: do not touch
+                continue
+            edge = min(x-zone[0], zone[2]-x, y-zone[1], zone[3]-y)
+            # Keeping off the tape and keeping off the last patient are the
+            # same requirement, so they are the same term: the worst of the
+            # two, capped where more room stops helping.  Then the shorter
+            # carry, at a millimetre of score per centimetre of drive.
+            sc = min(clear, edge, 90.0) - 0.1*float(np.hypot(x-puck[0],
+                                                             y-puck[1]))
+            if sc > bs:
+                best, bs = (float(x), float(y)), sc
+    if best is not None:
+        return best
+    # Nowhere clear: fall back to the old nearest-comfortably-inside point
+    # rather than refusing the delivery.  A patient in the zone is +8 even
+    # if robot 1 later nudges it; a patient never carried is -3 for certain.
+    return (float(np.clip(puck[0], x0, x1)), float(np.clip(puck[1], y0, y1)))
+
+
+def _placed_in(placed, zone):
+    """Patients already standing in that rectangle -- what a new one must
+    not be put on top of."""
+    return [q for q in placed.values()
+            if zone[0] <= q[0] <= zone[2] and zone[1] <= q[1] <= zone[3]]
 
 
 def _board_now(pucks, live, placed):
@@ -1093,7 +1327,7 @@ def _spoil_point(cm, pucks, live, near, drop):
     return float(gx[i, j]), float(gy[i, j])
 
 
-def _blocker(pucks, live, i, zone, robot, t0, sched=None):
+def _blocker(pucks, live, i, zone, robot, t0, sched=None, flt=None):
     """The neighbour whose removal makes patient i deliverable, if any.
 
     Only true neighbours are candidates: at 80 mm across and 113 along, a
@@ -1107,7 +1341,7 @@ def _blocker(pucks, live, i, zone, robot, t0, sched=None):
         if np.hypot(live(j)[0]-px, live(j)[1]-py) > 260.0:
             break
         cm = _board_map([(k, *live(k), c) for k, _, _, c in pucks],
-                        skip={i, j}, sched=sched, t_now=t0)
+                        skip={i, j}, sched=sched, t_now=t0, flt=flt)
         if _price(cm, robot, (px, py), zone, t0) is not None:
             return j
     return None
@@ -1146,7 +1380,7 @@ def _can_turn_out(cm, pose, th0, th_t, radius=130.0):
     return False
 
 
-def _price(cm, robot, puck, zone, t0):
+def _price(cm, robot, puck, zone, t0, zname=None, avoid=()):
     """(seconds, approach) for one delivery, or None if it cannot be done.
 
     Both legs are planned STRICT: a transit that would cross a corridor
@@ -1162,7 +1396,7 @@ def _price(cm, robot, puck, zone, t0):
     # straight run in, a stop, and a straight run out.  This is the one
     # thing a plow always got right and the first pocket mission threw
     # away.
-    tgt = _zone_pt(zone, puck)
+    tgt = _zone_pt(zone, puck, zname, avoid)
     heading = float(np.degrees(np.arctan2(tgt[1] - puck[1],
                                           tgt[0] - puck[0])))
     app = nav.capture_approach(cm, puck, prefer=heading)
@@ -1234,7 +1468,7 @@ def _deliver(ctl, i, live, target, app, log, t, zone=None, what="patient"):
     yield from ctl.goto(tx - ux * R2.CAPTURE_X, ty - uy * R2.CAPTURE_X,
                         v_max=CARRY_V, w_max=CARRY_W, tol=55.0, tries=3,
                         carry=True)
-    yield from ctl.back_off(150.0)
+    yield from ctl.release(150.0)
     fx, fy = live(i)
     if zone is None:
         good = np.hypot(fx - p0[0], fy - p0[1]) > 120.0
@@ -1245,8 +1479,43 @@ def _deliver(ctl, i, live, target, app, log, t, zone=None, what="patient"):
     return bool(good)
 
 
+def _staging(ctl, pucks, live, placed, spent, flt):
+    """Where to stand while waiting: near the next job, out of robot 1's way.
+
+    A robot that has nothing to do RIGHT NOW still has somewhere better to
+    be than where it is.  This picks the stand-off of the patient it would
+    most like next -- so the wait is spent shortening the next approach --
+    and falls back to the north-east dead corner, which is the one part of
+    the board robot 1's route never visits.
+    """
+    best, bestd = None, 1e18
+    for i, _, _, c in pucks:
+        if i in placed or i in spent:
+            continue
+        p = live(i)
+        zn = DEST.get(c) if c != "yellow" else \
+            ("PCC_R" if p[0] > 570.0 else "PCC_L")
+        if zn not in R2_ZONES:
+            continue
+        d = float(np.hypot(p[0]-ctl.pose[0], p[1]-ctl.pose[1]))
+        if d < bestd:
+            bestd, best = d, p
+    if best is None:
+        return HOLD
+    # 260 mm back from it along the line to the field centre: outside the
+    # patient block, inside the approach.
+    ux, uy, _n = _norm(571.0 - best[0], 620.0 - best[1])
+    x = float(np.clip(best[0] + ux * 260.0, 110.0, 1030.0))
+    y = float(np.clip(best[1] + uy * 260.0, 110.0, 1070.0))
+    if flt is not None:
+        for reg in fleetmod.region_of(x, y, pad=R2_CIRCUM):
+            if flt.owner(reg) not in (None, "r2"):
+                return HOLD
+    return (x, y)
+
+
 def _work_patients(ctl, pucks, live, log, t, now, deadline=112.0,
-                   sched=None):
+                   sched=None, flt=None):
     """Value-per-second greedy over whatever is legal right now, with the
     peel the packing forces.
 
@@ -1259,15 +1528,55 @@ def _work_patients(ctl, pucks, live, log, t, now, deadline=112.0,
     delivered, and only when it unlocks something that can.
     """
     placed, spent = {}, set()
+    idling = False
+    yields = 0
+    _flt = flt
     _sc = sched if callable(sched) else (lambda: sched)
 
     def wanted(i, c, p):
         """The zone robot 2 may deliver this patient to right now, or None."""
         zn = DEST.get(c) if c != "yellow" else \
             ("PCC_R" if p[0] > 570.0 else "PCC_L")
-        return ZONES[zn] if zone_open(zn, now(), _sc()) else None
+        return ZONES[zn] if zone_open(zn, now(), _sc(), _flt) else None
 
     while now() < deadline:
+        # THE EXECUTIVE SPEAKS FIRST.  Robot 2 is a detached actuator: when
+        # robot 1 wants a region robot 2 is standing in, robot 2 leaves.  It
+        # leaves toward its own next job, so the yield costs the fleet only
+        # the transit it was going to make anyway.
+        if _flt is not None:
+            leave = _flt.must_leave("r2")
+            if leave is not None and yields < 6:
+                other = _flt.agents.get("r1")
+                aim = _staging(ctl, pucks, live, placed, spent, _flt)
+                out = fleetmod.escape_from(
+                    leave, ctl.pose, radius=R2_CIRCUM,
+                    away_from=(other.pose[:2] if other and other.pose else None),
+                    toward=aim)
+                log(t() + "robot 1 wants %s -- yielding to (%.0f, %.0f)"
+                    % (leave, out[0], out[1]) if out else
+                    t() + "robot 1 wants %s -- nowhere to yield" % leave)
+                if out is not None:
+                    ctl.cmap = _board_map(
+                        [(i, *live(i), c) for i, _, _, c in pucks],
+                        sched=_sc(), t_now=now(), flt=_flt)
+                    yield from ctl.goto(out[0], out[1], v_max=320.0, tol=70.0,
+                                        tries=2)
+                # ALWAYS BURN A TICK HERE.  When there is nowhere to yield to
+                # this branch used to `continue` without yielding at all --
+                # a generator that never yields is a hang, and two of twelve
+                # seeds sat in it burning eleven minutes of CPU apiece.  The
+                # counter is the second belt: an agent that cannot get out of
+                # the way six times running is not going to, and the right
+                # answer then is to carry on with its own work and let the
+                # reactive veto keep it out of trouble.
+                yields += 1
+                for _ in range(int(0.4 * hal.Clock.HZ)):
+                    ctl.tick()
+                    yield
+                _flt.vacated("r2")
+                idling = False
+                continue
         board = _board_now(pucks, live, placed)
         full = [(i, *live(i), c) for i, _, _, c in pucks]
         best = None
@@ -1284,8 +1593,10 @@ def _work_patients(ctl, pucks, live, log, t, now, deadline=112.0,
             gain = _marginal(board, i, zone)
             if gain <= 0.0:
                 continue
-            cmi = _board_map(full, skip=i, sched=_sc(), t_now=now())
-            pr = _price(cmi, ctl.pose[:2], p, zone, now())
+            cmi = _board_map(full, skip=i, sched=_sc(), t_now=now(), flt=_flt)
+            zn_ = ZONE_NAME.get(zone)
+            here = _placed_in(placed, zone)
+            pr = _price(cmi, ctl.pose[:2], p, zone, now(), zn_, here)
             if pr is None:
                 continue
             secs, app = pr
@@ -1294,7 +1605,7 @@ def _work_patients(ctl, pucks, live, log, t, now, deadline=112.0,
             rate = gain / max(secs, 1.0)
             if best is None or rate > best[0]:
                 best = (rate, i, gain, secs, app, zone, cmi,
-                        _zone_pt(zone, p), "patient")
+                        _zone_pt(zone, p, zn_, here), "patient")
 
         if best is None:
             # ---- nothing deliverable: is something merely IN THE WAY? ----
@@ -1305,10 +1616,10 @@ def _work_patients(ctl, pucks, live, log, t, now, deadline=112.0,
                 if zone is None:
                     continue
                 j = _blocker(pucks, live, i, zone, ctl.pose[:2], now(),
-                             sched=_sc())
+                             sched=_sc(), flt=_flt)
                 if j is None or j in spent:
                     continue
-                cmj = _board_map(full, skip=j, sched=_sc(), t_now=now())
+                cmj = _board_map(full, skip=j, sched=_sc(), t_now=now(), flt=_flt)
                 sp = _spoil_point(cmj, pucks, live, live(j), {i, j})
                 if sp is None:
                     continue
@@ -1329,10 +1640,35 @@ def _work_patients(ctl, pucks, live, log, t, now, deadline=112.0,
                 break
 
         if best is None:
-            log(t() + "nothing deliverable from here (%d placed, %d spent, "
-                "%d untouched)" % (len(placed), len(spent),
-                                   len(pucks) - len(placed) - len(spent)))
-            return
+            # NOTHING DELIVERABLE **YET** IS NOT NOTHING TO DO (F124).
+            # Robot 2's one destination zone sits inside robot 1's
+            # laboratory and kit corridors from T+24 to T+81, so the honest
+            # answer at T+45 is "not now", not "never" -- and the old code
+            # said never and parked for the remaining seventy seconds.
+            # Measured on seed 1: fifty-eight seconds of a hundred and
+            # twenty, motionless, while robot 1 worked round it.
+            #
+            # So: stand somewhere USEFUL and ask again.  Useful means out of
+            # every region robot 1 holds, and as close as that allows to the
+            # patient this robot most wants next -- the wait becomes the
+            # first half of the next approach instead of dead time.
+            if not idling:
+                log(t() + "nothing deliverable yet (%d placed, %d spent) -- "
+                    "staging" % (len(placed), len(spent)))
+                idling = True
+                stage = _staging(ctl, pucks, live, placed, spent, _flt)
+                if stage is not None:
+                    ctl.cmap = _board_map(full, sched=_sc(), t_now=now(),
+                                          flt=_flt)
+                    yield from ctl.goto(stage[0], stage[1], v_max=300.0,
+                                        tol=80.0, tries=2)
+                ctl.stop()
+            for _ in range(int(1.5 * hal.Clock.HZ)):
+                ctl.tick()
+                yield
+            continue
+        idling = False
+        yields = 0
         _, i, gain, secs, app, zone, cm, tgt, what = best
         if what == "patient":
             log(t() + "patient %d: %+.0f pts in %.0f s (%.2f pts/s)"
@@ -1350,10 +1686,14 @@ def _work_patients(ctl, pucks, live, log, t, now, deadline=112.0,
                                        # is worth more than a second try
 
 
-def mission_robot2(ctl, m, d=None, log=print, clock=None, rb=None):
+def mission_robot2(ctl, m, d=None, log=print, clock=None, rb=None,
+                   flt=None):
     """Survey, plan, execute, repair.  One yield per 50 Hz tick.
 
-    rb is robot 1, when the fleet is running one: robot 2's controller
+    flt is the fleet executive (rfgyc26.fleet): robot 2 tells it where it
+    is on every tick, plans around robot 1's live footprint, and gets out of
+    the way when it is told to.  rb is robot 1, when the fleet is running
+    one: robot 2's controller
     lives on robot 1's Pi, so it reads that robot's published Schedule and
     reserves its corridors in space-time from the plan robot 1 is actually
     following (F112) rather than from a remembered one.
@@ -1373,8 +1713,14 @@ def mission_robot2(ctl, m, d=None, log=print, clock=None, rb=None):
     def refresh():
         return [(i, *live(i), c) for i, _, _, c in pucks]
 
+    ctl.fleet = flt
+
     def sched():
         return getattr(rb, "schedule", None) if rb is not None else None
+
+    def yielding():
+        """Has the executive told us to get out of somewhere?"""
+        return None if flt is None else flt.must_leave("r2")
 
     # ---- the kits: PCC_R, from the east-box spawn -----------------------
     # AND CHECK THEY LANDED (F115).  This drop is worth 36 points to the
@@ -1397,7 +1743,7 @@ def mission_robot2(ctl, m, d=None, log=print, clock=None, rb=None):
     zx, zy = (Field.PCC_R[0] + Field.PCC_R[2]) / 2.0, \
              (Field.PCC_R[1] + Field.PCC_R[3]) / 2.0
     for attempt in range(4):
-        ctl.cmap = _board_map(pucks, sched=sched(), t_now=now())
+        ctl.cmap = _board_map(pucks, sched=sched(), t_now=now(), flt=flt)
         for _ in range(2):
             yield from ctl.goto(zx, zy, v_max=360.0, tol=30.0, tries=3)
             if np.hypot(ctl.pose[0] - zx, ctl.pose[1] - zy) < 55.0:
@@ -1419,11 +1765,11 @@ def mission_robot2(ctl, m, d=None, log=print, clock=None, rb=None):
 
     # ---- the patients: go there, GRAB it, carry it, let go --------------
     yield from _work_patients(ctl, pucks, live, log, t, now,
-                              sched=sched)
+                              sched=sched, flt=flt)
 
     # ---- park in the dead corner ----------------------------------------
     log(t() + "parking")
-    ctl.cmap = _board_map(refresh(), sched=sched(), t_now=now())
+    ctl.cmap = _board_map(refresh(), sched=sched(), t_now=now(), flt=flt)
     yield from ctl.goto(1085.0, 880.0, v_max=340.0, tol=60.0)
     ctl.stop()
     while True:

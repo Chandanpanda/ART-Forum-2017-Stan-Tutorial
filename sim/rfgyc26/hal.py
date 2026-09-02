@@ -186,6 +186,14 @@ class LinkHAL(ABC):
         SHAKE <n>                         n cycles of the kit-shake manoeuvre
                                           (the escapement robot 2 doesn't have
                                           a servo for -- perfected in sim)
+        G <0|1>                           capture gate: 0 shut, 1 open
+
+    THE GATE IS THE ONE SERVO ROBOT 2 HAS (F123), and it earns its place:
+    six of the twelve patients stand 80 mm off a side wall, and capturing
+    one leaves the chassis nose 27 mm from that wall with no forward arc
+    out.  Leaving backwards is the only way, and a passive pocket cannot
+    hold a patient through a reverse without also refusing to release it --
+    measured both ways.  The gate puts that asymmetry in an actuator.
 
     The firmware stops both motors 250 ms after the last valid line, so a
     dropped link parks the robot instead of driving it into a wall.  The
@@ -210,6 +218,11 @@ class LinkHAL(ABC):
 
     def shake(self, n=3):
         self.send("SHAKE %d" % n)
+
+    def gate(self, open_):
+        """Open or shut the capture gate.  Position, not effort: an SG90 is
+        a position device, and the firmware just writes the pulse width."""
+        self.send("G %d" % (1 if open_ else 0))
 
 
 class NullLink(LinkHAL):

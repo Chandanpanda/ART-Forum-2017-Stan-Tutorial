@@ -1306,8 +1306,17 @@ def zone_open(zname, now, sched, flt=None):
 
 
 HOLD = (1085.0, 880.0)     # the north-east dead corner
-CARRY_V = 190.0            # F106: arcs only, never a pivot, with a puck
-CARRY_W = 90.0
+# THE GATE RAISED THE CARRY SPEED TOO (F146).  190 mm/s was set for the OPEN
+# pocket, where the cargo rode against a stop with nothing in front of it and
+# any lateral acceleration walked it out of the mouth -- the same fact that
+# forbade the pivot (F106).  Shut, the gate is what holds it, and the rig
+# says the speed stopped mattering: a 700 mm dogleg carried a patient 3 of 3
+# at 190, 270, 350 and 420 mm/s, with the seated gap growing only from about
+# 25 mm to 35.  What has NOT changed is the geometry -- carry_turn's arcs and
+# every clearance around them are validated at a 130 mm radius -- so the turn
+# rate rises with the speed to hold that radius: 300/130 rad/s is 132 deg/s.
+CARRY_V = 300.0
+CARRY_W = 130.0
 APPROACH_V = 330.0
 
 

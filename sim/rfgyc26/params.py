@@ -90,6 +90,14 @@ class Piece:
     BEAM2_L, BEAM2_M                 = 250.0, 180.0
 
 
+# ROBOT 1'S LENGTH IS ONE DIAL FOR THE WHOLE MACHINE (F154).  Chassis is
+# defined before AgentA and both need it -- the ball transfers straddle the
+# axle, every intake feature hangs off the nose -- so the number lives here,
+# above both, and neither retypes it.  See AgentA.L for why it is 230.
+A_LENGTH = 230.0
+A_AXLE_X = A_LENGTH / 2.0
+
+
 # ==================================================== COMMON CHASSIS (Rev C)
 class Chassis:
     BELT_W          = 116.0
@@ -154,8 +162,23 @@ class Chassis:
     # robot 5.5 mm short with the terminal controller commanding 11 mm/s into a
     # 13 N contact forever.  That is the bimodal dock: 15 s or never.  Every
     # 1 mm here is 1 mm of margin.
-    BALL_REAR_X     = 115.0            # overhangs the lab instead of climbing it
-    BALL_FRONT_X    = 245.0
+    # EACH BALL FOLLOWS WHAT IT HOLDS UP (F154).  The front one carries the
+    # intake and sits 40 mm back from the NOSE, which is what keeps it clear
+    # of the guide taper (F63 -- referenced to the axle instead, a shorter
+    # chassis walked it straight into the mouth).  The rear one carries the
+    # overhanging tail and sits on the tail step, which is the position the
+    # note below already named for it.
+    #
+    # Both had been typed as absolutes against a 285 mm chassis, so the
+    # support base was a coincidence of that length.  Hung off the axle
+    # instead, a 230 mm chassis put its rear ball 27 mm behind the wheels,
+    # tipped onto the sweep guides and pivoted at a third of the commanded
+    # rate.
+    BALL_REAR_X     = 90.0              # = TAIL_X: it sits on the step it
+                                        # holds up, and the tail overhangs
+                                        # the laboratory rather than
+                                        # climbing it
+    BALL_FRONT_X    = A_LENGTH - 40.0
     BALL_Y          = 80.0
     GROUND_CLEAR    = 6.0
     # A step up in the shell aft of TAIL_X, for when the tail overhangs the
@@ -726,8 +749,27 @@ class Robot2:
 
 # ==================================================== AGENT A station schedule
 class AgentA:
-    L, W, H         = 285.0, 235.0, 175.0
-    AXLE_X          = 142.5            # fore-aft centroid; local origin
+    # THE LENGTH IS A DIAL, AND EVERY MECHANISM ON THE NOSE FOLLOWS IT
+    # (F154).  285 was never derived: it is where a 280 mm beam ends when a
+    # tail stop pushes it, and the intake was then laid out in absolute
+    # tail-referenced millimetres against that.  So the chassis inherited
+    # the beam's length, and with it a swept radius of 185 mm -- against a
+    # corridor south of the laboratory that offers 170.  Measured on the
+    # board, robot 1 could not plan a route off its own dock line: it put
+    # its nose in the south wall and sat there until the watchdog fired.
+    #
+    # check_morphology packs what actually has to be inside -- the intake
+    # chain, the belt, the magazine, the drive -- and gets 174 x 180.  The
+    # slack was 111 mm of length doing nothing but making the robot too
+    # big to turn round.  230 leaves the belt 122 mm (a disc needs 56) and
+    # brings the swept circle to 164, inside the corridor with margin.
+    #
+    # NOSE_OFF is how far back from the nose each intake feature sits, so
+    # the whole chain moves with L instead of being retyped.  The numbers
+    # are the ones the mechanism was built and measured with; only the
+    # datum has changed.
+    L, W, H         = A_LENGTH, 235.0, 175.0
+    AXLE_X          = A_AXLE_X         # fore-aft centroid; local origin
     MASS            = 2600.0 - Piece.BEAM1_M - Piece.BEAM2_M   # chassis only
 
     # KIT_STATION IS GONE (F148).  Three poses chosen with a ruler, and the
@@ -747,7 +789,7 @@ class AgentA:
         return ((fwd, hw), (fwd, -hw), (-fwd, hw), (-fwd, -hw),
                 (fwd, 0.0), (-fwd, 0.0), (0.0, hw), (0.0, -hw), (0.0, 0.0))
 
-    SWEEP_PIVOT_X   = 278.0
+    SWEEP_PIVOT_X   = L - 7.0
     # F20.  The fingers pivot at the NOSE and reach aft, so "open" (tips outboard
     # at y +/-82.5) makes the channel between them DIVERGE.  That looked like the
     # reason a sample more than ~45 mm off the sweep line was bulldozed into the
@@ -779,8 +821,8 @@ class AgentA:
     #   the piece and drives it aft at the finger tips, which is what carries
     #   the disc across the dead zone where F1 measured a passive piece
     #   stranding (19 mm engaged, 46 mm short of the belt, becalmed).
-    SHIM_TIP_X      = 272.0            # knife tip; = GUIDE_TOP_X, 13 in from the shell
-    SHIM_HINGE_X    = 242.0            # hinge axis, hanging over the belt nose
+    SHIM_TIP_X      = L - 13.0            # knife tip; = GUIDE_TOP_X, 13 in from the shell
+    SHIM_HINGE_X    = L - 43.0            # hinge axis, hanging over the belt nose
     # Plate TOP at the hinge = belt nose top, FLUSH within 0.2 (the old scoop
     # check, relearned the hard way: built 0.75 proud "so the disc drops onto
     # the belt", the aft edge became a fulcrum -- the disc see-sawed on it,
@@ -813,7 +855,7 @@ class AgentA:
     # its stop and not one finger touches the disc).  260 puts the tips exactly
     # on the shell line; 31.4 puts them 1.5 mm clear of the ramp, which still
     # bites 3.5 mm into a 5 mm sample lying on it.
-    ROLL_AXIS_X     = 260.0            # tips at 285 = the shell line
+    ROLL_AXIS_X     = L - 25.0            # tips at 285 = the shell line
     ROLL_AXIS_Z     = 31.4             # tips 1.5 mm clear of the ramp beneath
     ROLL_DRUM_R     = 22.0             # collision proxy: hub 10 + fingers at working squish
     ROLL_TIP_R      = 25.0             # = FING_HUB_R + FING_TUBE_L, asserted below
@@ -827,7 +869,7 @@ class AgentA:
     ROLL_RPM_MAX    = 1200.0           # driver ceiling
     ROLL_TORQUE     = 0.098            # N*m -- 1.0 kg*cm N20 stall, the honest cap
     ARM_SPRUNG      = True            # False = axis bolted down, tubes do it all
-    ARM_PIVOT_X     = 205.0            # swing-arm pivot
+    ARM_PIVOT_X     = L - 80.0            # swing-arm pivot
     ARM_PIVOT_Z     = 60.0
     ARM_PRELOAD_N   = 1.3              # downforce at the drum, arm on its stop
 
@@ -912,7 +954,7 @@ class AgentA:
     # side edge, which is nothing (F63's side-climb was a ~9 mm scoop edge).
     SHIM_W          = 108.0
 
-    BELT_NOSE_X     = 241.0            # F64: forward to the drum bite; was 210
+    BELT_NOSE_X     = L - 44.0            # F64: forward to the drum bite; was 210
     # F17 (supersedes F7).  The tail roller must stand ONE DISC RADIUS forward of
     # the chute axis -- not over it.  A piece is supported until its trailing edge
     # clears the tail, so it is released when its CENTRE is one radius aft of the
@@ -938,8 +980,8 @@ class AgentA:
     GUIDE_FROM_W    = 148.0
     GUIDE_TO_W      = 62.0
     # Promoted out of mjcf.py so the two ceilings above can be asserted.
-    GUIDE_END_X     = 195.0            # Xa where the taper finishes
-    GUIDE_TOP_X     = 272.0            # Xa where it starts
+    GUIDE_END_X     = L - 90.0            # Xa where the taper finishes
+    GUIDE_TOP_X     = L - 13.0            # Xa where it starts
 
     # Moved forward from the spec's Xa 33 so the bore is not jammed against the
     # chassis rear wall.  Even at 36 there is only 3 mm between the bore's rear
@@ -1129,7 +1171,7 @@ class AgentA:
     # (measured: two tandem discs at z 42, on the strip's back).  The same one
     # straight plate, longer: a launch-catcher at the front, the F16
     # anti-shingle taper at the tail.
-    HOLD_TO         = 235.0            # Xa, upstream end (5 clear of the drum)
+    HOLD_TO         = L - 50.0            # Xa, upstream end (5 clear of the drum)
     HOLD_GAP0       = 8.0              # clear height above the belt at the tail
     HOLD_GAP1       = 18.0             # clear height at the upstream end
     HOLD_W          = 62.0             # matches the single-file lane
@@ -1420,6 +1462,12 @@ CHECKS = [
      + (AgentA.ROLL_AXIS_X - AgentA.GUIDE_END_X)
      / (AgentA.GUIDE_TOP_X - AgentA.GUIDE_END_X)
      * (AgentA.GUIDE_FROM_W - AgentA.GUIDE_TO_W)/2.0 - 2.0),
+    # F154: the sweeper fingers pivot near the nose and rake AFT, so on a
+    # short chassis they reach the wheels.  mjcf derives their length from
+    # this clearance; the assertion is here so a change to either end of it
+    # is caught in the cheapest suite.
+    ("the sweeper fingers stop clear of the wheels",
+     AgentA.SWEEP_PIVOT_X - Chassis.WHEEL_D/2.0 - AgentA.AXLE_X >= 25.0),
     ("A width budget: belt + wheels + pockets fits 235",
      Chassis.BELT_W + 2*Chassis.WHEEL_W + 20 + 2*24 <= AgentA.W),
     ("axle is on the fore-aft centroid",

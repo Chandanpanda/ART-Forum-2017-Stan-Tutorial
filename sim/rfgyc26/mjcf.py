@@ -286,7 +286,14 @@ def _ring_gap(prefix, cx, cy, z0, z1, r_in, wall, rgba, n=16, skip_deg=0, cls="r
 
 
 FINGER_PIVOT_Y = 74.0
-FINGER_LEN     = 90.0
+# THE FINGERS RAKE AFT, AND THE WHEELS ARE AFT (F154).  90 mm was typed, but
+# 90 mm is exactly what stops the tip 15 mm clear of the front of the wheel
+# on a 285 mm chassis -- so it was this derivation all along, and only the
+# datum was missing.  Shorten the chassis with the length still typed and the
+# fingers rake straight into their own wheels: measured, 12 N of chassis
+# pressing on the tyre and a pivot that turned 62 degrees when commanded 144.
+FINGER_LEN     = (AgentA.SWEEP_PIVOT_X
+                  - (AgentA.AXLE_X + Chassis.WHEEL_D / 2.0) - 15.0)
 FINGER_OPEN    = AgentA.FINGER_OPEN     # left finger hinge angle, deg
 FINGER_CLOSED  = AgentA.FINGER_RAKE
 GATE_OPEN_MM   = 62.0

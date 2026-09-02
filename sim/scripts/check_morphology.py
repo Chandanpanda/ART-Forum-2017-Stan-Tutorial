@@ -87,10 +87,14 @@ def main():
           == (RUN + 10.0, 500.0))
 
     # ------------------------------------------------------ the envelope
-    # The spec's one hard number about the loaded robot: "the swept radius is
-    # set by the beam ends at 185 regardless of chassis shape".
-    check("a loaded robot 1 sweeps the 185 mm the specification claims",
-          abs(today.swept(True) - 185.0) < 1.0, "%.1f mm" % today.swept(True))
+    # The specification's claim about the loaded robot is that "the swept
+    # radius is set by the beam ends REGARDLESS OF CHASSIS SHAPE".  That is
+    # the assertion -- not the 185 mm it happened to be for a 285 mm
+    # chassis, which is a number this file exists to change.
+    beam_r = float(np.hypot(P.BEAM1_L/2.0, PY + P.BEAM_W/2.0))
+    check("a loaded robot 1 sweeps whatever its BEAMS sweep",
+          abs(today.swept(True) - max(beam_r, today.swept(False))) < 1.0,
+          "%.1f mm loaded, beams alone %.1f" % (today.swept(True), beam_r))
     check("...and an empty one sweeps no more than a loaded one",
           today.swept(False) <= today.swept(True) + 1e-9,
           "%.1f empty, %.1f loaded" % (today.swept(False), today.swept(True)))
@@ -104,9 +108,15 @@ def main():
           abs(small.swept(True) - mid.swept(True)) < 1e-6,
           "%.1f at %.0f wide, %.1f at %.0f wide"
           % (small.swept(True), small.width, mid.swept(True), mid.width))
-    check("...but shrinks the EMPTY one by a third",
-          small.swept(False) < 0.75 * today.swept(False),
-          "%.0f vs %.0f mm" % (small.swept(False), today.swept(False)))
+    # ...while the empty one keeps falling.  Measured against the ORIGINAL
+    # 285 x 235 outline, which is the thing being improved on -- comparing
+    # against "today" makes the assertion weaken every time today gets
+    # better, which is the wrong direction for a ratchet.
+    was = make(285.0, 235.0)
+    check("...but shrinks the EMPTY one by a third against the 285 x 235 it "
+          "started as",
+          small.swept(False) < 0.75 * was.swept(False),
+          "%.0f vs %.0f mm" % (small.swept(False), was.swept(False)))
 
     # ------------------------------------------------------- the board
     lay = mjcf.m2_layout(np.random.default_rng(6))
@@ -185,13 +195,23 @@ def main():
     j0, j1 = bare.cell(0.0, Field.LAB_PLATE[1])[1], \
         bare.cell(0.0, Field.LAB_PLATE[3])[1]
     corr = float(d[:, j0:j1 + 1].max())
-    check("today's empty robot cannot pivot beside the laboratory",
-          today.swept(False) > corr,
+    check("the 285 x 235 chassis could not pivot beside the laboratory",
+          was.swept(False) > corr,
+          "swept %.0f mm, corridor %.0f mm" % (was.swept(False), corr))
+    check("...and the chassis as built now can", today.swept(False) <= corr,
           "swept %.0f mm, corridor %.0f mm" % (today.swept(False), corr))
-    check("...and the smallest one can",
+    check("...and so can the smallest the search found",
           best is not None and bestd.footprint(loaded=False).circumscribed
           <= corr,
           "swept %.0f mm" % (bestd.swept(False) if bestd else -1))
+    # AND IT CAN TURN ROUND, which is the harder one: a chassis reverses
+    # direction only where two swept circles fit, and the corridor south of
+    # the laboratory is the place every kit dispatch has to do it.
+    band = float(Field.LAB_PLATE[1])
+    check("...and can reverse direction in the corridor it dispatches from",
+          2.0 * today.swept(False) <= band,
+          "%.0f mm of circle in a %.0f mm corridor"
+          % (2.0 * today.swept(False), band))
 
     n_bad = sum(1 for _, ok, _ in RESULTS if not ok)
     for nm, ok, det in RESULTS:

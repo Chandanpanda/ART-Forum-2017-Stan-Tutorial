@@ -145,15 +145,31 @@ def main():
     PINNED = {r"rb\.d\b": 0,          # the oracle's data -- referee/checks only
               r"rb\.m\b": 0,
               r"pose_truth": 0,       # the oracle pose, banned in mission code
-              r"\.pose\b": 53,        # the map-frame BELIEF (transit;
-                                      # +1 for F86's seal-entry corridor,
-                                      # +2 for F88's legal-departure check
-                                      # and entry-pursuit gate)
+              r"\.pose\b": 66,        # the map-frame BELIEF (transit; the
+                                      # F148 station solver reads it ten
+                                      # more times, all as planner inputs:
+                                      # map origin, tie-break, path start,
+                                      # arrival test)
               r"pose_odo": 6}         # the odometry frame (dock terminals)
     for pat, cap in PINNED.items():
         got = len(re.findall(pat, src))
         check("route.py ground-truth ratchet: %s <= %d" % (pat, cap),
               got <= cap, "found %d" % got)
+
+    # THE RATCHET THAT MATTERS NOW.  Counting .pose was a proxy for how
+    # scripted the mission is, and a proxy that gets raised whenever it
+    # fires is not a ratchet.  The thing CLAUDE.md actually forbids is
+    # measurable directly: coordinate-scale literals in the mission layers,
+    # every one of which is either a fact that belongs in params or a pose
+    # that belongs in a solver.  These caps only ever come DOWN.  If a
+    # change needs one raised, it is adding an offender, and the offender
+    # is the change.
+    r2src = open(os.path.join(os.path.dirname(__file__), "..",
+                              "rfgyc26", "robot2.py")).read()
+    for nm, text, cap in (("route.py", src, 246), ("robot2.py", r2src, 246)):
+        got = len(re.findall(r"(?<![\w.])\d{2,4}\.\d+", text))
+        check("%s carries no MORE hardcoded coordinates than it did (<= %d)"
+              % (nm, cap), got <= cap, "found %d" % got)
 
     # --------------------------------------------------------------- summary
     fails = [r for r in RESULTS if not r[1]]

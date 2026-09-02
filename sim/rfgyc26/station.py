@@ -218,7 +218,7 @@ def best_stand(*a, **kw):
     return got[0] if got else None
 
 
-def reachable(stands, frm, planner, keep=1):
+def reachable(stands, planner, keep=1):
     """Filter stands by whether the robot can actually GET to them.
 
     A CLEAR STATION IS NOT A CLEAR APPROACH, and assuming otherwise is the

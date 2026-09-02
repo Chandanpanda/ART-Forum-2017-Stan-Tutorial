@@ -399,6 +399,12 @@ class M2:
     # (HOSP +-24 mm, PCC_L +-31), and it is what station.Effector plans
     # with.  An optimistic value here aims at the edge of a zone and misses.
     HOPPER_SPREAD   = 32.0
+    # ...and how far apart successive kits land, along the body's FORWARD
+    # axis.  Measured by scripts/check_effectors.py, which also asserts it:
+    # six kits out of the hospital hopper step 11 mm each, two out of a PCC
+    # hopper step 28.  Writing this stride sideways is what made the pose
+    # solver reject a station that demonstrably works.
+    HOPPER_STRIDE   = {"HOSP": 11.0, "PCC_L": 28.0, "PCC_R": 28.0}
     KIT_GROUPS      = {"HOSP": tuple(range(6)), "PCC_L": (6, 7), "PCC_R": (8, 9)}
     # WHICH DESTINATIONS THIS ROBOT SERVES (F80).  The match is decided by the
     # clock, not by whether a task is possible, and the kit loop is the only
@@ -718,33 +724,22 @@ class AgentA:
     AXLE_X          = 142.5            # fore-aft centroid; local origin
     MASS            = 2600.0 - Piece.BEAM1_M - Piece.BEAM2_M   # chassis only
 
-    # WHERE THE CHASSIS STANDS TO DISCHARGE A HOPPER.  Here rather than in
-    # route.py because robot 2 needs it too: these three rectangles are the
-    # floor robot 1 will occupy in three of the four destination zones, and
-    # a patient placed inside one of them is a patient robot 1 will push
-    # (F126).  Heading is +90 at every station, so the body spans
-    # x +- W/2 and y +- L/2 about the point.
-    # PCC_L SITS EAST OF THE PATIENTS, NOT ON THEM (F141).  At x 240 the
-    # 235 mm-wide body spans 122..357 and the west sticker column stands at
-    # x 160 (150..170) -- a 47 mm overlap, so every PCC_L approach drives
-    # THROUGH four patients.  Usually it shoves them aside; measured on the
-    # kit rig, two runs in six it beached on one and sat motionless for
-    # twenty-eight seconds, 164 mm short, and laid both kits at y 853
-    # against a zone that starts at 981.  That is -10 for the empty zone and
-    # the 6/2/2 bonus with it: 36 of the 50 that column is worth.
-    #
-    # The window is narrow but real.  The hopper discharges 140 mm over the
-    # west flank, so the body must stay east of the stickers and the lip
-    # west of the zone's east edge:
-    #     station >= 292.5   body clear of x 170 by 5 mm
-    #     station <= 310.0   lip 30 mm inside PCC_L
-    # 300 takes the middle: 12.5 mm of clearance, lip at x 160.
-    # HOSP needs no such move -- its body spans 594..829, clear of both
-    # sticker columns, which is why it lands 6 of 6 on every rig run.
-    KIT_STATION  = {"PCC_R": (903.0, 930.0),
-                    "HOSP":  (711.5, 965.0),
-                    "PCC_L": (300.0, 930.0)}
-    KIT_HEADING  = 90.0
+    # KIT_STATION IS GONE (F148).  Three poses chosen with a ruler, and the
+    # reasoning behind one of them was wrong in a way no constant could
+    # notice: the PCC_L window was derived on the belief that the chassis
+    # fouled the sticker column AT the station, when at the station it spans
+    # y 788..1073 and the stickers stop at 773.  route.kit_stand solves for
+    # the pose now, from the zone, the hopper, the chassis and a map of what
+    # is actually on the board -- and picks poses at headings, like 68
+    # degrees into the hospital, that no ruler would have proposed.
+
+    # THE CHASSIS AS A PLANNER SEES IT, derived from L and W rather than
+    # typed, so it cannot disagree with them.
+    @staticmethod
+    def body_pts(L, W):
+        fwd, hw = L/2.0, W/2.0
+        return ((fwd, hw), (fwd, -hw), (-fwd, hw), (-fwd, -hw),
+                (fwd, 0.0), (-fwd, 0.0), (0.0, hw), (0.0, -hw), (0.0, 0.0))
 
     SWEEP_PIVOT_X   = 278.0
     # F20.  The fingers pivot at the NOSE and reach aft, so "open" (tips outboard

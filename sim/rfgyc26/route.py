@@ -14,7 +14,7 @@ Every action is time-guarded so a mission can fail but never hang.
 """
 import numpy as np
 from .params import Chassis, AgentA, Field, Piece, M2
-from . import trajectory
+from . import trajectory, station, world
 
 HZ = 50.0
 MATCH = 120.0            # rules g.1
@@ -731,8 +731,6 @@ KIT_LOOP_Y   = 730.0                   # = station y - KIT_BACKOFF: the traverse
 # six-kit scatter reached 896 -- five millimetres out, and it cost the +20
 # distribution bonus.  At 965 the same scatter lands 30 mm inside, and the
 # robot's north edge is still 74 mm clear of the top wall.
-KIT_STATION = AgentA.KIT_STATION      # physical: see params
-KIT_HEADING = AgentA.KIT_HEADING
 # FAR ENOUGH THAT THE PIVOT CLEARS THE KITS IT JUST DROPPED.  They land 140 mm
 # to one side, so after reversing R the robot's centre is sqrt(140^2 + R^2) from
 # them, and the swept radius is 185 plus the kit's own 18 -- so R must exceed
@@ -743,7 +741,76 @@ KIT_HEADING = AgentA.KIT_HEADING
 KIT_BACKOFF = 200.0
 
 
-def deliver_kits(rb, log=print, clk=None, deadline=None, order=KIT_ORDER):
+# ROBOT 1 NOW HAS A MAP AND SOLVES FOR WHERE TO STAND (F148).
+#
+# KIT_STATION was three poses chosen with a ruler, and the reasoning that
+# picked them was wrong in a way nothing could see: the PCC_L window was
+# derived on the belief that the chassis fouled the sticker column AT the
+# station, when at the station it spans y 788..1073 and the stickers stop
+# at 773.  It was the traverse that fouled them.  A constant cannot notice
+# that; a solver did, in a second.
+#
+# So the station is computed, every time, from four things that are all
+# either measurements or rules: the zone the kits must land in, the hopper
+# that throws them, the chassis that carries it, and a costmap of what is
+# actually on the board -- including the patients, which robot 1 learns
+# from the fleet because robot 2 has already surveyed them and the two
+# controllers share a Pi.  Ties break toward the shortest drive from
+# wherever the robot happens to be, which is the only preference that
+# does not smuggle a chosen pose back in.
+A1_FOOT = station.Footprint(AgentA.body_pts(AgentA.L, AgentA.W),
+                            AgentA.W / 2.0,
+                            float(np.hypot(AgentA.L, AgentA.W) / 2.0))
+KIT_TAPE = {"HOSP": Field.HOSPITAL, "PCC_L": Field.PCC_L,
+            "PCC_R": Field.PCC_R}
+
+
+def kit_effector(dest):
+    """What this hopper does, as data -- see check_effectors, which measures
+    every number in it."""
+    return station.Effector(offset=M2.HOPPER[dest], spread=M2.HOPPER_SPREAD,
+                            stride=(M2.HOPPER_STRIDE[dest], 0.0),
+                            count=len(M2.KIT_GROUPS[dest]))
+
+
+def kit_stand(rb, dest, flt=None, log=None):
+    """Where to stand to put this hopper's kits in its zone, and how to get
+    there.  Returns (Stand, path) or (None, None) when the board says it
+    cannot be done from here -- which is a real answer, and better learned
+    here than by driving there."""
+    pieces = [] if flt is None else flt.pieces({"patient"})
+    cm = world.board_map(pieces=pieces, fleet=flt, whose="r1", horizon=0.0)
+    stands = station.stand_for(KIT_TAPE[dest], kit_effector(dest), A1_FOOT,
+                               cm, headings=16, res=20.0,
+                               prefer=rb.pose[:2], top=14)
+    got = station.reachable(
+        stands,
+        lambda pose: world.route_to(cm, rb.pose, pose, A1_FOOT, speed=230.0))
+    if not got:
+        if log:
+            log("      %s: no stand-off the board allows (%d poses tried)"
+                % (dest, len(stands)))
+        return None, None
+    st, path, _ = got[0]
+    if flt is not None:
+        # PUBLISH THE FLOOR THIS WILL OCCUPY.  Robot 2 chooses where to put
+        # patients in the same zones, and it used to keep off robot 1 via a
+        # rectangle drawn by eye round a station that no longer exists.  The
+        # body and the kit pile are both computable from the pose actually
+        # chosen, so publish those instead.
+        flt.reserve_floor("r1", dest,
+                          [(x, y, A1_FOOT.inscribed) for x, y
+                           in A1_FOOT.world(*st.pose)]
+                          + [(x, y, M2.HOPPER_SPREAD)
+                             for x, y in kit_effector(dest).deposits(*st.pose)])
+    if log:
+        log("      %s: standing at (%.0f, %.0f, %.0f), margin %.0f mm"
+            % (dest, st.pose[0], st.pose[1], st.pose[2], st.margin))
+    return st, path
+
+
+def deliver_kits(rb, log=print, clk=None, deadline=None, order=KIT_ORDER,
+                 flt=None):
     """Drive the northern loop and open one hopper in each destination zone."""
     t = (lambda: "") if clk is None else (lambda: "T+%5.1f  " % clk())
     def leg(tx, ty, speed=230.0, cap=14.0, tol=32.0):
@@ -784,47 +851,46 @@ def deliver_kits(rb, log=print, clk=None, deadline=None, order=KIT_ORDER):
         if 175.0 < py and 166.5 < px < 976.5 and \
                 abs((th + 90.0 + 180.0) % 360.0 - 180.0) < 50.0:
             yield from guard(drive_straight(rb, py - 150.0, speed=200.0), 4.0)
-        # ...then ride ONE pursuit all the way to the first zone's lip
-        # (F87/F88): dogleg east of the plate, climb, swing west, arrive at
-        # the station facing ~105 deg -- the turn_to(90) below is the only
-        # stop left.  The old shape (climb to y 730, pivot west, traverse,
-        # pivot north, leg in) spent 7.5 s and two more illegal-band pivots
-        # on what the pursuit does in 3.  The knees are STRICT: a loose
-        # advance began the west swing 120 mm early and the body clipped
-        # the plate's NE corner (measured, -9 mm from the L1 dock).  The
-        # dogleg knee sits at (903, 250), NOT further east: the eastward
-        # turn's arc apex lands ~55 mm past the knee and the nose corner
-        # reaches 183 beyond that -- from a knee at 960 it pinned the
-        # corner on the east wall for 15 s (measured); from 903 the turn
-        # completes near x 958 with 30 mm in hand, and the climb line to
-        # (940, 655) then holds x >= 927 past the plate band (y 242-628).
-        # The swept SIDE_R patient column at x 983 has no
-        # legal alternative -- plate needs centre >= 909, that column
-        # needs <= 846 -- an empty corridor of the F87 kind; the climb
-        # accepts the plow and robot 2, which owns the east side, is the
-        # fleet-level cure.
-        tx0, ty0 = KIT_STATION[order[0]]
-        ok = yield from trajectory.track_waypoints(
-            rb, [(903.0, 250.0), (940.0, 655.0), (tx0 + 50.0, 780.0),
-                 (tx0, ty0)],
-            v_max=220.0, v_end=100.0, tol_end=28.0, strict=True)
+        # ...then PLAN the run to the first zone rather than reciting it.
+        #
+        # What stood here was a four-knee pursuit with the knees chosen by
+        # hand and a paragraph explaining each: (903, 250) because 960
+        # pinned the nose on the east wall for fifteen seconds, (940, 655)
+        # because it holds x >= 927 past the plate band, and a comment
+        # conceding that the swept patient column at x 983 "has no legal
+        # alternative".  Every one of those is a fact about a costmap,
+        # discovered by driving into it.  The planner has the costmap.
+        st0, path0 = kit_stand(rb, order[0], flt=flt, log=log)
+        ok = False
+        if st0 is not None and path0 is not None and len(path0) > 1:
+            ok = yield from trajectory.track_waypoints(
+                rb, list(path0) + [st0.pose[:2]],
+                v_max=220.0, v_end=100.0, tol_end=28.0, strict=True)
         served_entry = bool(ok)
         if not ok:
             if rb.pose[1] < 320.0:
                 yield from leg(*KIT_APPROACH, speed=230.0, cap=8.0)
-            yield from leg(903.0, KIT_LOOP_Y, cap=10.0)
     for di, dest in enumerate(order):
         if deadline is not None and clk is not None and clk() > deadline:
             log(t() + "  kits: %s abandoned at the beam deadline" % dest)
             break
-        tx, ty = KIT_STATION[dest]
-        log(t() + "  kits -> %s (%.0f, %.0f)" % (dest, tx, ty))
-        # Traverse SOUTH of the drops, then turn up into the zone -- unless
-        # the entry pursuit already delivered the chassis to this lip.
+        st, path = kit_stand(rb, dest, flt=flt, log=log)
+        if st is None:
+            log(t() + "  kits: %s has no legal stand-off -- skipping" % dest)
+            continue
+        tx, ty, hdg = st.pose
+        log(t() + "  kits -> %s (%.0f, %.0f) hdg %.0f" % (dest, tx, ty, hdg))
+        # PLANNED, NOT SCRIPTED.  The old shape was a fixed traverse to
+        # (station_x, KIT_LOOP_Y) and then a straight run north, which is
+        # what drove the chassis through the west sticker column -- the
+        # legs knew the station's coordinates and nothing else about the
+        # board.  A planned path goes round what is on the map.
         if not (di == 0 and served_entry):
-            if abs(rb.pose[0] - tx) > 60.0:
-                yield from leg(tx, KIT_LOOP_Y, cap=10.0)
-            yield from leg(tx, ty)
+            if path and len(path) > 1:
+                yield from trajectory.track_waypoints(
+                    rb, list(path) + [(tx, ty)], v_max=230.0, v_end=110.0)
+            if np.hypot(rb.pose[0]-tx, rb.pose[1]-ty) > 45.0:
+                yield from leg(tx, ty)          # close the last few cm
         # 8 deg is enough: the hopper mouth is 78 mm off the centreline, so
         # 8 deg of heading error moves the landing point 11 mm, against zone
         # margins of 50 mm and more.
@@ -840,7 +906,7 @@ def deliver_kits(rb, log=print, clk=None, deadline=None, order=KIT_ORDER):
         # the 50 that column is worth.  Robot 2 learned this at PCC_R and
         # was given a re-shake for it (F115); robot 1 never was.
         for attempt in range(3):
-            yield from guard(turn_to(rb, KIT_HEADING, tol=8.0), 8.0)
+            yield from guard(turn_to(rb, hdg, tol=8.0), 8.0)
             rb.stop()
             yield from wait(rb, 0.2)
             px, py, th = rb.pose
@@ -1088,7 +1154,7 @@ def mission_agent_a(rb, holes, hole_y, chute_offset, log=print, clock=None,
             # getting there and refused the one-second drop.
             cap = planner.TRAVEL.get((prev, task), 8.0) + planner.DUR[task] + 8.0
             yield from guard(deliver_kits(rb, log=log, clk=clock,
-                                          order=(dest,)), cap)
+                                          order=(dest,), flt=flt), cap)
         elif task == "BEAMS":
             yield from seal_quarantine(rb, log=log, clk=clock)
         sched.complete(task, now())

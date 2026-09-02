@@ -103,38 +103,10 @@ BODY = {"r1": _chain(AgentA.L, AgentA.W, 3),
 # 77 mm of it -- and the reverse-and-pivot that follows adds a disc of
 # radius 185 about a point 200 mm south.  Everything else inside the tape is
 # floor no wheel touches, and that is where a patient goes.
-KIT_BACKOFF = 200.0          # the straight reverse before the pivot (route.py)
-R1_SWEEP    = 185.0          # circumscribed: sqrt((L/2)^2 + (W/2)^2)
-# AND THE KITS THEMSELVES, WHICH DO NOT LAND UNDER THE ROBOT.  Every hopper
-# discharges over a flank, so the pile sits about 150 mm to one SIDE of the
-# station -- outside the body rectangle above, and so invisible to a hazard
-# model built only from the chassis.  The first version of this chooser duly
-# put a patient at (560, 994) with six hospital kits at (547..554, 978..1034).
-# Measured offsets from the station, over both of robot 1's zones:
-#   HOSP    dx -164..-157   dy  +13..+69      (six kits, scattered)
-#   PCC_L   dx -133..-129   dy    0..+28      (two)
-DIS_X0, DIS_X1 = -185.0, -105.0
-DIS_Y0, DIS_Y1 =  -20.0,   90.0
-
-
-def kit_hazard(zone_name, pad=0.0):
-    """The floor robot 1 covers to service a kit zone, as primitives.
-
-    A bounding box round the pivot would be a lie of 140 mm: the corner of
-    that box sits 389 mm from the pivot centre, twice the swept radius.  So
-    the disc stays a disc.
-    """
-    st = AgentA.KIT_STATION.get(zone_name)
-    if st is None:
-        return []
-    sx, sy = st
-    hw, hl = AgentA.W/2.0 + pad, AgentA.L/2.0 + pad
-    return [("rect", sx-hw, sy-hl-KIT_BACKOFF, sx+hw, sy+hl),
-            ("circ", sx, sy-KIT_BACKOFF, R1_SWEEP + pad),
-            ("rect", sx+DIS_X0-pad, sy+DIS_Y0-pad,
-                     sx+DIS_X1+pad, sy+DIS_Y1+pad)]
-
-
+# kit_hazard and the rectangles it was built from are gone (F148): robot 1
+# solves for where it stands and publishes the floor that pose occupies, via
+# reserve_floor above.  A model of where another robot "usually" is cannot
+# survive that robot learning to choose.
 def covered(prims, x, y):
     """Is (x, y) inside any of them?"""
     for pr in prims:
@@ -209,12 +181,51 @@ class Fleet:
         self.t = 0.0
         self._stamp = 0            # bumped on every observation
         self._hz = {}
+        self.board = {}            # id -> (id, x, y, kind), shared
+        self.floors = {}           # name -> key -> [(x, y, r)]
 
     def join(self, name, radius, body=None):
         self.agents[name] = Agent(name, radius, PRIORITY.get(name, 9),
                                   body=body if body is not None
                                   else BODY.get(name))
         return self.agents[name]
+
+    # -------------------------------------------------------- the board
+    # WHAT ONE ROBOT SEES, BOTH ROBOTS KNOW.  The two controllers run on the
+    # same Pi (design doc 15.5), so there is no wire between them and no
+    # excuse for robot 1 planning against a field it believes to be empty.
+    # It did: robot 1 has never held a costmap at all, and its kit approach
+    # drove through four patients for a season because they were not on a
+    # map it did not have.  Robot 2 surveys the pieces at the gun and
+    # watches them move; this is where it says so.
+    def see(self, pieces):
+        """Publish observed loose pieces as [(id, x, y, kind), ...]."""
+        self.board = {p[0]: tuple(p) for p in pieces}
+        self._stamp += 1
+
+    def pieces(self, kinds=None):
+        """Everything seen, optionally filtered by kind."""
+        out = list(self.board.values())
+        if kinds is not None:
+            out = [p for p in out if len(p) > 3 and p[3] in kinds]
+        return out
+
+    # --------------------------------------------------------- the floors
+    # WHERE AN AGENT WILL BE STANDING, published by the agent that worked it
+    # out.  This replaces a rectangle drawn by eye round a station constant:
+    # once robot 1 solves for where to stand (F148) the old rectangle
+    # describes a pose nobody uses, and the floor it really needs is just
+    # its footprint at the chosen pose plus wherever its effector throws.
+    def reserve_floor(self, name, key, discs):
+        self.floors.setdefault(name, {})[key] = tuple(discs)
+        self._stamp += 1
+
+    def floor_of(self, name, key=None):
+        """[(x, y, r), ...] another agent has said it will occupy."""
+        d = self.floors.get(name, {})
+        if key is not None:
+            return list(d.get(key, ()))
+        return [c for v in d.values() for c in v]
 
     # ------------------------------------------------------------ observing
     def observe(self, name, pose, vel=0.0, path=None, t=None):

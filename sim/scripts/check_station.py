@@ -98,14 +98,17 @@ def main():
 
     # the hospital station needs no move and the solver should agree
     got_h = station.stand_for(Field.HOSPITAL, HOPPER6, A1, cm, headings=8,
-                              res=10.0, prefer=AgentA.KIT_STATION["HOSP"],
-                              top=6)
+                              res=10.0, prefer=(700.0, 730.0), top=6)
     all_h = station.stand_for(Field.HOSPITAL, HOPPER6, A1, cm, headings=8,
                               res=10.0, top=400)
-    check("HOSP: the station that already works is among the ones it accepts",
-          any(abs(s.pose[0] - AgentA.KIT_STATION["HOSP"][0]) < 45.0 and
-              abs(s.pose[1] - AgentA.KIT_STATION["HOSP"][1]) < 60.0 and
-              abs(s.pose[2] - 90.0) < 1e-6 for s in all_h),
+    # The pose that used to be hand-set, (711.5, 965) facing north, is a
+    # fact about this field and this hopper, so the solver must still accept
+    # it -- but it is no longer WHERE the answer has to be.  It measured
+    # 6 of 6 kits in the zone on every rig run, and so does the solver's own
+    # choice, which faces 68 degrees and no constant would have proposed.
+    check("HOSP: the pose that used to be hand-set is among those accepted",
+          any(abs(s.pose[0] - 711.5) < 45.0 and abs(s.pose[1] - 965.0) < 60.0
+              and abs(s.pose[2] - 90.0) < 1e-6 for s in all_h),
           "%d poses accepted; best %r" % (len(all_h), got_h[:1]))
     check("...and it prefers one with more margin than the hand-set pose",
           bool(got_h) and got_h[0].margin > 0.0, repr(got_h[:1]))

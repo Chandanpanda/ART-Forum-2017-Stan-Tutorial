@@ -25,7 +25,7 @@ Three layers, split exactly where the hardware splits:
     push whose tolerance is the plow's width.
 """
 import numpy as np
-from . import hal, nav, trajectory, fleet as fleetmod
+from . import hal, nav, trajectory, world, fleet as fleetmod
 from .params import Robot2 as R2, Field, Piece
 
 R2_INSCRIBED = 75.0        # no orientation fits inside this
@@ -1131,17 +1131,9 @@ def _board_map(pucks, skip=None, sched=None, t_now=0.0, flt=None):
     neither of the second: it set off across robot 1's tail in the first
     second of the match because robot 1 simply was not on its map.
     """
-    cm = nav.CostMap.field()
-    robot1_reservations(cm, schedule=sched, t_now=t_now)
-    if flt is not None:
-        flt.stamp(cm, "r2", horizon=1.6)
-    drop = set() if skip is None else (
-        {skip} if isinstance(skip, (int, np.integer)) else set(skip))
-    for i, x, y, c in pucks:
-        if i in drop:
-            continue
-        cm.add_disc(x, y, 12.0)
-    return cm
+    return world.board_map(pieces=pucks, skip=() if skip is None else skip,
+                           schedule=sched, reserve=robot1_reservations,
+                           t_now=t_now, fleet=flt, whose="r2")
 
 
 
@@ -1323,7 +1315,7 @@ APPROACH_V = 330.0
 EDGE_HARD = 12.0           # ZONES is already inset 40 mm from the tape
 
 
-def _zone_pt(zone, puck, zname=None, avoid=()):
+def _zone_pt(zone, puck, zname=None, avoid=(), keep=()):
     """Where inside the zone to put this patient.
 
     35 mm of inset was arithmetic, not engineering.  The carry ends when
@@ -1353,11 +1345,15 @@ def _zone_pt(zone, puck, zname=None, avoid=()):
         inset = min(EDGE_HARD, (b - a) / 2.0 - 20.0)
         lo.append((a + inset, b - inset))
     (x0, x1), (y0, y1) = lo
-    haz = fleetmod.kit_hazard(zname, pad=Piece.CYL_D/2.0 + 20.0) if zname else []
+    # WHERE ROBOT 1 SAID IT WILL BE, not a rectangle drawn round a station
+    # constant (F148).  Robot 1 now solves for its own pose and publishes
+    # the floor that pose occupies -- its footprint and its kit pile -- so
+    # this keeps off the real thing instead of a model of a former one.
+    haz = [(x, y, r + Piece.CYL_D/2.0 + 12.0) for x, y, r in keep]
     best, bs = None, -1e18
     for x in np.linspace(x0, x1, 21):
         for y in np.linspace(y0, y1, 21):
-            if fleetmod.covered(haz, x, y):
+            if any((x-hx)**2 + (y-hy)**2 <= hr*hr for hx, hy, hr in haz):
                 continue
             clear = min((float(np.hypot(x-ax, y-ay)) for ax, ay in avoid),
                         default=400.0)
@@ -1584,7 +1580,7 @@ def _arc_out(occ, cm, pose, th0, th_t, radius=130.0):
     return False
 
 
-def _price(cm, robot, puck, zone, t0, zname=None, avoid=()):
+def _price(cm, robot, puck, zone, t0, zname=None, avoid=(), keep=()):
     """(seconds, approach) for one delivery, or None if it cannot be done.
 
     A RESERVATION IS A PREDICTION, SO IT PRICES A TRANSIT RATHER THAN
@@ -1625,7 +1621,7 @@ def _price(cm, robot, puck, zone, t0, zname=None, avoid=()):
     # straight run in, a stop, and a straight run out.  This is the one
     # thing a plow always got right and the first pocket mission threw
     # away.
-    tgt = _zone_pt(zone, puck, zname, avoid)
+    tgt = _zone_pt(zone, puck, zname, avoid, keep)
     heading = float(np.degrees(np.arctan2(tgt[1] - puck[1],
                                           tgt[0] - puck[0])))
     app = nav.capture_approach(cm, puck, R2.BODY_PTS, prefer=heading)
@@ -1885,6 +1881,8 @@ def _work_patients(ctl, pucks, live, log, t, now, deadline=112.0,
                 continue
         board = _board_now(pucks, live, placed)
         full = [(i, *live(i), c) for i, _, _, c in pucks]
+        if _flt is not None:            # the shared board, kept live
+            _flt.see([(i, *live(i), "patient") for i, _, _, _ in pucks])
         best = None
         for i, _, _, c in pucks:
             if i in placed or i in spent:
@@ -1907,7 +1905,8 @@ def _work_patients(ctl, pucks, live, log, t, now, deadline=112.0,
                                      t_now=now(), flt=_flt)
                 zn_ = ZONE_NAME.get(zone)
                 here = _placed_in(placed, zone)
-                pr = _price(cmi, ctl.pose[:2], p, zone, now(), zn_, here)
+                keep = [] if _flt is None else _flt.floor_of("r1", zn_)
+                pr = _price(cmi, ctl.pose[:2], p, zone, now(), zn_, here, keep)
                 if pr is None:
                     continue
                 raw, app = pr
@@ -1917,7 +1916,8 @@ def _work_patients(ctl, pucks, live, log, t, now, deadline=112.0,
                 rate = gain / max(secs, 1.0)
                 if best is None or rate > best[0]:
                     best = (rate, i, gain, secs, app, zone, cmi,
-                            _zone_pt(zone, p, zn_, here), "patient", raw)
+                            _zone_pt(zone, p, zn_, here, keep),
+                            "patient", raw)
 
         if best is None:
             # ---- nothing deliverable: is something merely IN THE WAY? ----
@@ -2032,7 +2032,13 @@ def mission_robot2(ctl, m, d=None, log=print, clock=None, rb=None,
     def refresh():
         return [(i, *live(i), c) for i, _, _, c in pucks]
 
+    def publish():
+        """Tell the fleet where the pieces are, so ROBOT 1 can plan too."""
+        if flt is not None:
+            flt.see([(i, *live(i), "patient") for i, _, _, _ in pucks])
+
     ctl.fleet = flt
+    publish()
 
     def sched():
         return getattr(rb, "schedule", None) if rb is not None else None

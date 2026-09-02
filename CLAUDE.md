@@ -118,22 +118,32 @@ If a constant in the second list exists, it is a TODO with a number in it.
 These are the hand-set values still in the tree, to be replaced by
 computation. Do not add to this list; work it down.
 
-- `AgentA.KIT_STATION` (3 poses) → `station.stand_for`
-- `AgentA.BEAM1_STATION` / `BEAM2_STATION` / `*_LOCAL` → same
-- `route.KIT_LOOP_Y`, `KIT_BACKOFF`, `KIT_HEADING`, `KIT_ORDER`, `WP`,
+- ~~`AgentA.KIT_STATION`~~ **done** — `route.kit_stand` solves it, and the
+  solver picks poses (68° into the hospital) no ruler proposed
+- ~~`route.KIT_HEADING`, the entry dogleg's hand-picked knees~~ **done** —
+  the kit legs plan on a costmap now
+- ~~`fleet.kit_hazard`, `DIS_*`, `R1_SWEEP`~~ **done** — robot 1 publishes
+  the floor its chosen pose occupies; robot 2 keeps off the real thing
+- ~~`nav.BODY_PTS`, `nav.PUSH_HEADINGS`~~ **done** — footprints are an
+  argument, and the mask cache is keyed by one
+- `AgentA.BEAM1_STATION` / `BEAM2_STATION` / `*_LOCAL` → `station.stand_for`
+- `route.KIT_LOOP_Y`, `KIT_BACKOFF`, `KIT_ORDER`, `WP`,
   `SWEEP_LANE_MIN/MAX`, `SWEEP_REACH`, and the scripted
   `turn_to → drive_straight → dress_onto_line` approach chains
 - `planner.TRAVEL` (~30 transcribed corridor times), `planner.DUR`,
   `planner.RANK` (a hand-fixed task order)
 - `robot2.ZONES` (inset rectangles), `HOLD`, `EDGE_HARD`, `CARRY_PAD`,
   `BACK_OUT`, `CLEAR_NEAR/FAR/SLOW`, `_TURN_RUNGS`, `KIT_V`, `CARRY_V/W`
-- `fleet.REGIONS` (8 rectangles drawn by eye), `DIS_*`, `FLEET_NEAR/CRAWL`
-- `nav.BODY_PTS`, `nav.PUSH_HEADINGS` — one robot's chassis living inside
-  the navigation library
+- `fleet.REGIONS` (8 rectangles drawn by eye), `FLEET_NEAR/CRAWL`
 
 `nav.CostMap` was fixed this way already: it read the field size from
 module constants, which quietly made every map in the project this
 contest's map. It now takes a size, defaulting to the old values.
+
+**The list is enforced.** `check_hal` counts coordinate-scale literals in
+`route.py` and `robot2.py` and pins them. **Those caps only ever come
+down.** If a change needs one raised, the change is adding an offender and
+the offender is the change.
 
 ---
 

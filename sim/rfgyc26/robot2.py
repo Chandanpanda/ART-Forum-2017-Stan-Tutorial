@@ -820,7 +820,7 @@ class R2Controller:
             a = np.radians(th)
             x += ahead * np.cos(a)
             y += ahead * np.sin(a)
-            for lx, ly in nav.BODY_PTS:
+            for lx, ly in R2.BODY_PTS:
                 wx = x + lx*np.cos(a) - ly*np.sin(a)
                 wy = y + lx*np.sin(a) + ly*np.cos(a)
                 i, j = self.cmap.cell(wx, wy)
@@ -1467,7 +1467,7 @@ BACK_OUT = 200.0        # how far the loaded pocket may reverse before turning
 
 def _body_free(occ, cm, x, y, th):
     a = np.radians(th)
-    for lx, ly in nav.BODY_PTS:
+    for lx, ly in R2.BODY_PTS:
         i, j = cm.cell(x + lx*np.cos(a) - ly*np.sin(a),
                        y + lx*np.sin(a) + ly*np.cos(a))
         if occ[i, j]:
@@ -1571,7 +1571,7 @@ def _arc_out(occ, cm, pose, th0, th_t, radius=130.0):
             x += radius * np.radians(10.0) * np.cos(np.radians(th))
             y += radius * np.radians(10.0) * np.sin(np.radians(th))
             a = np.radians(th)
-            for lx, ly in nav.BODY_PTS:
+            for lx, ly in R2.BODY_PTS:
                 i, j = cm.cell(x + lx*np.cos(a) - ly*np.sin(a),
                                y + lx*np.sin(a) + ly*np.cos(a))
                 if occ[i, j]:
@@ -1628,7 +1628,7 @@ def _price(cm, robot, puck, zone, t0, zname=None, avoid=()):
     tgt = _zone_pt(zone, puck, zname, avoid)
     heading = float(np.degrees(np.arctan2(tgt[1] - puck[1],
                                           tgt[0] - puck[0])))
-    app = nav.capture_approach(cm, puck, prefer=heading)
+    app = nav.capture_approach(cm, puck, R2.BODY_PTS, prefer=heading)
     if app is None:
         return None
     # CAN IT GET OUT AGAIN?  A capture pose is not a delivery: the robot
@@ -1937,7 +1937,7 @@ def _work_patients(ctl, pucks, live, log, t, now, deadline=112.0,
                 if sp is None:
                     continue
                 app = nav.capture_approach(
-                    cmj, live(j),
+                    cmj, live(j), R2.BODY_PTS,
                     prefer=float(np.degrees(np.arctan2(sp[1]-live(j)[1],
                                                        sp[0]-live(j)[0]))))
                 if app is None:

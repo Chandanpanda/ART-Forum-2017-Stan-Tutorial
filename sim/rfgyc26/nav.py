@@ -431,16 +431,15 @@ def plan(cmap, start, goal, inscribed, circumscribed, t0=0.0, speed=280.0,
 PUSH_HEADINGS = 16
 PUSH_DISTS = (60.0, 120.0, 200.0, 300.0, 420.0, 560.0, 700.0)
 PLOW_REACH = 92.0            # centre to just behind the pocket mouth
-# the CAPTURE POCKET IS PART OF THE BODY (F107): its flare tips reach 77 mm
-# ahead of the axle, and a planner that stops the footprint at 78 routes a
-# robot 15 mm shorter than the one that has to fit.
-# check_r2_pocket.py asserts these points contain every collidable geom, so
-# this list can no longer drift away from the robot it claims to describe.
-BODY_PTS = [(-78.0, 55.0), (-78.0, -55.0), (79.0, 55.0), (79.0, -55.0),
-            (79.0, 40.0), (79.0, -40.0), (79.0, 0.0), (0.0, 0.0)]
+# WHOSE BODY?  This library had one robot's chassis nailed into it, so
+# every map, mask and feasibility test in the project silently assumed that
+# robot.  A footprint is a property of a machine, not of navigation: callers
+# pass their own (params.Robot2.BODY_PTS, or a station.Footprint's pts).
+# The default is None and the functions require it, because a default here
+# is how the coupling came back last time.
 
 
-def body_masks(cmap, n_head=PUSH_HEADINGS):
+def body_masks(cmap, foot, n_head=PUSH_HEADINGS):
     """For each discrete heading, a boolean grid: can the CHASSIS sit with its
     centre in this cell facing this way?
 
@@ -457,7 +456,7 @@ def body_masks(cmap, n_head=PUSH_HEADINGS):
         a = 2.0 * np.pi * k / n_head
         ca, sa = np.cos(a), np.sin(a)
         bad = np.zeros((nx, ny), dtype=bool)
-        for lx, ly in BODY_PTS:
+        for lx, ly in foot:
             wx = gx + lx * ca - ly * sa
             wy = gy + lx * sa + ly * ca
             i = np.clip((wx // cmap.res).astype(int), 0, nx - 1)
@@ -467,15 +466,33 @@ def body_masks(cmap, n_head=PUSH_HEADINGS):
     return out
 
 
+def _masks_for(cmap, foot, n_head=PUSH_HEADINGS):
+    """body_masks(), memoised per (map, FOOTPRINT).
+
+    The cache used to hang off the map alone, so a second robot asking the
+    same map a question got the first robot's body back -- silently, and
+    with a plausible answer.  A cache whose key omits an argument is a bug
+    waiting for a second caller.
+    """
+    key = (tuple(map(tuple, foot)), n_head)
+    have = getattr(cmap, "_push_masks", None)
+    if not isinstance(have, dict):
+        have = {}
+        cmap._push_masks = have
+    if key not in have:
+        have[key] = body_masks(cmap, foot, n_head)
+    return have[key]
+
+
 def _infield(x, y, margin=95.0):
     """Is a robot centre here inside the playing surface, with room?"""
     return (margin <= x <= FIELD_W - margin and
             margin <= y <= FIELD_H - margin)
 
 
-def _body_free(body, x, y, a):
+def _body_free(body, x, y, a, foot):
     ca, sa = np.cos(a), np.sin(a)
-    for lx, ly in BODY_PTS:
+    for lx, ly in foot:
         wx, wy = x + lx * ca - ly * sa, y + lx * sa + ly * ca
         i = int(np.clip(wx // RES, 0, body.shape[0] - 1))
         j = int(np.clip(wy // RES, 0, body.shape[1] - 1))
@@ -505,7 +522,7 @@ def push_actions(masks, res, px, py):
             yield (px + ux * d, py + uy * d, np.degrees(th), d)
 
 
-def plan_push(cmap, puck, zone, robot=None, max_legs=3, speed=170.0,
+def plan_push(cmap, puck, zone, foot, robot=None, max_legs=3, speed=170.0,
               transit=300.0, avoid=None):
     """Push `puck` into `zone` = (x0, y0, x1, y1), in at most max_legs legs.
 
@@ -521,9 +538,7 @@ def plan_push(cmap, puck, zone, robot=None, max_legs=3, speed=170.0,
     against the live board after every delivery.
     """
     x0, y0, x1, y1 = zone
-    masks = cmap._push_masks if getattr(cmap, "_push_masks", None) is not None \
-        else body_masks(cmap)
-    cmap._push_masks = masks
+    masks = _masks_for(cmap, foot)
 
     def parks_badly(x, y):
         """THE LEAVE-CLEAN INVARIANT (design doc 15.7).  A push may not DEPOSIT
@@ -601,7 +616,8 @@ def _unit(dx, dy):
 # an approach from the field centre leaves the nose 27 mm off the wall
 # with no turning arc available.  A* hard-blocks at 75, so 78 is the
 # honest bound and anything larger is throwing away reachable board.
-def capture_approach(cmap, puck, prefer=None, standoffs=(185.0, 150.0, 128.0),
+def capture_approach(cmap, puck, foot, prefer=None,
+                     standoffs=(185.0, 150.0, 128.0),
                      margin=78.0, seat=26.0):
     """Where to stand, and facing where, to CAPTURE this patient.
 
@@ -615,10 +631,7 @@ def capture_approach(cmap, puck, prefer=None, standoffs=(185.0, 150.0, 128.0),
 
     Returns (x, y, heading_deg) or None.
     """
-    masks = getattr(cmap, "_push_masks", None)
-    if masks is None:
-        masks = body_masks(cmap)
-        cmap._push_masks = masks
+    masks = _masks_for(cmap, foot)
     nx, ny = masks[0].shape
     best, best_c = None, 1e18
     for k, ok_here in enumerate(masks):

@@ -10,7 +10,7 @@ import os, sys, time
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import numpy as np
 from rfgyc26 import nav
-from rfgyc26.params import Field
+from rfgyc26.params import Robot2 as R2, Field
 
 VERBOSE = "-v" in sys.argv
 RESULTS = []
@@ -91,7 +91,8 @@ def main():
     # ------------------------------------------------------- push planning
     cm4 = nav.CostMap.field()
     HOSP = (511.0, 941.0, 631.0, 1141.0)
-    legs, secs = nav.plan_push(cm4, (160.0, 763.0), HOSP, robot=(160.0, 600.0))
+    legs, secs = nav.plan_push(cm4, (160.0, 763.0), HOSP, R2.BODY_PTS,
+                               robot=(160.0, 600.0))
     check("a west patient reaches the hospital in at most three pushes",
           legs is not None and len(legs) <= 3,
           "%s legs, %.1f s" % (len(legs) if legs else "no", secs))
@@ -105,13 +106,15 @@ def main():
     cm5 = nav.CostMap.field()
     for dx, dy in ((0, 60), (60, 0), (60, 60), (0, -60), (-60, 0)):
         cm5.add_disc(80.0 + dx, 600.0 + dy, 12.0)
-    legs5, _ = nav.plan_push(cm5, (80.0, 600.0), HOSP, robot=(300.0, 600.0))
+    legs5, _ = nav.plan_push(cm5, (80.0, 600.0), HOSP, R2.BODY_PTS,
+                            robot=(300.0, 600.0))
     check("an unreachable patient is refused, not improvised",
           legs5 is None, "legs %s" % (legs5,))
 
     t = time.time()
     nav.plan_push(nav.CostMap.field(), (983.0, 763.0),
-                  (983.0, 1021.0, 1103.0, 1141.0), robot=(900.0, 700.0))
+                  (983.0, 1021.0, 1103.0, 1141.0), R2.BODY_PTS,
+                  robot=(900.0, 700.0))
     check("a push plan costs under 1.5 s (the opening plan has 12 to make)",
           time.time() - t < 1.5, "%.2f s" % (time.time() - t))
 

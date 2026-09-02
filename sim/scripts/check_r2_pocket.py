@@ -139,7 +139,7 @@ def main():
     # ---- 2. THE PLANNERS DESCRIBE THIS ROBOT (F107) --------------------
     # Every collidable geom must lie inside the footprint nav plans with,
     # and inside the circumscribed radius the costmap inflates by.
-    hull = nav.BODY_PTS
+    hull = R2.BODY_PTS
     fx = max(p[0] for p in hull)
     rx = min(p[0] for p in hull)
     fy = max(abs(p[1]) for p in hull)
@@ -152,7 +152,7 @@ def main():
         for cx in (lo[0], hi[0]):
             for cy in (lo[1], hi[1]):
                 worst_r = max(worst_r, float(np.hypot(cx, cy)))
-    check("every geom lies inside nav.BODY_PTS' extent (F107)",
+    check("every geom lies inside R2.BODY_PTS' extent (F107)",
           not over, "footprint x[%.0f,%.0f] y+-%.0f -- outside: %s"
           % (rx, fx, fy, "; ".join(over)))
     check("R2_CIRCUM covers the real circumscribed radius",

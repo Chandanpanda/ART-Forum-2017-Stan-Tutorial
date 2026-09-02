@@ -530,6 +530,18 @@ class Robot2:
     # 116 -- a 45 mm error in where robot 2 stands to throw them, against a
     # zone 200 mm deep.
     EJECT_BACK      = 116.0
+    # THE CHASSIS, AS THE PLANNERS MUST SEE IT.  These points live here
+    # because they are a measurement of this robot, and they used to live in
+    # nav.py -- one robot's body inside the navigation library, which made
+    # every map in the project assume this chassis.  The capture pocket IS
+    # part of the body (F107): its flare tips reach 77 mm ahead of the axle,
+    # and a planner that stops the footprint at 78 routes a robot 15 mm
+    # shorter than the one that has to fit.  check_r2_pocket asserts these
+    # contain every collidable geom, so the list cannot drift from the robot
+    # it claims to describe.
+    BODY_PTS        = ((-78.0, 55.0), (-78.0, -55.0), (79.0, 55.0),
+                       (79.0, -55.0), (79.0, 40.0), (79.0, -40.0),
+                       (79.0, 0.0), (0.0, 0.0))
     V_MAX           = 420.0                  # mm/s sustained under load
     W_MAX           = 260.0                  # deg/s pivot
 

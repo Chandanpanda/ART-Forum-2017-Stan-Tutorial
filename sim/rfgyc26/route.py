@@ -14,7 +14,7 @@ Every action is time-guarded so a mission can fail but never hang.
 """
 import numpy as np
 from .params import Chassis, AgentA, Field, Piece, M2
-from . import trajectory, station, world
+from . import nav, trajectory, station, world
 
 HZ = 50.0
 MATCH = 120.0            # rules g.1
@@ -773,11 +773,20 @@ def kit_effector(dest):
                             count=len(M2.KIT_GROUPS[dest]))
 
 
-def kit_stand(rb, dest, flt=None, log=None):
+def kit_stand(rb, dest, flt=None, log=None, laid=()):
     """Where to stand to put this hopper's kits in its zone, and how to get
-    there.  Returns (Stand, path, costmap) or (None, None, costmap) when the
-    board says it cannot be done from here -- which is a real answer, and
-    better learned here than by driving there.
+    there.  Returns (Stand, legs, costmap, seconds), or (None, None, costmap,
+    inf) when the board says it cannot be done from here -- which is a real
+    answer, and better learned here than by driving there.
+
+    `legs` is an SE(2) plan from nav.se2_legs: pivots and same-gear runs, in
+    order, ready for trajectory.follow.
+
+    `laid` is what this robot has already put down -- [(x, y, r), ...].  A
+    kit pile is an obstacle the moment it exists, and the robot that made it
+    is the one most likely to drive through it: measured on the rig, the
+    hospital's six kits were dropped correctly and then PLOWED 500 mm west
+    into PCC_L by the very next leg, turning +18 into +4.
 
     The map comes back too: whoever drives the path needs the same picture
     the path was planned on, not a fresh one (the tracker asks it whether
@@ -788,7 +797,7 @@ def kit_stand(rb, dest, flt=None, log=None):
     # one seventeen to one and has been shoving them aside all along.  The
     # other robot, which it cannot shove, stays a wall.
     cm = world.board_map(pieces=pieces, fleet=flt, whose="r1", horizon=0.0,
-                         shove=True)
+                         shove=True, extra=tuple(laid))
     # A REFUSAL NEEDS A FALLBACK (F151).  The first version of this asked
     # for a pose with room to spare and SKIPPED the zone when the board did
     # not offer one -- and the board usually does not, because robot 1 plans
@@ -812,16 +821,29 @@ def kit_stand(rb, dest, flt=None, log=None):
     stands = station.stand_for(KIT_TAPE[dest], kit_effector(dest), A1_FOOT,
                                cm, headings=16, res=20.0,
                                prefer=rb.pose[:2], top=14,
-                               need_clear=-np.inf)
+                               need_clear=-np.inf,
+                               avoid=[p[:2] for p in laid],
+                               avoid_r=(max(p[2] for p in laid) if laid
+                                        else 0.0))
+    # REACHABLE MEANS REACHABLE AT THE RIGHT HEADING (F154).  The filter used
+    # to ask a holonomic A* whether a route existed, which for a body that
+    # cannot turn round in its own corridor is a different question from the
+    # one that matters: it priced the hospital leg at 5.1 s and the robot
+    # could not begin it.  plan_se2 searches (cell, heading) with the moves
+    # this drivetrain has, so a stand survives only if there is a way to
+    # arrive at it FACING THE ZONE -- and the seconds it reports are the
+    # plan's own, not a table's.
     got = station.reachable(
         stands,
-        lambda pose: world.route_to(cm, rb.pose, pose, A1_FOOT, speed=230.0))
+        lambda pose: nav.plan_se2(cm, rb.pose, pose[:2], A1_FOOT,
+                                  speed=230.0, goal_heading=pose[2]))
     if not got:
         if log:
             log("      %s: no stand-off the board allows (%d poses tried)"
                 % (dest, len(stands)))
-        return None, None, cm
-    st, path, _ = got[0]
+        return None, None, cm, float("inf")
+    st, states, secs = got[0]
+    legs = nav.se2_legs(states)
     if flt is not None:
         # PUBLISH THE FLOOR THIS WILL OCCUPY.  Robot 2 chooses where to put
         # patients in the same zones, and it used to keep off robot 1 via a
@@ -838,7 +860,11 @@ def kit_stand(rb, dest, flt=None, log=None):
             % (dest, st.pose[0], st.pose[1], st.pose[2], st.margin,
                "" if st.clear > 0.0 else "  -- TIGHT, body clearance %.0f"
                % st.clear))
-    return st, path, cm
+    if log:
+        log("      %s: %d legs, %.1f s of driving (%d in reverse)"
+            % (dest, len(legs), secs,
+               sum(1 for g in legs if g[0] == "drive" and g[2] < 0)))
+    return st, legs, cm, secs
 
 
 def deliver_kits(rb, log=print, clk=None, deadline=None, order=KIT_ORDER,
@@ -877,6 +903,8 @@ def deliver_kits(rb, log=print, clk=None, deadline=None, order=KIT_ORDER,
     # corner silently -- it is where the "15.5 s" hospital leg went.  So
     # back away first: 55 mm south puts the sweep 25 mm clear, and only
     # then turn east.
+    # What this robot has already laid on the board, as discs to keep off.
+    laid = []
     served_entry = False
     if rb.pose[1] < 320.0 and order:
         px, py, th = rb.pose
@@ -892,13 +920,13 @@ def deliver_kits(rb, log=print, clk=None, deadline=None, order=KIT_ORDER,
         # conceding that the swept patient column at x 983 "has no legal
         # alternative".  Every one of those is a fact about a costmap,
         # discovered by driving into it.  The planner has the costmap.
-        st0, path0, cm0 = kit_stand(rb, order[0], flt=flt, log=log)
+        st0, legs0, cm0, _s0 = kit_stand(rb, order[0], flt=flt, log=log,
+                                         laid=laid)
         ok = False
-        if st0 is not None and path0 is not None and len(path0) > 1:
-            ok = yield from trajectory.track_waypoints(
-                rb, list(path0) + [st0.pose[:2]],
-                v_max=220.0, v_end=100.0, tol_end=28.0, strict=True,
-                cmap=cm0, foot=A1_FOOT)
+        if st0 is not None and legs0:
+            ok = yield from trajectory.follow(
+                rb, legs0, v_max=220.0, v_end=100.0, tol_end=28.0,
+                cmap=cm0, foot=A1_FOOT, log=log)
         served_entry = bool(ok)
         if not ok:
             if rb.pose[1] < 320.0:
@@ -907,7 +935,7 @@ def deliver_kits(rb, log=print, clk=None, deadline=None, order=KIT_ORDER,
         if deadline is not None and clk is not None and clk() > deadline:
             log(t() + "  kits: %s abandoned at the beam deadline" % dest)
             break
-        st, path, cm = kit_stand(rb, dest, flt=flt, log=log)
+        st, legs, cm, _secs = kit_stand(rb, dest, flt=flt, log=log, laid=laid)
         if st is None:
             log(t() + "  kits: %s has no legal stand-off -- skipping" % dest)
             continue
@@ -919,10 +947,10 @@ def deliver_kits(rb, log=print, clk=None, deadline=None, order=KIT_ORDER,
         # legs knew the station's coordinates and nothing else about the
         # board.  A planned path goes round what is on the map.
         if not (di == 0 and served_entry):
-            if path and len(path) > 1:
-                yield from trajectory.track_waypoints(
-                    rb, list(path) + [(tx, ty)], v_max=230.0, v_end=110.0,
-                    cmap=cm, foot=A1_FOOT)
+            if legs:
+                yield from trajectory.follow(
+                    rb, legs, v_max=230.0, v_end=110.0, cmap=cm, foot=A1_FOOT,
+                    log=log)
             if np.hypot(rb.pose[0]-tx, rb.pose[1]-ty) > 45.0:
                 yield from leg(tx, ty)          # close the last few cm
         # 8 deg is enough: the hopper mouth is 78 mm off the centreline, so
@@ -954,6 +982,9 @@ def deliver_kits(rb, log=print, clk=None, deadline=None, order=KIT_ORDER,
                 "-- going round again" % (kx, ky, dest))
             yield from leg(tx, ty, tol=22.0)
         n = rb.open_hopper(dest)
+        # ...and remember it, so the next leg plans around it.
+        laid += [(x, y, M2.HOPPER_SPREAD + Piece.KIT_X/2.0)
+                 for x, y in kit_effector(dest).deposits(*rb.pose)]
         log("      dropped %d kit(s); lip at (%.0f, %.0f)%s"
             % (n, kx, ky, "" if _in_zone(dest, kx, ky) else "  -- OUTSIDE THE ZONE"))
         yield from wait(rb, 0.5)

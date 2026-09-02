@@ -1,4 +1,5 @@
-"""ONE PATIENT, END TO END.  Run this on every change.
+"""THE SCORING PATH, END TO END -- one patient and one kit run.  Run this on
+every change.
 
 The fast tier had a hole the size of the scoring path.  Every suite tested
 a mechanism -- the pocket seats, the gate shuts, the hopper throws -- and
@@ -21,7 +22,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import numpy as np
 import mujoco
 
-from rfgyc26 import mjcf, referee, robot2, station, world
+from rfgyc26 import mjcf, referee, robot2, route, station, world
+from rfgyc26.robot import AgentARobot
 from rfgyc26.params import Field, M2, Piece, Robot2 as R2
 
 VERBOSE = "-v" in sys.argv
@@ -149,6 +151,58 @@ def main():
             check("...and the referee pays for it",
                   referee.score_cylinders(cyl)[0] > base,
                   "%+d vs %+d adrift" % (referee.score_cylinders(cyl)[0], base))
+
+    # ------------------------------------ ROBOT 1's KIT RUN, END TO END
+    # The same hole on robot 1's side, and it cost the kit column twice.
+    # Every suite tested a mechanism -- the hopper throws, the solver finds
+    # a stand -- and none of them drove the LEG, so a robot that dropped six
+    # kits correctly into the hospital and then plowed them 500 mm west into
+    # PCC_L on its way to the next zone read as +4 instead of +18 with
+    # everything green.
+    rng = np.random.default_rng(7)
+    mk = mujoco.MjModel.from_xml_string(mjcf.scene_full_match(
+        [(100.0, 100.0), (160.0, 190.0), (220.0, 110.0)], rng=rng, r2=False,
+        robot_pose=(571.0, 205.0, -90.0)))     # the dock line, facing south
+    dk = mujoco.MjData(mk)
+    mujoco.mj_forward(mk, dk)
+    rb = AgentARobot(mk, dk, rng=rng)
+    for _ in range(20):
+        rb.stop()
+        mujoco.mj_step(mk, dk, nstep=20)
+    said = []
+    t0 = dk.time
+    gen = route.deliver_kits(rb, log=lambda *a: said.append(" ".join(map(str, a))),
+                             clk=lambda: dk.time, order=("HOSP", "PCC_L"))
+    while dk.time - t0 < 70.0:
+        try:
+            next(gen)
+        except StopIteration:
+            break
+        mujoco.mj_step(mk, dk, nstep=20)
+    kits = []
+    for i in range(M2.N_KITS):
+        b = mujoco.mj_name2id(mk, mujoco.mjtObj.mjOBJ_BODY, "kit%d" % i)
+        p = dk.xpos[b] * 1000
+        kits.append((float(p[0]), float(p[1])))
+
+    def in_box(box):
+        return sum(1 for kx, ky in kits
+                   if box[0] <= kx <= box[2] and box[1] <= ky <= box[3])
+
+    check("robot 1 gets off the dock line at all (F154: it could not)",
+          any("legs" in l for l in said) and dk.time - t0 < 69.0,
+          "%.1f s, %d log lines" % (dk.time - t0, len(said)))
+    check("...and lands all six kits in the hospital",
+          in_box(Field.HOSPITAL) == M2.KIT_PLAN["HOSP"],
+          "%d of %d" % (in_box(Field.HOSPITAL), M2.KIT_PLAN["HOSP"]))
+    check("...and both of PCC_L's, without plowing the hospital pile west",
+          in_box(Field.PCC_L) == M2.KIT_PLAN["PCC_L"],
+          "%d of %d" % (in_box(Field.PCC_L), M2.KIT_PLAN["PCC_L"]))
+    # ...and the referee pays for it.  PCC_R is robot 2's, so the best a
+    # solo robot 1 can bank is 8 kits and one empty zone.
+    solo = referee.score_kits(kits)[0]
+    check("...and the referee pays the solo maximum for it", solo >= 14,
+          "%+d/50 (8 kits placed, PCC_R is robot 2's)" % solo)
 
     # ------------------------------------- a delivery it should REFUSE
     # A patient wedged in a corner with no room to leave is not deliverable,

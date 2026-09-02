@@ -223,6 +223,59 @@ def track_waypoints(rb, pts, v_max=220.0, v_end=110.0, tol_end=30.0,
         yield
 
 
+def pivot_to(rb, heading, tol=4.0, w_max=PIVOT_W, stall=2.0, hz=50.0):
+    """Turn in place to a heading, and give up if the turn is not happening.
+
+    The pursuit already contains this law; it is broken out because an
+    SE(2) plan names its pivots explicitly -- they are the legs the search
+    proved there was room for -- and a caller executing one should not have
+    to smuggle them in as a pursuit target behind the shoulder.
+    """
+    held, last = 0, None
+    while True:
+        err = _wrap(heading - rb.pose[2])
+        if abs(err) <= tol:
+            rb.stop()
+            return True
+        if last is not None and abs(err - last) < 0.05:
+            held += 1
+            if held > int(stall * hz):
+                rb.stop()
+                return False                # wedged: the caller decides
+        else:
+            held, last = 0, err
+        rb.drive(0.0, float(np.clip(3.0 * err, -w_max, w_max)))
+        yield
+
+
+def follow(rb, legs, v_max=220.0, v_end=110.0, tol_end=30.0,
+           cmap=None, foot=None, log=None):
+    """Execute an SE(2) plan from nav.se2_legs: pivots and runs, in order.
+
+    The point of driving a plan that names its own gear changes is that the
+    tracker stops having to GUESS which end should lead.  The search already
+    decided, against the map, and it only planned pivots where the swept
+    circle fits.  Returns True when every leg completed.
+    """
+    legs = list(legs or ())
+    for i, leg in enumerate(legs):
+        if leg[0] == "pivot":
+            ok = yield from pivot_to(rb, leg[1])
+        else:
+            pts, gear = leg[1], leg[2]
+            last = (i == len(legs) - 1)
+            ok = yield from track_waypoints(
+                rb, pts, v_max=v_max, v_end=v_end,
+                tol_end=tol_end if last else max(tol_end, 45.0),
+                reverse=(gear < 0), cmap=cmap, foot=foot)
+        if not ok:
+            if log:
+                log("      plan stalled on leg %d of %d (%s)"
+                    % (i + 1, len(legs), leg[0]))
+            return False
+    return True
+
+
 def capture_line(rb, ax, ay, head_deg, gate_mm, v_cruise=200.0,
                  v_arrive=95.0, tol_cross=12.0, tol_head=12.0,
                  reverse=False):

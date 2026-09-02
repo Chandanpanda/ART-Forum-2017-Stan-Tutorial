@@ -394,7 +394,7 @@ class R2Controller:
             dv = np.radians(w) * R2.TRACK / 2.0
             return (float(np.clip(v - dv, -R2.V_MAX, R2.V_MAX)),
                     float(np.clip(v + dv, -R2.V_MAX, R2.V_MAX)))
-        return (0.0, 0.0)          # boxed in: hold, and let robot 1 pass
+        return None                 # boxed in -- see the caller
 
     def _drive(self, v, w):
         """(v mm/s, w deg/s) -> wheel speeds -> the wire, at 20 Hz."""
@@ -412,8 +412,17 @@ class R2Controller:
         if self.fleet is not None:
             haz = self._closing_hazard()
             if haz is not None:
-                vl, vr = self._escape(haz)
-                self.escaping = True
+                esc = self._escape(haz)
+                self.escaping = esc is not None
+                if esc is not None:
+                    vl, vr = esc
+                # esc is None: boxed in, so the commanded motion stands.
+                # Standing still achieves nothing when the other robot
+                # never stops -- and it is what froze this robot on the
+                # start line, 262 mm from a parked robot 1, for a whole
+                # match (F129).  The planner chose that motion against a
+                # costmap this robot's footprint is already stamped into;
+                # it is the best information available.
             else:
                 self.escaping = False
         self._cmd = (vl, vr)
@@ -792,6 +801,27 @@ class R2Controller:
             if ok:
                 sign = s_try
                 break
+        else:
+            # NOTHING FITS FORWARD: BACK OUT FIRST (F133).  The gate is shut
+            # and holds the patient through the reverse, so the room a
+            # wall-side capture does not have in front of it can be
+            # borrowed from behind.  Straight line, no radius needed.
+            room = 0.0 if occ is None else _back_room(occ, self.cmap,
+                                                      (self.x, self.y), self.th)
+            if room >= 60.0:
+                yield from self.back_off(room)
+                err = _wrap(th_t - self.th)
+                sign = 1.0 if err > 0 else -1.0
+                for s_try in (sign, -sign):
+                    th_probe, ok = self.th, True
+                    for _ in range(6):
+                        th_probe += s_try * 15.0
+                        if not fits(self.x, self.y, th_probe, radius * 0.9):
+                            ok = False
+                            break
+                    if ok:
+                        sign = s_try
+                        break
         for _ in range(int(cap_s * hal.Clock.HZ)):
             err = _wrap(th_t - self.th)
             if abs(err) < tol:
@@ -1347,14 +1377,69 @@ def _blocker(pucks, live, i, zone, robot, t0, sched=None, flt=None):
     return None
 
 
+BACK_OUT = 200.0        # how far the loaded pocket may reverse before turning
+
+
+def _body_free(occ, cm, x, y, th):
+    a = np.radians(th)
+    for lx, ly in nav.BODY_PTS:
+        i, j = cm.cell(x + lx*np.cos(a) - ly*np.sin(a),
+                       y + lx*np.sin(a) + ly*np.cos(a))
+        if occ[i, j]:
+            return False
+    return True
+
+
+def _back_room(occ, cm, pose, th0, want=BACK_OUT, step=25.0):
+    """How far the chassis can reverse along -th0 before something is in it."""
+    a = np.radians(th0)
+    got = 0.0
+    while got + step <= want:
+        x = pose[0] - (got + step) * np.cos(a)
+        y = pose[1] - (got + step) * np.sin(a)
+        if not _body_free(occ, cm, x, y, th0):
+            break
+        got += step
+    return got
+
+
 def _can_turn_out(cm, pose, th0, th_t, radius=130.0):
+    """Can the robot leave a capture pose, loaded, onto the carry bearing?
+
+    THE REVERSE IS PART OF THE ANSWER NOW (F133).  This asked only whether a
+    forward arc fitted, which was the right question for a PASSIVE pocket --
+    that build could not reverse without shedding the puck, so a capture
+    with no forward arc was a capture the robot could not leave.  The servo
+    gate changed the mechanism and nothing here noticed: shut, it holds a
+    patient through 250 mm of reverse (check_r2_pocket, BACK 6/6), which is
+    exactly the room a wall-side capture is short of.
+
+    Measured on the seed 6 board, the forward-only test refused seven of
+    twelve patients -- the whole east side, every one of them a ten to
+    thirteen second delivery -- and robot 2 never attempted them in any
+    match.  So: try the arc from the capture pose, and if nothing fits,
+    back straight out as far as the map allows and try again from there.
+    """
+    occ = cm.inflated(6.0, 8.0) >= nav.BLOCKED
+    for back in (0.0, None):
+        if back is None:
+            back = _back_room(occ, cm, pose, th0)
+            if back < 60.0:
+                return False
+            a = np.radians(th0)
+            pose = (pose[0] - back*np.cos(a), pose[1] - back*np.sin(a))
+        if _arc_out(occ, cm, pose, th0, th_t, radius):
+            return True
+    return False
+
+
+def _arc_out(occ, cm, pose, th0, th_t, radius=130.0):
     """Is there a forward arc from (pose, th0) onto th_t that the body fits?
 
     The same sweep carry_turn will actually drive, checked before the robot
     commits to a capture it cannot leave.  Either direction counts; a
     delivery only needs one of them.
     """
-    occ = cm.inflated(6.0, 8.0) >= nav.BLOCKED
     err = _wrap(th_t - th0)
     for sgn in (1.0 if err > 0 else -1.0, -1.0 if err > 0 else 1.0):
         x, y, th = pose[0], pose[1], th0
@@ -1383,8 +1468,33 @@ def _can_turn_out(cm, pose, th0, th_t, radius=130.0):
 def _price(cm, robot, puck, zone, t0, zname=None, avoid=()):
     """(seconds, approach) for one delivery, or None if it cannot be done.
 
-    Both legs are planned STRICT: a transit that would cross a corridor
-    robot 1 has reserved is not cheap, it is unavailable.
+    A RESERVATION IS A PREDICTION, SO IT PRICES A TRANSIT RATHER THAN
+    FORBIDDING ONE (F128).  Both legs used to be planned strict -- a path
+    across a corridor robot 1 had reserved was unavailable, not expensive --
+    and measured over robot 1's own published plan that is not a
+    restriction, it is a shutdown:
+
+        T+20   12 of 12 patients reachable strict,  12 soft
+        T+46    0 of 12                          ,   8 soft
+        T+70    0 of 12                          ,   6 soft
+        T+96    0 of 12                          ,  12 soft
+
+    Robot 1's tour touches the box, the laboratory, both pinches, the
+    hospital, PCC_L and the seal quadrant -- which is most of the board --
+    so from T+46 the strict test answers "nothing is deliverable" for the
+    remaining seventy-four seconds of every match.  Traced on seed 6, robot
+    2 attempts two patients in 120 s, fails both, and then stages and parks
+    with ten still standing on their stickers.  That is the whole -29/80.
+
+    Hard constraints belong to what is MEASURED; a booking made sixty
+    seconds ago is a guess, and a guess deserves a price.  The soft retry
+    charges 4000 a cell for crossing a live window, which buys the way
+    round wherever there is one and only crosses when there is not.  The
+    protections that actually keep the two apart are unchanged and there
+    are three of them: robot 1's measured footprint is a hard obstacle in
+    this same costmap, zone_open still refuses a delivery into a zone robot
+    1 is about to want, and the executive can still order this robot out of
+    a region outright.
     """
     # APPROACH FROM THE SIDE THE DESTINATION IS NOT ON (F113).  The carry
     # is where deliveries were dying: the pocket is open at the front, so
@@ -1412,15 +1522,26 @@ def _price(cm, robot, puck, zone, t0, zname=None, avoid=()):
     if not _can_turn_out(cm, _capture_pose(app, puck), app[2], heading):
         return None
     _, s1 = nav.plan(cm, robot, app[:2], R2_INSCRIBED, R2_CIRCUM,
-                     t0=t0, speed=APPROACH_V, strict=True)
+                     t0=t0, speed=APPROACH_V, strict=False)
     if not np.isfinite(s1):
         return None
     _, s2 = nav.plan(cm, _capture_pose(app, puck), tgt, R2_INSCRIBED,
-                     R2_CIRCUM, t0=t0 + s1 + 3.0, speed=CARRY_V, strict=True)
+                     R2_CIRCUM, t0=t0 + s1 + 3.0, speed=CARRY_V, strict=False)
     if not np.isfinite(s2):
         return None
     #        approach   turn+capture   carry   release+back off
     return float(s1 + 4.0 + s2 + 3.0), app
+
+
+def _wrong_zone(x, y, want):
+    """The name of a destination zone this point is in that is NOT the one
+    we are delivering to, or None."""
+    for zn, box in ZONES.items():
+        if box is want:
+            continue
+        if box[0] <= x <= box[2] and box[1] <= y <= box[3]:
+            return zn
+    return None
 
 
 def _deliver(ctl, i, live, target, app, log, t, zone=None, what="patient"):
@@ -1468,6 +1589,23 @@ def _deliver(ctl, i, live, target, app, log, t, zone=None, what="patient"):
     yield from ctl.goto(tx - ux * R2.CAPTURE_X, ty - uy * R2.CAPTURE_X,
                         v_max=CARRY_V, w_max=CARRY_W, tol=55.0, tries=3,
                         carry=True)
+    # NEVER LET GO INSIDE THE WRONG ZONE (F131).  A carry that falls short
+    # is only worth -3, the same as a patient nobody touched -- but a carry
+    # that falls short ON TOP OF another destination zone is -5, and the
+    # difference is free to avoid: back out along the way we came and drop
+    # it on plain floor instead.  Measured on seed 6, one of two patients
+    # robot 2 got hold of finished in a zone it did not belong in.
+    if zone is not None:
+        for _ in range(4):
+            hx, hy = ctl.pose[0] + ux*R2.CAPTURE_X, ctl.pose[1] + uy*R2.CAPTURE_X
+            wrong = _wrong_zone(hx, hy, zone)
+            if wrong is None:
+                break
+            log(t() + "  %s %d: short, and over %s -- backing off before "
+                "the release" % (what, i, wrong))
+            yield from ctl.goto(ctl.pose[0] - ux*220.0, ctl.pose[1] - uy*220.0,
+                                v_max=CARRY_V, w_max=CARRY_W, tol=70.0,
+                                tries=1, carry=True)
     yield from ctl.release(150.0)
     fx, fy = live(i)
     if zone is None:
@@ -1631,7 +1769,7 @@ def _work_patients(ctl, pucks, live, log, t, now, deadline=112.0,
                     continue
                 _, s1 = nav.plan(cmj, ctl.pose[:2], app[:2], R2_INSCRIBED,
                                  R2_CIRCUM, t0=now(), speed=APPROACH_V,
-                                 strict=True)
+                                 strict=False)
                 if not np.isfinite(s1):
                     continue
                 log(t() + "patient %d is blocked by %d -- clearing it to "

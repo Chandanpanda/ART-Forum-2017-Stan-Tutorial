@@ -70,6 +70,20 @@ REGIONS = {
 }
 ORDER = list(REGIONS)
 
+# Discs down the long axis that CONTAIN each chassis (F130).  n discs each
+# cover a sub-rectangle of half-length a/n and half-width b, so the radius
+# that still contains the corners is sqrt((a/n)^2 + b^2):
+#     robot 1  285 x 235, a=142.5 b=117.5   ->  3 discs of 127 at -95, 0, 95
+#     robot 2  156 x 110, a=78   b=55       ->  2 discs of  67 at -39, 39
+def _chain(length, width, n):
+    a, b = length/2.0, width/2.0
+    r = float(np.hypot(a/n, b))
+    return [(float(-a + (2*k+1)*a/n), r) for k in range(n)]
+
+
+BODY = {"r1": _chain(AgentA.L, AgentA.W, 3),
+        "r2": _chain(156.0, 110.0, 2)}
+
 # ------------------------------------------------------- robot 1's own floor
 # BOTH ROBOTS SCORE IN THE SAME THREE RECTANGLES.  Kits and patients are
 # both delivered to HOSPITAL, PCC_L and PCC_R; only RECOVERY belongs to one
@@ -163,10 +177,19 @@ def region_of(x, y, pad=0.0):
 class Agent:
     """What the executive knows about one robot."""
 
-    def __init__(self, name, radius, priority):
+    def __init__(self, name, radius, priority, body=None):
         self.name = name
         self.radius = float(radius)       # circumscribed, mm
         self.priority = int(priority)
+        # A DISC IS THE WRONG SHAPE FOR A 285 x 235 ROBOT (F130).  Robot 1's
+        # circumscribed radius is 185, so a single disc claims a 370 mm
+        # circle for a body 235 mm across -- sixty per cent more floor than
+        # it occupies, in every direction at once, and robot 2 plans and
+        # flinches against that phantom.  A chain of discs down the long
+        # axis covers the same rectangle as a stadium instead: same
+        # guarantee (it still CONTAINS the body), 253 mm wide rather than
+        # 370.  body is [(local_x, radius), ...]; None means the disc.
+        self.body = list(body) if body else [(0.0, float(radius))]
         self.pose = None                  # (x, y, th_deg), measured
         self.vel = 0.0                    # mm/s along the heading
         self.path = []                    # committed, world mm
@@ -187,8 +210,10 @@ class Fleet:
         self._stamp = 0            # bumped on every observation
         self._hz = {}
 
-    def join(self, name, radius):
-        self.agents[name] = Agent(name, radius, PRIORITY.get(name, 9))
+    def join(self, name, radius, body=None):
+        self.agents[name] = Agent(name, radius, PRIORITY.get(name, 9),
+                                  body=body if body is not None
+                                  else BODY.get(name))
         return self.agents[name]
 
     # ------------------------------------------------------------ observing
@@ -253,7 +278,9 @@ class Fleet:
             if a.name == whose or a.pose is None:
                 continue
             x, y, th = a.pose
-            out.append((x, y, a.radius))
+            c0, s0 = np.cos(np.radians(th)), np.sin(np.radians(th))
+            for lx, r in a.body:
+                out.append((x + lx*c0, y + lx*s0, r))
             if horizon <= 0.0:
                 continue                       # measured footprint only
             # sweep forward along the committed path when there is one, or
@@ -268,7 +295,8 @@ class Fleet:
                         px, py = px + f*(qx-px), py + f*(qy-py)
                         seg *= (1.0 - f)
                         d += step * max(a.vel, 60.0)
-                        out.append((px, py, a.radius))
+                        out.append((px, py, a.radius))   # swept: a guess
+
                     if d >= horizon * max(a.vel, 60.0):
                         break
                     px, py = qx, qy

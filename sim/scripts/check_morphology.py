@@ -56,14 +56,24 @@ SHELL = 8.0
 # shell: the pockets are open-sided channels whose outer face is the beam
 # itself (F44), so what the beam has to clear is the structure, and the
 # loaded envelope is the same whatever the shell does.
-PY = HALF + 4.0 + P.BEAM_W / 2.0
+# ...and it is the POCKET that says how far out, not this file's idea of
+# where it could go.  A design may not put the beam inboard of what is
+# packed, but where params has already placed it, that is where it rides.
+PY = max(A.POCKET_Y, HALF + 4.0 + P.BEAM_W / 2.0)
+# ...and WHERE ALONG the chassis, which is not the middle.  Each beam sits
+# against its own end stop, so params fixes it fore-and-aft; modelling it
+# centred understated the loaded swept radius by 7 mm and would have let
+# this file certify a turn the loaded robot cannot make.
+BEAM_AT = (A.BEAM1_LOCAL[0], A.BEAM2_LOCAL[0])
 
 
 def make(L, W):
     return mo.Design("A%03.0fx%03.0f" % (L, W), L, W, modules=MODULES,
                      shell=SHELL,
-                     cargo=(mo.Cargo("beam1", P.BEAM1_L, P.BEAM_W, (0.0, PY)),
-                            mo.Cargo("beam2", P.BEAM2_L, P.BEAM_W, (0.0, -PY))))
+                     cargo=(mo.Cargo("beam1", P.BEAM1_L, P.BEAM_W,
+                                     (BEAM_AT[0], PY)),
+                            mo.Cargo("beam2", P.BEAM2_L, P.BEAM_W,
+                                     (BEAM_AT[1], -PY))))
 
 
 def main():
@@ -91,7 +101,10 @@ def main():
     # radius is set by the beam ends REGARDLESS OF CHASSIS SHAPE".  That is
     # the assertion -- not the 185 mm it happened to be for a 285 mm
     # chassis, which is a number this file exists to change.
-    beam_r = float(np.hypot(P.BEAM1_L/2.0, PY + P.BEAM_W/2.0))
+    beam_r = max(float(np.hypot(abs(BEAM_AT[0]) + P.BEAM1_L/2.0,
+                                  PY + P.BEAM_W/2.0)),
+                 float(np.hypot(abs(BEAM_AT[1]) + P.BEAM2_L/2.0,
+                                  PY + P.BEAM_W/2.0)))
     check("a loaded robot 1 sweeps whatever its BEAMS sweep",
           abs(today.swept(True) - max(beam_r, today.swept(False))) < 1.0,
           "%.1f mm loaded, beams alone %.1f" % (today.swept(True), beam_r))

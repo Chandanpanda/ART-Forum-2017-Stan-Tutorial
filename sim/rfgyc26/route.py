@@ -204,6 +204,23 @@ def dwell_until_loaded(rb, cap=None, quiet=4.6, want=None):
         yield
 
 
+# WHERE A COLLECTING PASS ENDS IS THE KNIFE'S GEOMETRY, NOT A NUMBER (F154).
+#
+# A sample only gets picked up with the west wall behind it: the wedge law
+# says the knife slides under a piece rather than shoving it only while the
+# piece is held, and F78 measured 10 of 15 captured hard against the wall
+# against 0 of 5 bulldozed in open field.  A disc resting on the wall has its
+# centre one radius out, and the knife tip has to arrive UNDER that centre.
+# So the axle stops one knife-lead short of it.
+#
+# 158 was exactly this arithmetic for a 285 mm chassis, written as a number.
+# On a 230 mm one the same 158 leaves the tip at x 56 -- the far edge of the
+# disc, where the knife pushes instead of lifting.  Measured: three samples
+# aboard became zero, two of them bulldozed 150 mm east, and the sample
+# column went from +20.7 a match to -5.4.
+SWEEP_STOP_X = Piece.DISC_D / 2.0 + (AgentA.SHIM_TIP_X - AgentA.AXLE_X)
+
+
 def sweep_line(rb, y, x_to, speed=140.0, want=None):
     """Collecting run along a constant-Y line, fingers open, heading held at 180.
 
@@ -1091,7 +1108,7 @@ def mission_agent_a(rb, holes, hole_y, chute_offset, log=print, clock=None,
             yield from guard(turn_to(rb, 180.0), 12.0)
         else:
             yield from guard(pursue(rb, 430.0, lane, speed=220.0, tol=40.0), 20.0)
-        yield from guard(sweep_line(rb, lane, 158.0, want=3), 45.0)
+        yield from guard(sweep_line(rb, lane, SWEEP_STOP_X, want=3), 45.0)
 
     # PLAN THE LANES FROM THE SURVEY (F100).  The two fixed lanes above were
     # chosen against 24 randomised samples and they collect -- but they are a

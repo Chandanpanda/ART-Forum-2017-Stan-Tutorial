@@ -24,7 +24,7 @@ import mujoco
 
 from rfgyc26 import mjcf, referee, robot2, route, station, world
 from rfgyc26.robot import AgentARobot
-from rfgyc26.params import Field, M2, Piece, Robot2 as R2
+from rfgyc26.params import AgentA, Field, M2, Piece, Robot2 as R2
 
 VERBOSE = "-v" in sys.argv
 RESULTS = []
@@ -151,6 +151,46 @@ def main():
             check("...and the referee pays for it",
                   referee.score_cylinders(cyl)[0] > base,
                   "%+d vs %+d adrift" % (referee.score_cylinders(cyl)[0], base))
+
+    # ------------------------------------- ROBOT 1's SWEEP, END TO END
+    # The third time the same hole cost a column.  check_effectors measures
+    # that the knife lifts a disc and the belt carries it; nothing drove a
+    # PASS, so a stop line that left the knife tip at the far edge of the
+    # sample instead of under its centre read as 25 green checks and a
+    # sample column of -5.4 a match.
+    dsc = [(120.0, 140.0), (190.0, 200.0), (230.0, 120.0)]
+    rng = np.random.default_rng(1)
+    ms = mujoco.MjModel.from_xml_string(mjcf.scene_full_match(
+        dsc, rng=rng, r2=False, robot_pose=AgentA.START_POSE))
+    ds = mujoco.MjData(ms)
+    mujoco.mj_forward(ms, ds)
+    rbs = AgentARobot(ms, ds, rng=rng)
+    gen = route.mission_agent_a(
+        rbs, list(Field.LAB_HOLE_X), mjcf.LAB_HOLE_Y,
+        AgentA.AXLE_X - AgentA.CHUTE_X, log=lambda *a: None,
+        clock=lambda: ds.time, discs=dsc)
+    while ds.time < 26.0:
+        try:
+            next(gen)
+        except StopIteration:
+            break
+        mujoco.mj_step(ms, ds, nstep=20)
+    zs = []
+    for i in range(3):
+        b = mujoco.mj_name2id(ms, mujoco.mjtObj.mjOBJ_BODY, "disc%d" % i)
+        zs.append(float(ds.xpos[b][2] * 1000))
+    # A sample on the field sits at z ~ 2.5; one in the magazine is stacked
+    # well above the deck.  So height is the honest test of "collected".
+    aboard = sum(1 for z in zs if z > 10.0)
+    check("a sweep pass collects the samples it drove over (F154)",
+          aboard == 3, "%d of 3 aboard, z = %s"
+          % (aboard, ", ".join("%.0f" % z for z in zs)))
+    # ...and the stop line is the knife's geometry, not a number that
+    # happened to be right for one chassis length.
+    check("...because the pass stops with the knife under a walled sample",
+          abs(route.SWEEP_STOP_X
+              - (Piece.DISC_D/2.0 + AgentA.SHIM_TIP_X - AgentA.AXLE_X)) < 1e-9,
+          "stop x %.1f" % route.SWEEP_STOP_X)
 
     # ------------------------------------ ROBOT 1's KIT RUN, END TO END
     # The same hole on robot 1's side, and it cost the kit column twice.

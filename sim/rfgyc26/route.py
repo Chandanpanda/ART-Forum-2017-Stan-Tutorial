@@ -775,9 +775,14 @@ def kit_effector(dest):
 
 def kit_stand(rb, dest, flt=None, log=None):
     """Where to stand to put this hopper's kits in its zone, and how to get
-    there.  Returns (Stand, path) or (None, None) when the board says it
-    cannot be done from here -- which is a real answer, and better learned
-    here than by driving there."""
+    there.  Returns (Stand, path, costmap) or (None, None, costmap) when the
+    board says it cannot be done from here -- which is a real answer, and
+    better learned here than by driving there.
+
+    The map comes back too: whoever drives the path needs the same picture
+    the path was planned on, not a fresh one (the tracker asks it whether
+    there is room to turn around).
+    """
     pieces = [] if flt is None else flt.pieces({"patient"})
     # The patients are a COST to robot 1, not a wall (F153): it outweighs
     # one seventeen to one and has been shoving them aside all along.  The
@@ -815,7 +820,7 @@ def kit_stand(rb, dest, flt=None, log=None):
         if log:
             log("      %s: no stand-off the board allows (%d poses tried)"
                 % (dest, len(stands)))
-        return None, None
+        return None, None, cm
     st, path, _ = got[0]
     if flt is not None:
         # PUBLISH THE FLOOR THIS WILL OCCUPY.  Robot 2 chooses where to put
@@ -833,7 +838,7 @@ def kit_stand(rb, dest, flt=None, log=None):
             % (dest, st.pose[0], st.pose[1], st.pose[2], st.margin,
                "" if st.clear > 0.0 else "  -- TIGHT, body clearance %.0f"
                % st.clear))
-    return st, path
+    return st, path, cm
 
 
 def deliver_kits(rb, log=print, clk=None, deadline=None, order=KIT_ORDER,
@@ -887,12 +892,13 @@ def deliver_kits(rb, log=print, clk=None, deadline=None, order=KIT_ORDER,
         # conceding that the swept patient column at x 983 "has no legal
         # alternative".  Every one of those is a fact about a costmap,
         # discovered by driving into it.  The planner has the costmap.
-        st0, path0 = kit_stand(rb, order[0], flt=flt, log=log)
+        st0, path0, cm0 = kit_stand(rb, order[0], flt=flt, log=log)
         ok = False
         if st0 is not None and path0 is not None and len(path0) > 1:
             ok = yield from trajectory.track_waypoints(
                 rb, list(path0) + [st0.pose[:2]],
-                v_max=220.0, v_end=100.0, tol_end=28.0, strict=True)
+                v_max=220.0, v_end=100.0, tol_end=28.0, strict=True,
+                cmap=cm0, foot=A1_FOOT)
         served_entry = bool(ok)
         if not ok:
             if rb.pose[1] < 320.0:
@@ -901,7 +907,7 @@ def deliver_kits(rb, log=print, clk=None, deadline=None, order=KIT_ORDER,
         if deadline is not None and clk is not None and clk() > deadline:
             log(t() + "  kits: %s abandoned at the beam deadline" % dest)
             break
-        st, path = kit_stand(rb, dest, flt=flt, log=log)
+        st, path, cm = kit_stand(rb, dest, flt=flt, log=log)
         if st is None:
             log(t() + "  kits: %s has no legal stand-off -- skipping" % dest)
             continue
@@ -915,7 +921,8 @@ def deliver_kits(rb, log=print, clk=None, deadline=None, order=KIT_ORDER,
         if not (di == 0 and served_entry):
             if path and len(path) > 1:
                 yield from trajectory.track_waypoints(
-                    rb, list(path) + [(tx, ty)], v_max=230.0, v_end=110.0)
+                    rb, list(path) + [(tx, ty)], v_max=230.0, v_end=110.0,
+                    cmap=cm, foot=A1_FOOT)
             if np.hypot(rb.pose[0]-tx, rb.pose[1]-ty) > 45.0:
                 yield from leg(tx, ty)          # close the last few cm
         # 8 deg is enough: the hopper mouth is 78 mm off the centreline, so

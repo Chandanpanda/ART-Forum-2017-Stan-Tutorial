@@ -412,6 +412,186 @@ def plan(cmap, start, goal, inscribed, circumscribed, t0=0.0, speed=280.0,
     return path, path_length(path) / max(speed, 1.0)
 
 
+# ============================================== heading-aware planning (F154)
+# A* ON (x, y) PLANS FOR A DISC, AND NEITHER ROBOT IS ONE.
+#
+# The path this library returned for the kit dispatch was 1180 mm long and
+# cost, it said, 5.1 s.  The leg took 18.3 s when it worked at all, and on
+# the trace that motivated this it did not work: the robot stood on the dock
+# line facing SOUTH, the first knee lay 93 degrees off to the east, the
+# pursuit answered that with a forward arc, and the nose -- 142 mm ahead of
+# the axle -- went into the south wall.  Thirty-eight millimetres of travel,
+# then 2.5 s pinned until the watchdog.
+#
+# No steering law fixes that, because the infeasibility is in the PLAN.  The
+# corridor between the south wall and the laboratory is 341 mm tall and this
+# chassis sweeps a 185 mm circle: 2 x 185 > 341, so there is nowhere on the
+# dock line it can reverse direction, and a planner that never represents
+# heading cannot know it has asked for one.
+#
+# So plan in SE(2).  State is (cell, heading); the moves are the ones a
+# differential drive actually has --
+#
+#     drive one cell along the heading, forward or in reverse
+#     pivot one heading step, WHERE THERE IS ROOM FOR THE SWEPT CIRCLE
+#
+# -- each priced in seconds, which makes the search's own g-value the travel
+# estimate the scheduler has been guessing at with a table.  Reverse is
+# allowed and slightly dearer, so the planner uses it where it is the only
+# way out of a corridor and prefers the nose elsewhere; the pivot's clearance
+# precondition is what stops it planning turns the vehicle cannot make.
+#
+# This is a state lattice, the standard construction for a car-like or
+# differentially driven body.  Eight headings align with the eight moves of
+# the square grid, so a straight run is exact rather than a staircase.
+
+SE2_HEADINGS = 8
+_SE2_STEP = ((1, 0), (1, 1), (0, 1), (-1, 1),
+             (-1, 0), (-1, -1), (0, -1), (1, -1))
+
+
+def plan_se2(cmap, start, goal, foot, speed=230.0, pivot_w=110.0,
+             goal_heading=None, n_head=SE2_HEADINGS, reverse_cost=1.15,
+             pivot_clear=None):
+    """A route a differential drive can follow, and how long it takes.
+
+    start   (x, y, heading_deg) -- the heading matters, that is the point
+    goal    (x, y) or (x, y, heading_deg)
+    foot    a station.Footprint (or anything with .pts/.inscribed/
+            .circumscribed)
+    goal_heading  degrees to arrive at, or None for any
+
+    Returns (states, seconds) with states = [(x, y, heading_deg, gear), ...],
+    gear +1 driving forward, -1 in reverse, 0 for a pivot in place.  No route
+    gives (None, inf).
+
+    The seconds are the search's own cost: straight runs at `speed`, pivots
+    at `pivot_w` deg/s, plus whatever the costmap charges for driving over
+    something shovable.  That is a travel model derived from the board and
+    the body rather than measured once and typed in.
+    """
+    pts = tuple(map(tuple, getattr(foot, "pts", foot)))
+    masks = _masks_for(cmap, pts, n_head)
+    grid = cmap.inflated(foot.inscribed, foot.circumscribed)
+    clear = cmap.clearance()
+    need = float(foot.circumscribed if pivot_clear is None else pivot_clear)
+    nx, ny = grid.shape
+    res = cmap.res
+    step = 360.0 / n_head
+
+    def cell(x, y):
+        return (int(np.clip(x // res, 0, nx - 1)),
+                int(np.clip(y // res, 0, ny - 1)))
+
+    def head(deg):
+        return int(round((deg % 360.0) / step)) % n_head
+
+    si, sj = cell(start[0], start[1])
+    sk = head(start[2] if len(start) > 2 else 0.0)
+    gi, gj = cell(goal[0], goal[1])
+    if grid[gi, gj] >= BLOCKED:
+        ni, nj = _nearest_free(grid, gi, gj)
+        if ni is None:
+            return None, float("inf")
+        gi, gj = ni, nj
+    gk = None if goal_heading is None else head(goal_heading)
+
+    def h(i, j):
+        dx, dy = abs(i - gi), abs(j - gj)
+        return (max(dx, dy) + 0.41421356 * min(dx, dy)) * res / max(speed, 1.0)
+
+    start_state = (si, sj, sk)
+    open_ = [(h(si, sj), 0.0, start_state)]
+    came, g_of, seen = {}, {start_state: 0.0}, set()
+    pivot_t = step / max(pivot_w, 1.0)
+    goal_state = None
+    while open_:
+        _f, g, st = heapq.heappop(open_)
+        if st in seen:
+            continue
+        seen.add(st)
+        i, j, k = st
+        if (i, j) == (gi, gj) and (gk is None or k == gk):
+            goal_state = st
+            break
+        # --- pivot, only where the swept circle fits
+        if clear[i, j] >= need:
+            for dk in (1, -1):
+                nk = (k + dk) % n_head
+                if not masks[nk][i, j]:
+                    continue
+                nxt = (i, j, nk)
+                ng = g + pivot_t
+                if nxt not in seen and ng < g_of.get(nxt, 1e18):
+                    g_of[nxt] = ng
+                    came[nxt] = (st, 0)
+                    heapq.heappush(open_, (ng + h(i, j), ng, nxt))
+        # --- drive, nose-first or tail-first
+        for gear in (1, -1):
+            kk = k if gear > 0 else (k + n_head // 2) % n_head
+            di, dj = _SE2_STEP[kk]
+            ni, nj = i + di, j + dj
+            if not (0 <= ni < nx and 0 <= nj < ny):
+                continue
+            if not masks[k][ni, nj]:
+                continue
+            c = grid[ni, nj]
+            if c >= BLOCKED:
+                continue
+            w = 1.41421356 if (di and dj) else 1.0
+            ng = g + (w * res + c * w) / max(speed, 1.0) * \
+                (1.0 if gear > 0 else reverse_cost)
+            nxt = (ni, nj, k)
+            if nxt not in seen and ng < g_of.get(nxt, 1e18):
+                g_of[nxt] = ng
+                came[nxt] = (st, gear)
+                heapq.heappush(open_, (ng + h(ni, nj), ng, nxt))
+    if goal_state is None:
+        return None, float("inf")
+    out, st = [], goal_state
+    while st != start_state:
+        prev, gear = came[st]
+        i, j, k = st
+        out.append((cmap.centre(i, j)[0], cmap.centre(i, j)[1],
+                    k * step, gear))
+        st = prev
+    out.append((cmap.centre(si, sj)[0], cmap.centre(si, sj)[1],
+                sk * step, 1))
+    out.reverse()
+    return out, float(g_of[goal_state])
+
+
+def se2_legs(states, min_run=1):
+    """Segment an SE(2) plan into things a tracker can be told to do.
+
+    Returns [("pivot", heading_deg), ("drive", [(x, y), ...], gear), ...] --
+    the pivots are where the plan changes heading in place, the drives are
+    maximal runs at one heading and one gear, so each becomes one pursuit.
+    """
+    legs = []
+    run, gear = [], None
+    for x, y, th, g in states or ():
+        if g == 0:
+            if len(run) > min_run:
+                legs.append(("drive", run, gear))
+            run, gear = [], None
+            if not legs or legs[-1][0] != "pivot":
+                legs.append(("pivot", th))
+            else:
+                legs[-1] = ("pivot", th)
+            continue
+        if gear is None or g == gear:
+            gear = g
+            run.append((x, y))
+        else:
+            if len(run) > min_run:
+                legs.append(("drive", run, gear))
+            run, gear = [(x, y)], g
+    if len(run) > min_run:
+        legs.append(("drive", run, gear))
+    return legs
+
+
 # ====================================================== push planning (15.5b)
 # Delivering a patient is NON-PREHENSILE MANIPULATION: the robot cannot carry
 # the cylinder, only shove it, so the question "can this puck reach that zone"

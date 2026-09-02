@@ -45,15 +45,88 @@ def _wrap(a):
     return (a + 180.0) % 360.0 - 180.0
 
 
+def _room_to_turn(rb, cmap, foot):
+    """Can this chassis rotate where it stands?
+
+    A standing turn sweeps the circumscribed circle, so it needs that much
+    clearance under the axle.  With no map to ask, assume yes -- the caller
+    that cares supplies one.
+    """
+    if cmap is None or foot is None:
+        return True
+    d = cmap.clearance()
+    i, j = cmap.cell(rb.pose[0], rb.pose[1])
+    return float(d[i, j]) >= foot.circumscribed
+
+
+def _lead_end(rb, pts, cmap, foot, no_pivot=False):
+    """Which end should lead: False for nose-first, True for tail-first.
+
+    The bearing to the first knee the pursuit will actually chase decides
+    it.  Where there is room to swing, the nose leads whenever the knee is
+    inside the pursuit cone -- nothing has to happen and the terminal
+    behaviours all expect a nose-first arrival.
+
+    WHERE THERE IS NOT, TAKE THE END THAT TURNS LESS.  "Behind the
+    shoulder" is the wrong question for a vehicle that cannot swing: at
+    the dock line the first knee is 93 degrees off, six degrees inside the
+    pivot threshold, so the pursuit answered it with a forward arc -- and a
+    forward arc puts the NOSE, 142 mm ahead of the axle, through the south
+    wall.  Measured: 38 mm of travel, then 2.5 s pinned until the
+    watchdog.  Reversed, the same 93 degrees becomes 87 the other way and
+    the leading end sweeps north into open field.  The vehicle is
+    symmetric; only the room is not.
+    """
+    if no_pivot:
+        # The caller has said the payload constrains attitude (robot 2's
+        # pocket is open at the FRONT, so reversing tips it out just as a
+        # pivot walks it out).  Nose-first, and the approach was chosen so
+        # that works.
+        return False
+    px, py, th = rb.pose
+    p = np.array([px, py])
+    tgt = pts[-1]
+    for q in pts:                       # the first knee that is not underfoot
+        if float(np.linalg.norm(q - p)) > 45.0:
+            tgt = q
+            break
+    err = _wrap(np.degrees(np.arctan2(tgt[1] - py, tgt[0] - px)) - th)
+    if abs(err) <= 95.0 and _room_to_turn(rb, cmap, foot):
+        return False
+    return abs(_wrap(err + 180.0)) < abs(err)
+
+
 def track_waypoints(rb, pts, v_max=220.0, v_end=110.0, tol_end=30.0,
-                    lookahead=0.55, reverse=False, strict=False,
-                    w_max=None, no_pivot=False):
+                    lookahead=0.55, reverse=None, strict=False,
+                    w_max=None, no_pivot=False, cmap=None, foot=None):
     """Pure pursuit through pts = [(x, y), ...]; ends near the last point
     at ~v_end.  Corners are cut by the lookahead circle -- that is the
     point -- so waypoints are corridor knees, not poses to visit exactly.
     reverse=True drives TAIL-FIRST (back_to's steering law), keeping the
     chassis heading for a reverse terminal that follows -- the seal's
     descent uses it to arrive ready to press without an about-face.
+
+    reverse=None (the default) DECIDES, which is the honest setting for a
+    differential drive: the vehicle is symmetric, so which end leads is a
+    choice, and it was being made by a constant at every call site.
+
+    A ROBOT THAT CANNOT TURN AROUND MUST NOT BE ASKED TO (F154).  Robot 1
+    sweeps a 185 mm circle and the corridor south of the laboratory is
+    341 mm tall, so 2 x 185 > 341: there is NOWHERE on the dock line it
+    can reverse direction.  Every kit dispatch starts there facing south
+    with the zones to the north, and the pursuit dutifully tried the
+    stand-and-turn its own comment calls "rare, and only at entry" --
+    measured, it drove 38 mm, wedged its nose in the south wall and sat
+    there until the watchdog fired 2.5 s later.  The leg then limped in on
+    turn-and-drive fallbacks in 18.3 s against a model that budgeted 11.7,
+    and the guard cut it 2.6 s before the throw.  That is the whole kit
+    column: 22.6 points a match to -17.4.
+
+    So when the path starts behind the shoulder, ask whether there is room
+    to turn before turning.  With a `cmap` and a `foot` the answer is the
+    clearance under the chassis against its own swept radius; without
+    them, take the direction that needs less turning.  Either way, backing
+    up the corridor costs nothing and needs no room at all.
     strict=True actually VISITS each knee (advance radius 45 mm instead of
     the lookahead): for corridor-critical knees whose whole point is the
     detour -- the seal's east knee exists to keep the tail off a patient
@@ -72,6 +145,8 @@ def track_waypoints(rb, pts, v_max=220.0, v_end=110.0, tol_end=30.0,
     approach that does not need one (see nav.capture_approach's prefer)."""
     pts = [np.asarray(p, float) for p in pts]
     w_cap = W_MAX if w_max is None else float(w_max)
+    if reverse is None:
+        reverse = _lead_end(rb, pts, cmap, foot, no_pivot)
     goal_i = 0                                  # the waypoint being pursued
     last_d, held = 1e9, 0
     pivoting = False

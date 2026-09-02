@@ -150,6 +150,76 @@ def main():
         real = min(float(d[full_board.cell(*p)]) for p in path)
         check("widest_path reports the width it actually delivers",
               abs(real - width) < 1e-6, "%.1f vs %.1f" % (real, width))
+    # ------------------------------------------------- heading-aware plans
+    # A PLAN THE VEHICLE CANNOT FOLLOW IS NOT A PLAN.  The holonomic A*
+    # costs the kit dispatch at 5.1 s; the chassis cannot start it at all,
+    # because the corridor between the south wall and the laboratory is
+    # 341 mm and its swept circle is 370 across.  plan_se2 represents
+    # heading, so it says so.
+    from rfgyc26 import station as _st, route as _rt
+    from rfgyc26.params import AgentA as _A, Field as _F
+    DOCK = (571.0, 205.0, -90.0)
+    big = _st.Footprint(_A.body_pts(285.0, 235.0), 117.5,
+                        float(np.hypot(285.0, 235.0)/2.0))
+    small = _st.Footprint(_A.body_pts(230.0, 191.0), 95.5,
+                          float(np.hypot(230.0, 191.0)/2.0))
+    board = world.board_map(pieces=pieces, shove=True)
+    goal = _st.best_stand(_F.HOSPITAL, _rt.kit_effector("HOSP"), small, board,
+                          headings=16, res=20.0, prefer=DOCK[:2],
+                          need_clear=-np.inf)
+    check("a stand for the hospital exists at all", goal is not None)
+    if goal:
+        t = time.time()
+        bad, _s1 = nav.plan_se2(board, DOCK, goal.pose[:2], big,
+                                goal_heading=goal.pose[2])
+        ms = (time.time() - t) * 1000.0
+        check("a 185 mm swept radius CANNOT leave the dock line (F154)",
+              bad is None, "found %s states" % (len(bad) if bad else 0))
+        good, secs = nav.plan_se2(board, DOCK, goal.pose[:2], small,
+                                  goal_heading=goal.pose[2])
+        check("...and a 149 mm one can", good is not None,
+              "%.1f s" % secs if good else "no route")
+        check("the SE(2) search is fast enough to run per leg", ms < 300.0,
+              "%.0f ms" % ms)
+        if good:
+            # every pose it plans is one the body actually fits
+            masks = nav._masks_for(board, tuple(map(tuple, small.pts)),
+                                   nav.SE2_HEADINGS)
+            step = 360.0 / nav.SE2_HEADINGS
+            bads = [(x, y, th) for x, y, th, _g in good[1:]
+                    if not masks[int(round(th/step)) % nav.SE2_HEADINGS][
+                        board.cell(x, y)]]
+            check("every pose on the plan is one the chassis fits in",
+                  not bads, "%d bad, first %s" % (len(bads), bads[:1]))
+            # ...and it only pivots where the swept circle has room
+            d = board.clearance()
+            spins = [(x, y) for x, y, _th, g in good if g == 0]
+            tight = [p for p in spins
+                     if float(d[board.cell(*p)]) < small.circumscribed]
+            check("...and it only turns in place where the circle fits",
+                  not tight, "%d of %d pivots too tight"
+                  % (len(tight), len(spins)))
+            L = sum(float(np.hypot(good[i+1][0]-good[i][0],
+                                   good[i+1][1]-good[i][1]))
+                    for i in range(len(good)-1))
+            check("the time it reports is no faster than the distance allows",
+                  secs >= L/230.0 - 1e-6, "%.1f s for %.0f mm" % (secs, L))
+            legs = nav.se2_legs(good)
+            drives = sum(len(r[0]) for k, *r in legs if k == "drive")
+            check("se2_legs keeps the plan it was given",
+                  drives + sum(1 for k, *_r in legs if k == "pivot")
+                  <= len(good), "%d legs" % len(legs))
+            check("...and every leg is a pivot or a drive",
+                  all(k in ("pivot", "drive") for k, *_r in legs))
+
+    # an open-field leg needs no pivots and no reversing at all
+    open_states, _t = nav.plan_se2(world.board_map(), (300.0, 800.0, 0.0),
+                                   (800.0, 800.0), small)
+    check("a straight open-field leg is planned straight",
+          open_states is not None
+          and all(g == 1 for _x, _y, _th, g in open_states[1:]),
+          "%d states" % (len(open_states) if open_states else 0))
+
     before = list(_fl.ORDER)
     _fl.learn_doors(full_board, radius=55.0)
     check("learning the doors does not reorder the acquisition sequence",

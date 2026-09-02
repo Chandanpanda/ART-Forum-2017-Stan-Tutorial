@@ -393,6 +393,12 @@ class M2:
     # referee: nothing at all is -30, hospital alone is -2, hospital plus one
     # PCC is +14, and the full 6/2/2 is +50.  The last two kits, in the far
     # corner, are worth 36 points on their own.
+    # MEASURED BY scripts/check_effectors.py, NOT CHOSEN.  Kits tumble out
+    # of a hopper and settle differently at every heading; this is half the
+    # observed spread of the first kit's landing point over three headings
+    # (HOSP +-24 mm, PCC_L +-31), and it is what station.Effector plans
+    # with.  An optimistic value here aims at the edge of a zone and misses.
+    HOPPER_SPREAD   = 32.0
     KIT_GROUPS      = {"HOSP": tuple(range(6)), "PCC_L": (6, 7), "PCC_R": (8, 9)}
     # WHICH DESTINATIONS THIS ROBOT SERVES (F80).  The match is decided by the
     # clock, not by whether a task is possible, and the kit loop is the only
@@ -518,6 +524,12 @@ class Robot2:
     # reasons about are now PHYSICAL numbers instead of guesses.
     TAU_STALL       = 0.060                  # N.m at the output shaft
     W_NOLOAD        = 21.0                   # rad/s  (~200 rpm)
+    # MEASURED BY scripts/check_effectors.py.  The shake walks the kits
+    # over the tail lip; this is how far behind the axle they come to rest.
+    # It was 71 in the code, read off one match log by eye, and the rig says
+    # 116 -- a 45 mm error in where robot 2 stands to throw them, against a
+    # zone 200 mm deep.
+    EJECT_BACK      = 116.0
     V_MAX           = 420.0                  # mm/s sustained under load
     W_MAX           = 260.0                  # deg/s pivot
 

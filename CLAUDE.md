@@ -137,6 +137,53 @@ contest's map. It now takes a size, defaulting to the old values.
 
 ---
 
+## The model checks — run these, always
+
+```
+python3 sim/scripts/check_all.py            # 215 checks, ~52 s, run every time
+python3 sim/scripts/check_all.py --slow     # + estimator and rendered perception
+```
+
+**Run it before you start and after every change that touches `params.py`,
+`mjcf.py`, `nav.py`, `station.py`, either robot, or the referee.** There is
+one command on purpose: deciding which suite is relevant is how a change
+ships without the suite that would have caught it.
+
+These test the MODEL, not the strategy. They exist because the expensive
+mistakes here have not been bad plans — they have been planning correctly
+against a world that was not the world:
+
+| suite | what it would have caught |
+|---|---|
+| `check_geometry` | params that no longer re-derive each other |
+| `check_board` | a piece inside a wall, a colour read back differently from how it was written, a zone the referee disagrees with, a board that drifts at rest |
+| `check_model` | built geometry that does not match the drawing — a knife 3.75 mm under the floor, a razor skived the wrong way |
+| `check_effectors` | **where a payload actually lands vs where the planner thinks** — the hopper stride, the tray's ejection offset |
+| `check_r2_pocket` | the capture pocket, the gate's shut/open clearances, seating |
+| `check_station` | the pose solver, including on a field it has never seen |
+| `check_nav` | costmap, A*, space–time windows |
+| `check_planner` | the task DP against exhaustive enumeration |
+| `check_trajectory` | the tracker |
+| `check_hal` | the HAL contract, robot 1's drivetrain, no ground-truth reads in mission code |
+
+### When a check fails, suspect the check
+
+Three of the first five failures in `check_effectors` were the *check*
+being wrong, not the code: it spawned robot 2 on top of the laboratory
+plate, it expected a pivot to obey rolling geometry when a real pivot
+scrubs, and it wrote a hopper's stride sideways. Each was still worth
+having, because each was a belief I would otherwise have planned against.
+
+Two were real: the tray's ejection offset was 116 mm and the code said 71
+— a 45 mm error in where robot 2 stands to throw its kits, into a zone
+200 mm deep.
+
+### Adding to them
+
+Every time a fault is found by staring at a match, ask what static or
+one-second check would have found it, and add that instead of a comment.
+A suite that takes a minute is free; a board that takes forty is not.
+
 ## Measurement discipline
 
 - **Boards do not steer.** A 24-seed board has a standard error of ±7
@@ -145,6 +192,11 @@ contest's map. It now takes a size, defaulting to the old values.
 - **Rigs steer.** Isolate one mechanism, vary one thing, report the failure
   mode. `check_station`, `rig_kits`, `rig_carryv`, `rig_column` are the
   pattern.
+- **Calibration constants are legitimate, and they come from a rig.**
+  `M2.HOPPER_SPREAD` and `R2.EJECT_BACK` are measured by
+  `check_effectors` and asserted by it, so they cannot quietly drift away
+  from the machine. A constant with a suite that re-measures it is a
+  measurement; the same constant without one is a guess.
 - **A rig that cannot fail is not a measurement.** `rig_cycle` once
   returned "the generator finished" instead of what it returned, reported
   10 of 12 deliveries, and the referee scored −6.

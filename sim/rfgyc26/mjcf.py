@@ -972,9 +972,27 @@ def disc_body(i, x, y, z=None):
             f'size="{mm(Piece.DISC_D/2):.5f} {mm(Piece.DISC_T/2):.5f}" '
             f'mass="{Piece.DISC_M/1000.0:.4f}" rgba="{C_DISC}"/></body>')
 
+# ONE DEFINITION OF WHAT COLOUR A PATIENT IS.  The rgba a body is built with
+# and the threshold a reader uses to classify it are the same fact, and it
+# was written out five separate times in the rigs -- each free to drift, and
+# a patient misread as green is a patient delivered to the wrong zone for -5.
+CYL_RGBA = {"red": (0.82, 0.24, 0.24), "yellow": (0.88, 0.70, 0.20),
+            "green": (0.25, 0.62, 0.32)}
+
+
+def cyl_colour(m, i):
+    """Which colour patient `i` is, read back off the built model."""
+    import mujoco as _mj
+    b = _mj.mj_name2id(m, _mj.mjtObj.mjOBJ_BODY, "cyl%d" % i)
+    if b < 0:
+        return None
+    g = m.geom_rgba[m.body_geomadr[b]][:3]
+    return min(CYL_RGBA, key=lambda c: sum((a-b_)**2
+                                           for a, b_ in zip(CYL_RGBA[c], g)))
+
+
 def cyl_body(i, x, y, colour):
-    rgba = {"red": "0.82 0.24 0.24 1", "yellow": "0.88 0.70 0.20 1",
-            "green": "0.25 0.62 0.32 1"}[colour]
+    rgba = " ".join("%.2f" % v for v in CYL_RGBA[colour]) + " 1"
     return (f'<body name="cyl{i}" pos="{mm(x):.5f} {mm(y):.5f} {mm(Piece.CYL_H/2+0.5):.5f}">'
             f'<freejoint name="cyl{i}_f"/>'
             # BIT 2, LIKE A SAMPLE.  Without it a patient cannot touch the
@@ -985,6 +1003,7 @@ def cyl_body(i, x, y, colour):
             f'<geom name="cyl{i}_g" class="piece" contype="15" conaffinity="15" type="cylinder" '
             f'size="{mm(Piece.CYL_D/2):.5f} {mm(Piece.CYL_H/2):.5f}" '
             f'mass="{Piece.CYL_M/1000.0:.4f}" rgba="{rgba}"/></body>')
+
 
 def kit_body(i, x, y, z=None):
     """A medical kit.  Rules g.1 let these start ON the robot, so the mission

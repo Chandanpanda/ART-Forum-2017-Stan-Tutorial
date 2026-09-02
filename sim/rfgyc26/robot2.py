@@ -33,7 +33,7 @@ CARRY_PAD    = 20.0        # extra room a LOADED drive asks for (F136)
 CLEAR_NEAR   = 85.0        # mm of clearance at which speed is floored
 CLEAR_FAR    = 130.0       # ...and above which it is unrestricted
 CLEAR_SLOW   = 110.0       # mm/s through a pinch (F121, F138)
-EJECT_BACK   = 71.0        # the shake's tail lip, behind the axle
+EJECT_BACK   = R2.EJECT_BACK   # rig-measured; see check_effectors
 KIT_V        = 230.0       # mm/s with kits loose on the tray
 R2_CIRCUM = 98.0          # every orientation fits outside it
                            # (the capture pocket is part of the body)

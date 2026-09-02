@@ -55,7 +55,17 @@ PRIORITY = {"r1": 0, "r2": 1}          # lower wins
 # (x0, y0, x1, y1) and the order of this dict IS the acquisition order, which
 # is what makes the protocol deadlock-free.
 REGIONS = {
-    # the two doors between the south half and the north half
+    # THE TWO DOORS, LEARNED RATHER THAN DRAWN (F152).  These were two
+    # rectangles typed from a drawing, and they were wrong in a way that
+    # matters: a door here is not a fact about the field, it is a fact about
+    # the field PLUS the twelve patients standing in it -- on a cleared
+    # board there is no pinch at all, and the patients move all match.
+    #
+    # learn_doors() below finds them instead, as the bottleneck of the
+    # widest path between the two halves (world.widest_path).  It re-derives
+    # these two to within 6 and 45 mm from the map alone, so they stay here
+    # as the value to use before anything has been surveyed, and as the
+    # thing the check compares against.
     "PINCH_E": (846.0, 430.0, 966.0, 640.0),
     "PINCH_W": (196.0, 430.0, 316.0, 640.0),
     # the deployment box, where both robots start within 225 mm of each other
@@ -117,6 +127,27 @@ def covered(prims, x, y):
             return True
     return False
 
+
+
+def learn_doors(cmap, radius, south=None, north=None):
+    """Replace the PINCH regions with the passages this board actually has.
+
+    Keeps the keys, and therefore ORDER -- the fixed global acquisition
+    order is what makes the reservation protocol deadlock-free, so it must
+    not depend on what the map happened to look like.
+    """
+    from . import world
+    south = south or (Field.W / 2.0, Field.H * 0.13)
+    north = north or (Field.W / 2.0, Field.H * 0.89)
+    found = world.doors(cmap, south, north, radius=radius, keep=2,
+                        bite=radius * 4.0)
+    if len(found) < 2:
+        return dict(REGIONS)                 # no pinch: leave the prior
+    found.sort(key=lambda g: g[0][0])        # west first, then east
+    span = radius * 2.0                      # the body's own width, not a guess
+    for key, ((gx, gy), _w) in zip(("PINCH_W", "PINCH_E"), found):
+        REGIONS[key] = (gx - span, gy - span, gx + span, gy + span)
+    return dict(REGIONS)
 
 
 def regions_on(pts, pad=0.0):

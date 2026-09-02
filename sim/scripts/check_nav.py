@@ -118,6 +118,43 @@ def main():
     check("a push plan costs under 1.5 s (the opening plan has 12 to make)",
           time.time() - t < 1.5, "%.2f s" % (time.time() - t))
 
+    # ------------------------------------------------------------ topology
+    # A DOOR IS A PROPERTY OF THE BOARD, NOT A RECTANGLE SOMEBODY TYPED.
+    from rfgyc26 import world, fleet as _fl, mjcf as _mj
+    lay = _mj.m2_layout(np.random.default_rng(6))
+    pieces = [(i, x, y, "patient") for i, (x, y, _c) in enumerate(lay)]
+    open_board = world.board_map()
+    full_board = world.board_map(pieces=pieces)
+    tight = world.doors(open_board, (571.0, 150.0), (571.0, 1050.0),
+                        radius=90.0, keep=2, bite=220.0)
+    check("a cleared board has no pinch a 180 mm chassis must squeeze through",
+          len(tight) <= 1, "%d found" % len(tight))
+    got = world.doors(full_board, (571.0, 150.0), (571.0, 1050.0),
+                      radius=55.0, keep=3, bite=220.0)
+    check("the twelve patients create exactly two doors", len(got) == 2,
+          str([(int(g[0]), int(g[1]), round(w)) for g, w in got]))
+    if len(got) == 2:
+        got.sort(key=lambda g: g[0][0])
+        drawn = [_fl.REGIONS["PINCH_W"], _fl.REGIONS["PINCH_E"]]
+        err = max(abs(g[0] - (b[0]+b[2])/2.0)
+                  for g, b in zip([p for p, _w in got], drawn))
+        check("...where the hand-drawn pinches said, to within 60 mm",
+              err < 60.0, "worst %.0f mm" % err)
+        check("...and both are too narrow for two chassis to pass",
+              all(w < 2*98.0 for _g, w in got),
+              str([round(w) for _g, w in got]))
+    path, width, gate = world.widest_path(full_board, (571.0, 150.0),
+                                          (571.0, 1050.0))
+    if path:
+        d = full_board.clearance()
+        real = min(float(d[full_board.cell(*p)]) for p in path)
+        check("widest_path reports the width it actually delivers",
+              abs(real - width) < 1e-6, "%.1f vs %.1f" % (real, width))
+    before = list(_fl.ORDER)
+    _fl.learn_doors(full_board, radius=55.0)
+    check("learning the doors does not reorder the acquisition sequence",
+          list(_fl.ORDER) == before, str(_fl.ORDER[:3]))
+
     fails = [r for r in RESULTS if not r[1]]
     for name, ok, detail in RESULTS:
         if VERBOSE or not ok:

@@ -72,3 +72,95 @@ def route_to(cmap, start, goal, foot, speed=250.0, t0=0.0, strict=False):
                           foot.inscribed, foot.circumscribed,
                           t0=t0, speed=speed, strict=strict)
     return path, secs
+
+
+# ------------------------------------------------------------- topology
+def widest_path(cmap, start, goal):
+    """The route between two points that keeps the most room, and how much.
+
+    WHERE ARE THE DOORS?  fleet.py carries eight rectangles drawn by eye,
+    two of which -- "the two pinches, 176 mm of gap for a chassis planned at
+    150" -- are the whole reason its reservation protocol exists.  A door is
+    not a rectangle somebody typed; it is a property of the free space, and
+    the property is this: of all the ways from here to there, take the one
+    whose TIGHTEST point is as wide as possible.  That tightest point is the
+    door.
+
+    This is the bottleneck-shortest-path (maximum-capacity path) problem,
+    and it is Dijkstra with max-min relaxation in place of sum-min: the
+    value of reaching a cell is the narrowest clearance on the best route to
+    it, and the most generous frontier is expanded first.
+
+    Returns (path, width, gate): the route, its narrowest clearance in mm,
+    and where that occurs.  No route gives (None, 0.0, None).
+    """
+    import heapq
+    d = cmap.clearance()
+    nx, ny = d.shape
+    si, sj = cmap.cell(*start[:2])
+    gi, gj = cmap.cell(*goal[:2])
+    best = np.full((nx, ny), -1.0)
+    prev = {}
+    best[si, sj] = d[si, sj]
+    q = [(-float(d[si, sj]), si, sj)]
+    while q:
+        w, i, j = heapq.heappop(q)
+        w = -w
+        if w < best[i, j]:
+            continue
+        if (i, j) == (gi, gj):
+            break
+        for di in (-1, 0, 1):
+            for dj in (-1, 0, 1):
+                if di == 0 and dj == 0:
+                    continue
+                a, b = i + di, j + dj
+                if not (0 <= a < nx and 0 <= b < ny):
+                    continue
+                cand = min(w, float(d[a, b]))
+                if cand > best[a, b]:
+                    best[a, b] = cand
+                    prev[(a, b)] = (i, j)
+                    heapq.heappush(q, (-cand, a, b))
+    if best[gi, gj] < 0:
+        return None, 0.0, None
+    path, node = [], (gi, gj)
+    while node != (si, sj):
+        path.append(cmap.centre(*node))
+        node = prev.get(node)
+        if node is None:
+            return None, 0.0, None
+    path.append(cmap.centre(si, sj))
+    path.reverse()
+    # THE ENDS ARE NOT DOORS.  The narrowest point on a route is usually
+    # where it starts or finishes, because a start point is often chosen
+    # tight against something; skip a body's length at each end so the gate
+    # is a constriction the route passes THROUGH.
+    skip = max(1, int(round(200.0 / cmap.res)))
+    mid = path[skip:-skip] or path
+    gate = min(mid, key=lambda p: float(d[cmap.cell(*p)]))
+    return path, float(best[gi, gj]), gate
+
+
+def doors(cmap, start, goal, radius, keep=2, bite=None):
+    """Every distinct passage between two places, widest first.
+
+    Take the widest path, note its gate, block that gate, and ask again --
+    which is how to enumerate the ways through a wall without knowing in
+    advance how many there are.  Stops when what is left is too tight for a
+    body of `radius`.
+    """
+    bite = float(bite if bite is not None else radius * 2.0)
+    work = cmap
+    out = []
+    for _ in range(keep):
+        path, width, gate = widest_path(work, start, goal)
+        if path is None or width < radius or gate is None:
+            break
+        out.append((gate, width))
+        blocked = nav.CostMap(res=work.res, size=(work.w, work.h))
+        blocked.static = cmap.static.copy()
+        for g, _w in out:
+            blocked.add_disc(g[0], g[1], bite)
+        work = blocked
+    return out

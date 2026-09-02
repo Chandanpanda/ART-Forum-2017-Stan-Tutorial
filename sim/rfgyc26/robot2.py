@@ -2021,6 +2021,15 @@ def mission_robot2(ctl, m, d=None, log=print, clock=None, rb=None,
 
     ctl.fleet = flt
     publish()
+    if flt is not None:
+        # LEARN THE DOORS FROM THE BOARD IN FRONT OF US (F152).  The pinches
+        # exist because the patients are standing there; on a cleared board
+        # there are none, and two rectangles typed from a drawing cannot
+        # know which board this is.
+        flt.doors = fleetmod.learn_doors(
+            world.board_map(pieces=[(i, *live(i), "patient")
+                                    for i, _, _, _ in pucks]),
+            radius=R2_FOOT.inscribed)
 
     def sched():
         return getattr(rb, "schedule", None) if rb is not None else None

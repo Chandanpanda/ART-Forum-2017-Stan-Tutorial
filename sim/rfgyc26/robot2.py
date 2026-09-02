@@ -1511,19 +1511,45 @@ def _can_turn_out(cm, pose, th0, th_t, radius=130.0):
     # the robot could make.  Measured over twelve seeds' opening boards,
     # radius-130-only refused 57 of 144 patients -- forty per cent of the
     # column, every one of them on this test alone.
+    return turn_out_margin(cm, pose, th0, th_t, radius) > 0.0
+
+
+# HOW COMFORTABLY, NOT JUST WHETHER (F147).  Admitting more deliveries is
+# only worth it if they land, and the four rungs below are not equally
+# likely to: an arc that fits at 130 mm from where the robot stands is the
+# manoeuvre these clearances were measured on, while one that needs 70 mm
+# after backing 200 mm out of a sticker column is the same manoeuvre with
+# every margin spent.  Measured, opening the gate on the tight ones (F145)
+# priced 9.9 patients of 12 instead of 7.2 and the board's patient column
+# went DOWN 6.2 points -- the extra attempts cost a full cycle each and
+# mostly failed.
+#
+# These weights are an ORDERING, not calibrated probabilities.  What they
+# have to get right is that a comfortable delivery outranks a marginal one
+# of equal value, and that a marginal one still outranks doing nothing.
+# _price divides its quote by this, which is the expected-cost form: an
+# attempt that succeeds half the time costs twice the seconds per point.
+_TURN_RUNGS = (1.0, 0.72, 0.45)          # 130 mm arc, 95 mm, 70 mm
+_TURN_BACKED = 0.55                      # ...and after borrowing room behind
+
+
+def turn_out_margin(cm, pose, th0, th_t, radius=130.0):
+    """0 if the robot cannot leave this capture pose loaded, else how
+    comfortably it can, 1 being the full arc from where it stands."""
     occ = cm.inflated(6.0, 8.0) >= nav.BLOCKED
     ladder = (radius, radius * 0.73, radius * 0.54)
-    for back in (0.0, None):
-        if back is None:
-            back = _back_room(occ, cm, pose, th0)
-            if back < 60.0:
-                return False
-            a = np.radians(th0)
-            pose = (pose[0] - back*np.cos(a), pose[1] - back*np.sin(a))
-        for r in ladder:
-            if _arc_out(occ, cm, pose, th0, th_t, r):
-                return True
-    return False
+    for r, w in zip(ladder, _TURN_RUNGS):
+        if _arc_out(occ, cm, pose, th0, th_t, r):
+            return w
+    back = _back_room(occ, cm, pose, th0)
+    if back < 60.0:
+        return 0.0
+    a = np.radians(th0)
+    pose = (pose[0] - back*np.cos(a), pose[1] - back*np.sin(a))
+    for r, w in zip(ladder, _TURN_RUNGS):
+        if _arc_out(occ, cm, pose, th0, th_t, r):
+            return w * _TURN_BACKED
+    return 0.0
 
 
 def _arc_out(occ, cm, pose, th0, th_t, radius=130.0):
@@ -1612,7 +1638,8 @@ def _price(cm, robot, puck, zone, t0, zname=None, avoid=()):
     # twelve rig deliveries died in exactly that corner, at 21-31 s apiece,
     # and the schedule cannot afford to discover it by driving there.  So
     # the turn-out is part of the price: no clear arc, no delivery.
-    if not _can_turn_out(cm, _capture_pose(app, puck), app[2], heading):
+    conf = turn_out_margin(cm, _capture_pose(app, puck), app[2], heading)
+    if conf <= 0.0:
         return None
     _, s1 = nav.plan(cm, robot, app[:2], R2_INSCRIBED, R2_CIRCUM,
                      t0=t0, speed=APPROACH_V, strict=False)
@@ -1628,7 +1655,9 @@ def _price(cm, robot, puck, zone, t0, zname=None, avoid=()):
     if not np.isfinite(s2):
         return None
     #        approach   turn+capture   carry   release+back off
-    return float(s1 + 4.0 + s2 + 3.0), app
+    # ...divided by how likely the leaving is (F147): expected seconds per
+    # point, not best-case seconds per point.
+    return float((s1 + 4.0 + s2 + 3.0) / conf), app
 
 
 # THE STOPWATCH SAYS TWICE (F134).  _price quotes path-length over speed for

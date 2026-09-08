@@ -239,6 +239,22 @@ class TrussGeometry:
         hull's perimeter."""
         return hull_perimeter(self.cluster_points(joint, dx))
 
+    def hoop_perimeter(self, joint, dx, thread_d=None):
+        """Length of one hoop of thread at axial offset dx -- what the
+        THREAD goes round, which is the cluster's hull only where the
+        members are within a thread of each other (Truss.bind_half) and
+        the chord alone outside it, in both cases offset outward by the
+        thread's own radius.
+
+        The hull everywhere was the first model, and Tier 2 refuted it:
+        see Truss.bind_half and check_ring.
+        """
+        t = self.t
+        d_t = t.thread_d if thread_d is None else thread_d
+        if abs(dx) <= t.bind_half(d_t):
+            return hull_perimeter(self.cluster_points(joint, dx)) + pi * d_t
+        return pi * (t.d_chord + d_t)
+
     def cluster_reach(self, joint, dx):
         """How far from the chord axis the cluster reaches at dx -- what
         the ring's inner radius must clear."""
@@ -251,7 +267,7 @@ class TrussGeometry:
         t = self.t
         pitch = t.band / t.turns
         x = np.arange(t.turns) * pitch - t.band / 2.0 + pitch / 2.0
-        return float(sum(self.cluster_perimeter(joint, float(dx)) for dx in x))
+        return float(sum(self.hoop_perimeter(joint, float(dx)) for dx in x))
 
     def thread_per_chord(self, k):
         """Thread for one continuous run along chord k: bands plus the

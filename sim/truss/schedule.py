@@ -24,13 +24,13 @@ DECISIONS TAKEN HERE, WITH THE REASON:
     per-joint lift while winding, both computed by approach.py.
 """
 from dataclasses import dataclass, field
-from math import cos, sin, radians
 
 import numpy as np
 
-from .spec import (Gantry, Ring, Head, Gripper, Cage, Dispenser, Cutter,
-                   Process, ring_r_out)
+from .spec import (Gantry, Ring, Head, Gripper, Cage, Dispenser, Cutter, Vision,
+                   Process)
 from . import motion, approach as _approach, band as _band
+from .geometry import rot_x
 
 
 @dataclass
@@ -98,6 +98,18 @@ def grip_z(z_rod):
     return z_rod - Head.TIP_PARK + Head.GRIP_STROKE
 
 
+def look_x(t, joint):
+    """Ring-centre x for the pre-wind look: the joint half a band along on
+    the CAMERA'S side of the ring's plate, whichever way the run goes.
+    Measured (check_vision): seen through the plate's gap from the far
+    side, one diagonal of two is lost and the joint's x comes back up to
+    2 mm off; on the camera's side both are in view and it is within
+    LOOK_SIGMA.  On a run toward the camera's side this is the band start
+    and costs nothing; on the return run it is a band's width away."""
+    side = 1.0 if Vision.cam_pos()[0] >= 0.0 else -1.0
+    return float(joint.x) - side * t.band / 2.0
+
+
 def move_time(a, b):
     return motion.coordinated_time({k: b[k] - a[k] for k in b if k in a},
                                    Gantry.V_MAX, Gantry.A_MAX)
@@ -120,6 +132,12 @@ def plan(geom, fixture, stations, interleave=True, start=None):
     P = Plan()
     cruise = _approach.index_lift(geom, fixture)
     hs = HeadState(*(start or (-Cage.POST_OFF, 0.0, cruise)), theta=0.0)
+    obstacles = {}
+
+    def obs_at(theta):
+        if theta not in obstacles:
+            obstacles[theta] = _approach.Obstacles(geom, fixture, theta)
+        return obstacles[theta]
 
     def move(phase, **goal):
         g = dict(hs.pos); g.update(goal)
@@ -157,22 +175,45 @@ def plan(geom, fixture, stations, interleave=True, start=None):
         P.add("retract", stroke_time(Head.GRIP_STROKE), "load", tool="grip")
         move("load", z=cruise)
         move("load", x=float(place[0]) - gx, y=float(place[1]))
-        yaw_to("load", yaw)
-        move("load", z=grip_z(float(place[2])) + 3.0)
-        P.add("extend", stroke_time(Head.GRIP_STROKE), "load", tool="grip")
-        move("load", z=grip_z(float(place[2])))
-        P.add("release", Gripper.JAW_CLOSE_S, "load", rod=r.index,
+        if abs(((yaw - hs.yaw) + 180.0) % 360.0 - 180.0) > 1e-6:
+            # THE YAW WAITS FOR THE EXTENSION (approach.yaw_height): a rod
+            # turned beside the ring while retracted swings through its
+            # rim.  Come down to the height the solver gives, put the
+            # gripper out, turn there, then finish the descent.
+            half = (t.L_cut if r.kind == "diag" else r.length) / 2.0
+            z_yaw = _approach.yaw_height(obs_at(theta), place, hs.yaw, yaw, half, r.r,
+                                         Process.SEAT_CLEAR, z_max=cruise,
+                                         stroke=Head.GRIP_STROKE)
+            if z_yaw is None:
+                raise ValueError("rod %d cannot be turned to %.0f over its seat" % (r.index, yaw))
+            move("load", z=grip_z(z_yaw))
+            P.add("extend", stroke_time(Head.GRIP_STROKE), "load", tool="grip")
+            yaw_to("load", yaw)
+            move("load", z=grip_z(float(place[2])) + 3.0)
+        else:
+            move("load", z=grip_z(float(place[2])) + 3.0)
+            P.add("extend", stroke_time(Head.GRIP_STROKE), "load", tool="grip")
+        # release a millimetre ABOVE the seat and let the V take it: lowered
+        # onto the flanks while still gripped, the axis stalls against the
+        # fixture and the rod is pressed rather than seated
+        move("load", z=grip_z(float(place[2])) + Process.DROP_IN)
+        P.add("release", Gripper.JAW_CLOSE_S + 0.4, "load", rod=r.index,
               pose=(float(place[0]), float(place[1]), float(place[2])), yaw=float(yaw))
         P.add("retract", stroke_time(Head.GRIP_STROKE), "load", tool="grip")
         move("load", z=cruise)
 
     # ------------------------------------------------------------ wind
-    def post_loop(phase, post, lift):
-        """Hook the strand round a post: four short legs at lift."""
+    def post_loop(phase, post, theta):
+        """Hook the strand round a post: a rectangle about it at the
+        height and leg approach.post_loop solves for."""
         px = float(post.p0[0])
-        move(phase, x=px - 3.0 * Cage.POST_R, y=0.0, z=lift)
-        leg = 4.0 * Cage.POST_R
-        for dx, dy in ((0, leg), (2 * leg, 0), (0, -leg), (-2 * leg, 0)):
+        zc = float((rot_x(theta) @ geom.chord_point(post.chord, 0.0))[2])
+        lp = _approach.post_loop(obs_at(theta), px, zc, Process.SEAT_CLEAR, h_max=cruise - zc)
+        if lp is None:
+            raise ValueError("no clear loop round post %d/%d" % (post.chord, post.end))
+        z, leg, a, _cl = lp
+        move(phase, x=px - a, y=0.0, z=z + Process.LIFT_CLEAR)
+        for dx, dy in ((0, leg), (2 * a, 0), (0, -leg), (-2 * a, 0)):
             move(phase, x=hs.pos["x"] + dx, y=hs.pos["y"] + dy)
         P.add("anchor", Process.ANCHOR_S, phase, post=(post.chord, post.end))
 
@@ -185,15 +226,16 @@ def plan(geom, fixture, stations, interleave=True, start=None):
         js = geom.joints_on(k)
         order = list(range(len(js))) if direction > 0 else list(range(len(js) - 1, -1, -1))
         first_end = 0 if direction > 0 else 1
-        lift0 = aps[order[0]].centre[2] + aps[order[0]].lift
         post = next(p for p in fixture.posts if p.chord == k and p.end == first_end)
-        post_loop("wind", post, lift0)
+        post_loop("wind", post, theta)
         for n, i in enumerate(order):
             j, a = js[i], aps[i]
             c = a.centre
             xb = _band.band_start(j.x, t, direction)
-            move("wind", x=float(xb), y=float(c[1]), z=float(c[2] + a.lift))
+            move("wind", x=look_x(t, j), y=float(c[1]), z=float(c[2] + a.lift))
             P.add("look", Process.VISION_SETTLE_S, "wind", joint=j.index)
+            if abs(look_x(t, j) - xb) > 1e-9:
+                move("wind", x=float(xb))
             P.add("park", 0.3, "wind", gap=float(a.gap_down))
             move("wind", z=float(c[2]))
             wind_s = t.turns / Ring.RPM * 60.0 + Ring.SPINUP_S
@@ -207,7 +249,7 @@ def plan(geom, fixture, stations, interleave=True, start=None):
                 dose(P, hs, move, geom, j, a, "dose")
         last_end = 1 if direction > 0 else 0
         post = next(p for p in fixture.posts if p.chord == k and p.end == last_end)
-        post_loop("wind", post, hs.pos["z"])
+        post_loop("wind", post, theta)
         P.add("cut", Cutter.CUT_S, "wind", chord=k)
         direction = -direction
 
@@ -226,7 +268,11 @@ def dose(P, hs, move, geom, j, a, phase):
     """One drop on one band: nozzle over the joint, extend to standoff,
     dispense, retract.  The ring is at its lift, off to one side."""
     c = a.centre
-    top = float(c[2]) + geom.cluster_reach(j, 0.0) + Dispenser.STANDOFF
+    # the drop hangs from the tip: two radii of it, then the fall.  (A
+    # tip one millimetre over the cluster spawned the drop inside the
+    # chord and the solver threw it to the floor: seven of twelve.)
+    r_drop = _band.drop_radius_mm(_band.resin_dose_mg(geom.t, geom.thread_on_joint(j)))
+    top = float(c[2]) + geom.cluster_reach(j, 0.0) + 2.0 * r_drop + Dispenser.STANDOFF
     move(phase, x=float(j.x) - Head.disp_x(), y=float(c[1]), z=float(c[2] + a.lift))
     ext = (hs.pos["z"] + Head.TIP_PARK) - top
     P.add("extend", stroke_time(ext), phase, tool="disp", mm=float(ext))

@@ -7,7 +7,7 @@ turns, how wide, centred where, covering which mitre, weighing what -- is
 a function of the ring's angle history and the x feed, and that is all
 this module holds.  Physics of the thread itself is Tier 2's business.
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from math import pi
 
 from .spec import Dispenser
@@ -18,6 +18,7 @@ class BandState:
     """One joint's winding, as it progresses."""
     joint:     int
     x_start:   float = 0.0      # chord x where the first hoop was laid
+    direction: float = 1.0      # which way along x the feed ran from it
     pitch:     float = 0.0      # mm of x per turn
     angle:     float = 0.0      # ring angle accumulated since the start, deg
     anchored:  bool = False     # this chord's run has a start post
@@ -35,7 +36,10 @@ class BandState:
 
     @property
     def centre(self):
-        return self.x_start + self.width / 2.0
+        # measured: with the return run's feed running to -x, a centre
+        # taken as x_start + width/2 put every one of that chord's bands
+        # a full band width off the joint
+        return self.x_start + self.direction * self.width / 2.0
 
     def lay(self, d_angle, perimeter):
         """The ring turned d_angle more; the hoop it laid was `perimeter`."""

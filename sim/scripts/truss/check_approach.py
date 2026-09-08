@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 import numpy as np
 
 from truss import structure, geometry, fixture, approach
-from truss.spec import Truss, Gantry, Process, Ring
+from truss.spec import Truss, Gantry, Process, Ring, Head
 from truss.geometry import TrussGeometry, theta_chord_up, rot_x
 
 VERBOSE = "-v" in sys.argv
@@ -60,14 +60,18 @@ def solve(t, tag, **kw):
     th, al = st[0]
     a = al[1]
     obs = approach.Obstacles(g, fx, th, pitch=0.25)
-    seat = approach.seated_clearance(obs, a.centre)
+    seat = approach.seated_clearance(obs, a.centre, band=t.band)
     check("%s: a dense re-sample of the seated ring agrees with the claim" % tag,
           abs(seat - a.seated) < 0.15, "%.2f claimed, %.2f dense" % (a.seated, seat))
-    desc = approach.descent_clearance(obs, a.centre, a.lift, gap_az=a.gap_down, step=0.25)
+    desc = approach.descent_clearance(obs, a.centre, a.lift, gap_az=a.gap_down, step=0.25,
+                                      band=t.band)
     check("%s: ...and so does a fine descent" % tag,
           desc >= a.descent - 0.15, "%.2f claimed, %.2f fine" % (a.descent, desc))
-    # the reason for gap_azimuth: gap straight down is worse
-    down = approach.descent_clearance(obs, a.centre, a.lift, gap_az=0.0, step=0.25)
+    # the reason for gap_azimuth: gap straight down is worse -- and the
+    # band's ends are where it is worst, which is why the station measures
+    # its descent there (at the joint's centre alone, straight down wins
+    # by 0.2 mm on this truss and loses by 1.3 mm at the band's end)
+    down = approach.descent_clearance(obs, a.centre, a.lift, gap_az=0.0, step=0.25, band=t.band)
     check("%s: parking the gap toward the face beats straight down" % tag,
           desc >= down - 1e-6, "toward face %.2f, straight down %.2f" % (desc, down))
     # and the point-cloud picture of the head sits inside the analytic one
@@ -75,6 +79,37 @@ def solve(t, tag, **kw):
     d = approach.head_distance(cloud, True)
     check("%s: the head's own surface points measure zero distance to it" % tag,
           float(d.max()) < 1e-6, "%.3g" % float(d.max()))
+    # THE HELD ROD AND THE HEAD.  Retracted, a rod sits beside the ring's
+    # plate: parallel to it (a diagonal from its rack) or through its bore
+    # (a chord); turned to its placing yaw while retracted it is in the
+    # rim, which is why the plan turns it with the gripper out
+    half_d, half_c = t.L_cut / 2.0, t.length / 2.0
+    carried = min(approach.held_rod_head_clearance(half_d, t.d_diag / 2.0, 90.0, 0.0),
+                  approach.held_rod_head_clearance(half_c, t.d_chord / 2.0, 0.0, 0.0))
+    check("%s: a rod carried retracted at its rack yaw clears the head" % tag,
+          carried >= Process.SEAT_CLEAR, "%.2f mm" % carried)
+    struck = max(approach.held_rod_head_clearance(half_d, t.d_diag / 2.0, y, 0.0)
+                 for y in (t.alpha, -t.alpha))
+    check("%s: ...and turned to its placing yaw retracted it would be IN the rim -- "
+          "the yaw waits for the extension" % tag, struck < 0.0, "%.2f mm" % struck)
+    out = min(approach.held_rod_head_clearance(half_d, t.d_diag / 2.0, y, Head.GRIP_STROKE)
+              for y in approach.yaw_sweep(90.0, -t.alpha))
+    check("%s: with the gripper out it clears the head through the whole sweep" % tag,
+          out >= Process.SEAT_CLEAR, "%.2f mm" % out)
+    # and over the fixture, every diagonal has a height to turn at, a few
+    # millimetres over its seat rather than the stroke
+    cruise = approach.index_lift(g, fx)
+    rise = []
+    for r in g.diags:
+        th = fx.theta_for_loading(r)
+        obs = approach.Obstacles(g, fx, th, skip=(r.index,))
+        place, yaw, _ = fx.place_pose(r, th)
+        z = approach.yaw_height(obs, place, 90.0, yaw, half_d, r.r, Process.SEAT_CLEAR,
+                                z_max=cruise, stroke=Head.GRIP_STROKE)
+        rise.append(None if z is None else z - float(place[2]))
+    check("%s: every diagonal can be turned over its cradles, millimetres above its seat" % tag,
+          all(h is not None and 0.0 < h < Head.GRIP_STROKE / 2.0 for h in rise),
+          "rises %s" % sorted(set(round(h, 1) for h in rise if h is not None)))
     return g, fx, st
 
 
@@ -82,8 +117,28 @@ def main():
     solve(structure.TRUSS_1M, "1m")
     solve(structure.TRUSS_300, "300")
     # a truss it has never seen
-    other = Truss(length=600.0, side=70.0, alpha=50.0, d_chord=2.0, d_diag=1.5, name="other")
+    other = Truss(length=600.0, side=70.0, alpha=40.0, d_chord=2.0, d_diag=1.5, name="other")
     solve(other, "other")
+    # THE CORNER FINDING: a 50-degree diagonal with 1.9 mm of radial slack
+    # under the rim clears the rim's corner by only 1.9 cos(50), and the
+    # closed form must say so
+    steep50 = Truss(length=600.0, side=70.0, alpha=50.0, d_chord=2.0, d_diag=1.5)
+    g = TrussGeometry(steep50)
+    fx = fixture.Fixture(g)
+    a = approach.station(g, fx, g.joints_on(0)[1], theta_chord_up(0))
+    from truss.spec import r_in_needed, ring_r_in
+    # the diagonals against the rim alone, at the joint's centre: with the
+    # fixture in and across the band the station's own number is smaller
+    jj = g.joints_on(0)[1]
+    alone = approach.Obstacles(g, None, theta_chord_up(0),
+                               skip=[r.index for r in g.rods if r.index not in jj.diags])
+    seat_c = approach.seated_clearance(alone, a.centre) if a is not None else -1.0
+    check("a diagonal passing the rim's corner obliquely clears it by the slack times cos(alpha)",
+          a is not None and abs(seat_c - (ring_r_in() - g.cluster_reach(g.joints_on(0)[1], Ring.W / 2.0))
+                                * np.cos(np.radians(50.0))) < 0.1,
+          "%.2f measured at the centre, %.2f across the band" % (seat_c, a.seated if a else -1))
+    check("...which is exactly what the spec's closed form now charges for",
+          r_in_needed(steep50) > ring_r_in(), "needs %.2f of %.1f" % (r_in_needed(steep50), ring_r_in()))
     # ---------------------------------------------------- refusals
     steep = Truss(length=400.0, side=60.0, alpha=55.0, d_chord=3.0, d_diag=2.0, name="steep")
     g = TrussGeometry(steep)

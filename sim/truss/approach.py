@@ -146,12 +146,15 @@ class Obstacles:
     """Every capsule the head may not touch, at one cage angle, sampled
     along its axis every `pitch` mm."""
 
-    def __init__(self, geom, fixture, theta, pitch=1.0, pts=None, rad=None):
+    def __init__(self, geom, fixture, theta, pitch=1.0, pts=None, rad=None, skip=()):
         self.geom, self.fixture, self.theta = geom, fixture, theta
         if pts is not None:
             self.pts, self.rad = pts, rad
             return
         p0, p1, rr = geom.rods_at(theta)
+        if len(skip):
+            keep = np.array([r.index not in skip for r in geom.rods])
+            p0, p1, rr = p0[keep], p1[keep], rr[keep]
         if fixture is not None:
             f0, f1, fr = fixture.obstacles(theta)
             if len(f0):
@@ -216,15 +219,23 @@ def gap_azimuth(n_face):
     return float(np.clip(psi / 2.0, -lim, lim))
 
 
-def seated_clearance(obs, centre):
-    return obs.near(*_reach(centre)).clearance(centre, True)
+def seated_clearance(obs, centre, band=0.0):
+    """The ring turns at every x across the band, so the seated test is
+    taken at both ends of it as well as the centre."""
+    hb = band / 2.0
+    shifts = [(0.0, 0.0, 0.0)] if hb <= 0 else [(-hb, 0.0, 0.0), (0.0, 0.0, 0.0), (hb, 0.0, 0.0)]
+    return obs.near(float(centre[0]) - hb - 40.0, float(centre[0]) + hb + 40.0).clearance(
+        centre, True, shifts=shifts)
 
 
-def descent_clearance(obs, centre, lift, gap_az=0.0, step=1.0):
-    """Least clearance of the parked ring anywhere on its way down."""
+def descent_clearance(obs, centre, lift, gap_az=0.0, step=1.0, band=0.0):
+    """Least clearance of the parked ring anywhere on its way down, at
+    either end of the band (the descent happens at the band's start,
+    whichever way the run goes)."""
     hs = np.arange(0.0, lift + 1e-9, step)
-    return obs.near(*_reach(centre)).clearance(
-        centre, False, gap_az, shifts=[(0.0, 0.0, h) for h in hs])
+    xs = [0.0] if band <= 0 else [-band / 2.0, band / 2.0]
+    return obs.near(float(centre[0]) - band - 40.0, float(centre[0]) + band + 40.0).clearance(
+        centre, False, gap_az, shifts=[(x, 0.0, h) for x in xs for h in hs])
 
 
 def traverse_clearance(obs, centre, lift, dx, gap_az=0.0, step=3.0):
@@ -255,7 +266,8 @@ def station(geom, fixture, joint, theta, obs=None, need=None, next_dx=None):
     need = Process.LIFT_CLEAR if need is None else need
     obs = Obstacles(geom, fixture, theta) if obs is None else obs
     c, n = geom.joint_at(joint, theta)
-    seat = seated_clearance(obs, c)
+    band = geom.t.band
+    seat = seated_clearance(obs, c, band=band)
     if seat <= 0.0:
         return None
     if next_dx is None:
@@ -276,7 +288,7 @@ def station(geom, fixture, joint, theta, obs=None, need=None, next_dx=None):
     lim = Ring.GAP / 2.0 - 8.0
     for d in (0.0, -5.0, 5.0, -10.0, 10.0):
         cand = float(np.clip(base + d, -lim, lim))
-        v = descent_clearance(obs, c, lift, gap_az=cand)
+        v = descent_clearance(obs, c, lift, gap_az=cand, band=band)
         if v > desc + 1e-9:
             gap, desc = cand, v
     trav = traverse_clearance(obs, c, lift, next_dx, gap_az=0.0)
@@ -341,6 +353,129 @@ def index_lift(geom, fixture):
     r_out = ring_r_out()
     lowest = max(r_out, r_out + Ring.SPOOL[0])
     return fixture.cage_swept_r() + lowest + Process.LIFT_CLEAR
+
+
+# ------------------------------------------------------- the held rod
+def held_rod(mid, yaw, half):
+    """Ends of a rod held level through its midpoint, `yaw` degrees from +x."""
+    u = np.array([cos(radians(yaw)), sin(radians(yaw)), 0.0])
+    return mid - half * u, mid + half * u
+
+
+def yaw_sweep(yaw0, yaw1, step=3.0):
+    """The yaws the wrist passes through from yaw0 to yaw1 the short way
+    round -- the way schedule.yaw_to and the process turn it."""
+    d = ((yaw1 - yaw0) + 180.0) % 360.0 - 180.0
+    n = max(2, int(abs(d) / step) + 1)
+    return yaw0 + d * np.linspace(0.0, 1.0, n)
+
+
+def segment_clearance(obs, p0, p1, r):
+    """Least surface clearance between the capsule (p0, p1, r) and the
+    obstacles' sampled capsules."""
+    if not len(obs.rad):
+        return float("inf")
+    u = p1 - p0
+    L = float(np.linalg.norm(u))
+    u = u / L
+    v = obs.pts - np.asarray(p0, float)[None, :]
+    s = np.clip(v @ u, 0.0, L)
+    d = np.linalg.norm(v - s[:, None] * u[None, :], axis=1) - obs.rad - r
+    return float(d.min())
+
+
+def held_rod_head_clearance(half, r, yaw, extension):
+    """Clearance between a held rod and the head's own solids (ring, spool,
+    head box), in the ring frame: the grip point is Head.grip_x() along x
+    and TIP_PARK above the ring centre less the gripper's extension."""
+    mid = np.array([Head.grip_x(), 0.0, Head.TIP_PARK - extension])
+    p0, p1 = held_rod(mid, yaw, half)
+    n = max(2, int(2.0 * half) + 1)
+    P = p0[None, :] + np.linspace(0.0, 1.0, n)[:, None] * (p1 - p0)[None, :]
+    return float((head_distance(P, False, 0.0) - r).min())
+
+
+def yaw_height(obs, place, yaw0, yaw1, half, r, need, z_max, stroke, step=0.5):
+    """The lowest height (the rod's midpoint, world) at which a held rod
+    can be lowered to at yaw0 -- the gripper's extension, the last
+    `stroke` mm straight down -- and then turned to yaw1 the short way,
+    keeping `need` mm from every obstacle.  None if nothing under z_max
+    does.
+
+    THE YAW WAITS FOR THE EXTENSION.  Carried retracted, a rod sits
+    TIP_PARK above the ring's centre and beside its plate, so a rod
+    parallel to the plate is clear and every other yaw swings its ends
+    through the rim (measured: turned retracted, a diagonal stopped at 37
+    of its 135 degrees against the ring, slipped in the pads, and missed
+    its cradles).  So a rod is turned with the gripper out, below the
+    rim, and this says how high above its seat that can happen.
+    """
+    place = np.asarray(place, float)
+    o = obs.near(float(place[0]) - half - r - 5.0, float(place[0]) + half + r + 5.0)
+    yaws = yaw_sweep(yaw0, yaw1)
+
+    def clear(z):
+        mid = np.array([place[0], place[1], z])
+        for y in yaws:
+            if segment_clearance(o, *held_rod(mid, y, half), r) < need:
+                return False
+        for h in np.arange(0.0, stroke + 1e-9, 2.0):
+            if segment_clearance(o, *held_rod(mid + np.array([0.0, 0.0, h]), yaw0, half),
+                                 r) < need:
+                return False
+        return True
+
+    z0 = float(place[2])
+    last_bad = z0
+    for z in np.arange(z0, z_max + 1e-9, 4.0):
+        if clear(z):
+            for zf in np.arange(last_bad, z + 1e-9, step):
+                if clear(zf):
+                    return float(zf)
+            return float(z)
+        last_bad = z
+    return None
+
+
+# -------------------------------------------------------- the post loop
+def post_loop(obs, post_x, chord_z, need=None, h_max=80.0, step=0.5):
+    """Where the head runs round an anchor post to hook the strand: the
+    ring-centre height and the y leg of a rectangle about the post, with
+    the parked ring (gap down) clearing everything by `need` along it.
+    Returns (z, leg, half_x, clearance) or None.
+
+    The exit guide must pass the post on both sides by the post's radius
+    plus the clearance -- that is the leg -- and the plate must pass fully
+    beyond the post in x -- that is the half-width.  The height is the
+    lowest at which that rectangle clears.  Measured on the 300 mm truss
+    at the winding lift (14 mm over the chord): the post's lower end lies
+    in the ring's plate for any leg over 2 mm, and the rectangle the plan
+    had drawn by hand (legs of four post radii) hooked the ring on the
+    post, jammed the x axis, and put the first look 60 mm from its joint.
+    """
+    from .spec import Cage
+    need = Process.SEAT_CLEAR if need is None else need
+    leg = Cage.POST_R + need
+    a = Head.ring_axial_half() + Cage.POST_R + need
+    o = obs.near(post_x - a - 30.0, post_x + a + 30.0)
+    xs = np.linspace(-a, a, 9)
+    ys = np.linspace(-leg, leg, 5)
+    shifts = [(sx, sy, 0.0) for sx in xs for sy in (-leg, leg)] + \
+             [(sx, sy, 0.0) for sx in (-a, a) for sy in ys]
+
+    def clear(h):
+        return o.clearance(np.array([post_x, 0.0, chord_z + h]), False, 0.0, shifts=shifts)
+
+    last_bad = 0.0
+    for h in np.arange(0.0, h_max + 1e-9, 4.0):
+        if clear(h) >= need:
+            for hf in np.arange(last_bad, h + 1e-9, step):
+                c = clear(hf)
+                if c >= need:
+                    return float(chord_z + hf), float(leg), float(a), float(c)
+            return float(chord_z + h), float(leg), float(a), float(clear(h))
+        last_bad = h
+    return None
 
 
 def head_points(rotating, gap_az_deg=0.0, n_az=36):

@@ -196,6 +196,27 @@ class Truss:
         """Length of the flat the mitre presents along the chord."""
         return self.d_diag / sin(radians(self.alpha))
 
+    def bind_half(self, thread_d=None):
+        """Half-width of the band that actually BINDS, mm.
+
+        A diagonal touches the chord only at the joint; a hoop laid `dx`
+        along the chord finds it standing off by dx*tan(alpha) less its own
+        half-section across the chord, d_diag/(2 cos alpha), so the two
+        members are within a thread of each other only while
+
+            |dx| <= d_diag / (2 sin alpha)  +  d_thread / tan alpha
+
+        and a hoop laid outside that wraps the CHORD ALONE, passing under
+        the diagonals.  Measured, wound, in check_ring: hoops at 3 mm from
+        a 45-degree joint sat at 1.24 mm radius where the members' convex
+        hull reaches 6.4 -- the thread does not bridge, it beds.  So the
+        recipe's 8 mm band binds over 1.9 mm of its width and the rest is
+        thread on a chord; the resin and the keeper hold the rest.
+        """
+        a = radians(self.alpha)
+        d_t = self.thread_d if thread_d is None else thread_d
+        return self.d_diag / (2.0 * sin(a)) + d_t / tan(a)
+
     # -------------------------------------------------------------- mass
     @property
     def mass_chords(self):
@@ -232,7 +253,12 @@ class Ring:
     OD          = 40.0
     ID          = 20.0
     GAP         = 60.0         # deg, open arc
-    W           = 10.0         # mm, axial width of the ring body
+    # A THIN PLATE, NOT A DRUM.  The ring sweeps the whole band as the x
+    # axis feeds, so its body reaches band/2 + W/2 from the joint, where
+    # the diagonals have risen toward the rim: at 10 mm wide no truss in
+    # the qualified angle range fits a 20 mm bore (measured, -0.36 mm at
+    # the band's end); at 4 mm the metre truss fits with 0.2 mm to spare.
+    W           = 4.0          # mm, axial width of the ring body
     # the thread leaves the ring here, on a guide inside the rim
     EXIT_R      = 11.0
     # spool + tensioner block on the outside of the rim: radial, tangential,
@@ -257,9 +283,15 @@ class Ring:
 
 class Gantry:
     """XYZ on SFU1204 ballscrews, MGN12 rails, NEMA17 direct (brief 4.3)."""
-    X_TRAVEL    = 1200.0
-    Y_TRAVEL    = 300.0        # as built here; the brief's +-50 cannot reach
-                               # a chord magazine -- see CHECKS
+    # AS BUILT HERE, NOT AS THE BRIEF HAS THEM.  The brief's 1200 x +-50 was
+    # laid out for a head that only winds; a head that also LOADS needs to
+    # reach a chord rack beside the cage (y) and a diagonal rack beyond
+    # each end plate (x).  fixture.x_range/y_reach compute the need and
+    # check_geometry holds these against it: the metre truss needs 1330
+    # of x and 134 of y.  1400 is the brief's own "400 mm beyond the
+    # longest truss".
+    X_TRAVEL    = 1400.0
+    Y_TRAVEL    = 300.0
     Z_TRAVEL    = 150.0
     PITCH       = 4.0          # mm per screw revolution
     STEPS_PER_REV = 200        # full steps; no microstepping (brief 4.3)
@@ -286,7 +318,9 @@ class Head:
     """
     DISP_STROKE = 40.0
     GRIP_STROKE = 40.0
-    GRIP_YAW    = 75.0         # deg, either way
+    GRIP_YAW    = 95.0         # deg, either way: a rack rod lies at 90
+                               # (measured: a 75-degree range clipped the
+                               # pick yaw and the pads landed on the rod)
     TOOL_CLEAR  = 4.0          # mm between a tool and the ring's envelope
     # parked tool tips sit this far ABOVE the ring centre: clear of a chord
     # the ring is seated on, and of the diagonals beside it
@@ -298,7 +332,9 @@ class Head:
 
     @staticmethod
     def disp_x():
-        return Head.ring_axial_half() + Head.TOOL_CLEAR + Dispenser.BODY_W / 2.0
+        # the camera bay sits between the ring's envelope and the dispenser
+        return (Head.ring_axial_half() + Head.TOOL_CLEAR + Vision.cam_bay()
+                + Dispenser.BODY_W / 2.0)
 
     @staticmethod
     def grip_x():
@@ -316,8 +352,16 @@ class Gripper:
     BODY_W      = 12.0         # along the carriage x
     PAD_L       = 10.0         # along the rod
     PAD_T       = 2.0
+    PAD_H       = 6.0          # tall, gripping the rod's upper half
+    # A rod is gripped at its MIDPOINT, where the racks and the fixture
+    # leave it free; anywhere a V sits under the rod, a pad reaching below
+    # the axis lands on the flank first (measured: jaws that could not
+    # close on a racked diagonal).  fixture.pin_xs keeps the pins off it.
+    PAD_UNDER   = 1.0          # how far the pads reach below the grip point:
+                               # round the axis of the thinnest rod, since
+                               # nothing is under a rod where it is gripped
     FINGER_L    = 22.0
-    JAW_OPEN    = 12.0         # gap between pads
+    JAW_OPEN    = 8.0          # gap between pads; rods are 3 mm at most
     JAW_CLOSE_S = 0.3
     YAW_V       = 200.0        # deg/s
     YAW_TOL     = 0.5          # deg, a hobby servo's repeatability
@@ -340,14 +384,27 @@ class Cage:
     ARM_W       = 6.0
     NOTCH_ANGLE = 90.0         # included angle of the V
     NOTCH_DEPTH = 2.5          # from the pin's tip to the V's floor
-    SPINE_R     = 8.0
     END_PLATE_T = 6.0
-    END_FREE    = 12.0         # plate face beyond the chord ends
+    # the plate stands clear of a ring parked at the post: post offset plus
+    # the ring's axial half-extent plus clearance, asserted in CHECKS
+    END_FREE    = 20.0         # plate face beyond the chord ends
     POST_R      = 1.5          # thread anchor post
-    POST_OFF    = 6.0          # post from the chord end, axially
+    POST_OFF    = 8.0          # post from the chord end, axially
     CRADLE_L    = 6.0          # along the diagonal
     CRADLE_T    = 1.5          # wall
     CRADLE_ANGLE = 90.0
+    # THE SPINE IS SIZED BY THE SPOOL.  The ring's spool sweeps 32 mm round
+    # the chord, and the chord is R from the cage's axis; whatever tube
+    # runs down that axis has to fit in what is left (measured: an 8 mm
+    # spine met the spool at the first joint of the 300 mm truss).  So the
+    # spine is as thick as the truss allows up to SPINE_R_MAX, and a truss
+    # that leaves less than SPINE_R_MIN cannot be wound by this ring.
+    SPINE_R_MAX = 8.0
+    SPINE_R_MIN = 3.0
+
+    @staticmethod
+    def spine_r(R):
+        return min(Cage.SPINE_R_MAX, R - ring_swept_r() - 2.0 * Process.SEAT_CLEAR)
     # Retention.  A rod in an upward-opening V falls out when the cage
     # turns it downward; the real fixture needs a keeper (spring clip, wax
     # dab).  Modelled as a weld once a rod is seated; check_load reports
@@ -363,9 +420,15 @@ class Magazine:
     to x, and the gripper's yaw turns them.  Positions are derived from the
     truss in fixture.magazine()."""
     CHORD_PITCH = 12.0
-    DIAG_PITCH  = 5.0
+    # wider than the jaw's outer span PLUS the neighbour's flank: a yawed
+    # gripper straddles the rod it picks, and its pads' outer faces must
+    # clear the next slot's V (measured: at 9 mm a pad landed on it and the
+    # jaws closed on nothing)
+    DIAG_PITCH  = 11.0
     SLOT_ANGLE  = 90.0
     SLOT_DEPTH  = 2.0
+    BLOCK_L     = 12.0         # each of the two V-blocks a rod rests on
+    BLOCK_IN    = 15.0         # from the rod's end to the block's centre
     CLEAR       = 40.0         # chord rack from the cage's swept radius
     END_CLEAR   = 10.0         # diagonal racks from the cage's end plates
 
@@ -401,10 +464,16 @@ class Vision:
     """
     W, H        = 1280, 720
     HFOV        = 40.0
-    CAM_Z       = 90.0         # above the ring centre, on the carriage
-    CAM_X       = 0.0          # over the ring plane
+    CAM_W       = 8.5          # mm, a board camera module's side
+    CAM_CLEAR   = 3.0          # mm between the module and its neighbours
     FPS         = 30.0
     EDGE_SIGMA_PX = 0.15       # per-frame edge-fit noise
+    # what a look is actually good to, along the chord, 1 sigma: MEASURED
+    # by check_vision on rendered frames (the chord's centreline is found
+    # to hundredths; the joint's x comes from where the diagonals' lines
+    # meet it, and a lever arm of 1/sin(alpha) on their lateral fit is
+    # what sets this).  ModelVision draws its noise from it.
+    LOOK_SIGMA  = 0.15         # mm
     EXT_SIGMA   = 0.10         # mm, camera-to-ring calibration bias, 1 sigma
     EXT_ANG_SIGMA = 0.10       # deg
     SAG_MIN     = 1.5          # mm of strand sag that means tensioner slip
@@ -417,6 +486,52 @@ class Vision:
     def mm_per_px(cls, range_mm):
         return range_mm / cls.f_px()
 
+    # WHERE THE CAMERA RIDES.  In a bay of the carriage between the ring's
+    # envelope and the dispenser, above the spool's sweep, looking down at
+    # the joint a little off the nadir.  Measured, rendered: a camera on
+    # the carriage over the ring plane looks into its own carriage box and
+    # the spool; one outboard of the dispenser sees the chord but the
+    # diagonals -- the mitre line that gives the joint's x -- hide behind
+    # the nearest pin's flanks.  From the bay both diagonals are in view,
+    # the far one through the ring's gap, which the plan parks downward.
+    @classmethod
+    def cam_bay(cls):
+        return cls.CAM_W + 2.0 * cls.CAM_CLEAR
+
+    @classmethod
+    def cam_pos(cls):
+        """Ring frame, mm."""
+        x = Head.ring_axial_half() + Head.TOOL_CLEAR + cls.cam_bay() / 2.0
+        z = ring_r_out() + Ring.SPOOL[0] + cls.CAM_CLEAR + cls.CAM_W / 2.0
+        return (x, 0.0, z)
+
+    @classmethod
+    def cam_aim(cls):
+        """The camera is set on the bore's floor under the ring centre: the
+        chord it winds sits inside the bore when seated and a lift's
+        worth below it at the look."""
+        return (0.0, 0.0, -ring_r_in())
+
+    @classmethod
+    def cam_frame(cls):
+        """(X, Y, Z) unit axes of the camera in the ring frame: MuJoCo's
+        camera looks along -Z with +Y up the image.  Image right is world
+        +y, so the chord runs up the image, away from the camera."""
+        px, py, pz = cls.cam_pos()
+        ax, ay, az = cls.cam_aim()
+        f = (ax - px, ay - py, az - pz)
+        n = sqrt(f[0] ** 2 + f[1] ** 2 + f[2] ** 2)
+        Z = (-f[0] / n, -f[1] / n, -f[2] / n)
+        X = (0.0, 1.0, 0.0)
+        Y = (Z[1] * X[2] - Z[2] * X[1], Z[2] * X[0] - Z[0] * X[2], Z[0] * X[1] - Z[1] * X[0])
+        return X, Y, Z
+
+    @classmethod
+    def range_nominal(cls):
+        px, py, pz = cls.cam_pos()
+        ax, ay, az = cls.cam_aim()
+        return sqrt((ax - px) ** 2 + (ay - py) ** 2 + (az - pz) ** 2)
+
 
 class Process:
     """Timing facts the schedule needs and the machine owns."""
@@ -427,6 +542,7 @@ class Process:
     ANCHOR_S    = 1.5          # on top of the legs
     DOSE_SETTLE_S = 0.5
     LIFT_CLEAR  = 3.0          # mm over the computed minimum lift
+    DROP_IN     = 1.0          # mm a rod is released above its V, to drop in
     SEAT_CLEAR  = 1.5          # mm the ring keeps off the cluster when seated
     SPEED_FACTOR = 1.0         # measured pace correction, calibrated later
 
@@ -458,16 +574,25 @@ def gap_chord():
 def r_in_needed(truss, clear=None):
     """Inner radius the ring must have to turn round a joint of this truss.
 
-    Within the ring's axial band the two diagonals rise from the chord at
-    alpha; their upper edge at the band's edge is what the ring's inner rim
-    must pass.  Chord radius, plus the rod's rise over half the ring width,
-    plus the rod's own half-thickness measured perpendicular to the chord,
-    plus clearance.  This is brief 4.2's topology argument as a number.
+    The ring's body sweeps half the wound band either side of the joint
+    plus its own half-width, and across that reach the two diagonals rise
+    from the chord at alpha; their upper edge at the far end of the sweep
+    is what the inner rim must pass.  Chord radius, plus the rise over that
+    reach, plus the rod's own half-thickness measured perpendicular to the
+    chord.  This is brief 4.2's topology argument as a number, with the
+    band in it: charged for the ring's width alone it passed trusses the
+    solver then refused at the band's end.
+
+    AND THE CLEARANCE IS TAKEN AT THE RIM'S CORNER.  Just outside the
+    band the diagonal keeps rising and passes the corner of the rim
+    obliquely, so the nearest approach is the radial slack times
+    cos(alpha), not the slack itself.  Measured by the approach solver on
+    a 50-degree truss: 1.87 mm of radial slack was 1.21 mm of clearance.
     """
     clear = Process.SEAT_CLEAR if clear is None else clear
     a = radians(truss.alpha)
-    return (truss.d_chord / 2.0 + (Ring.W / 2.0) * tan(a)
-            + truss.d_diag / (2.0 * cos(a)) + clear)
+    return (truss.d_chord / 2.0 + (Ring.W / 2.0 + truss.band / 2.0) * tan(a)
+            + truss.d_diag / (2.0 * cos(a)) + clear / cos(a))
 
 
 def notch_mouth():
@@ -503,6 +628,12 @@ CHECKS = [
      -Head.grip_x() - Gripper.BODY_W / 2.0 > Head.ring_axial_half()),
     ("the gripper's jaws open wider than the largest rod",
      Gripper.JAW_OPEN > max(Stock.DIAMETERS) + 4.0),
+    ("the diagonal rack pitches rods clear of the pads that straddle their neighbour",
+     Magazine.DIAG_PITCH > Gripper.JAW_OPEN / 2.0 + Gripper.PAD_T
+     + Magazine.SLOT_DEPTH * tan(radians(Magazine.SLOT_ANGLE / 2.0)) + 1.0 + 1.0),
+    ("...and so does the chord rack",
+     Magazine.CHORD_PITCH > Gripper.JAW_OPEN / 2.0 + Gripper.PAD_T
+     + Magazine.SLOT_DEPTH * tan(radians(Magazine.SLOT_ANGLE / 2.0)) + 1.0 + 1.0),
     ("a V-notch captures more arrival error than the gantry and its screw "
      "growth can produce over a metre",
      capture_range(3.0) > Gantry.REPEAT + stepper_scale_sigma() * 1000.0),
@@ -510,8 +641,10 @@ CHECKS = [
      Cage.NOTCH_ANGLE < 120.0),
     ("pins pitch at 50 mm, the brief's straightness rule",
      abs(Cage.PIN_PITCH - 50.0) < 1e-9),
+    ("a ring parked at a thread post clears the end plate",
+     Cage.END_FREE >= Cage.POST_OFF + Head.ring_axial_half() + Process.SEAT_CLEAR),
     ("the camera resolves a chord's edge to a hundredth of a millimetre",
-     Vision.mm_per_px(Vision.CAM_Z) * Vision.EDGE_SIGMA_PX < 0.02),
+     Vision.mm_per_px(Vision.range_nominal()) * Vision.EDGE_SIGMA_PX < 0.02),
     ("...so the bracket, not the sensor, is the budget",
-     Vision.EXT_SIGMA > 5.0 * Vision.mm_per_px(Vision.CAM_Z) * Vision.EDGE_SIGMA_PX),
+     Vision.EXT_SIGMA > 5.0 * Vision.mm_per_px(Vision.range_nominal()) * Vision.EDGE_SIGMA_PX),
 ]

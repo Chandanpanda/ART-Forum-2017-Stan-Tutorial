@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 import numpy as np
 
 from truss import structure, geometry, fixture, approach, schedule, motion
-from truss.spec import Gantry, Head
+from truss.spec import Gantry, Head, Process, Cage
 from truss.geometry import TrussGeometry, theta_face_up, theta_chord_up
 
 VERBOSE = "-v" in sys.argv
@@ -81,6 +81,42 @@ def run(t, tag):
             want = theta_chord_up(r.chord) if r.kind == "chord" else theta_face_up(r.face)
             ok &= abs(((theta - want) + 180.0) % 360.0 - 180.0) < 1e-6
     check("%s: each rod is released at its own loading angle" % tag, ok)
+    # a held rod is turned only with the gripper out (approach.yaw_height)
+    ok, out, held, turned = True, False, False, 0
+    for o in P.ops:
+        if o.kind == "extend" and o.args["tool"] == "grip":
+            out = True
+        elif o.kind == "retract" and o.args["tool"] == "grip":
+            out = False
+        elif o.kind == "grip":
+            held = True
+        elif o.kind == "release":
+            held = False
+        elif o.kind == "yaw" and held:
+            turned += 1
+            ok &= out
+    check("%s: a held rod is only ever turned with the gripper out, below the rim" % tag,
+          ok and turned == t.n_diag, "%d turns held" % turned)
+    # the post loops: the parked ring clears the fixture along every leg
+    # (approach.post_loop), and the leg is wide enough to hook the strand
+    worst, legs = 1e9, set()
+    theta = 0.0
+    for i, o in enumerate(P.ops):
+        if o.kind == "index":
+            theta = o.args["theta"]
+        if o.kind == "anchor":
+            obs = approach.Obstacles(g, fx, theta)
+            legs_ = [P.ops[k].args["pos"] for k in range(i - 4, i)]
+            legs.add(round(max(p["y"] for p in legs_) - min(p["y"] for p in legs_), 2))
+            for p0, p1 in zip(legs_, legs_[1:] + legs_[:1]):
+                for f in np.linspace(0.0, 1.0, 9):
+                    c = np.array([p0["x"] + f * (p1["x"] - p0["x"]),
+                                  p0["y"] + f * (p1["y"] - p0["y"]), p0["z"]])
+                    worst = min(worst, obs.clearance(c, False, 0.0))
+    check("%s: the ring clears the fixture along every post loop" % tag,
+          worst >= Process.SEAT_CLEAR - 0.1, "least %.2f mm" % worst)
+    check("%s: ...and the loop's leg passes the post by more than its radius" % tag,
+          all(l > Cage.POST_R for l in legs), "legs %s" % sorted(legs))
     # the dose follows its wind
     kinds = [o.kind for o in P.ops]
     ok = True
@@ -89,6 +125,13 @@ def run(t, tag):
             nxt = [q.kind for q in P.ops[i + 1:i + 12]]
             ok &= "dose" in nxt
     check("%s: every wind is followed by its dose within a few ops" % tag, ok)
+    # THE KEEPER STAYS.  check_ring measures that a band of dry thread does
+    # not retain the mitres: released and turned face down they leave,
+    # wound or bare.  So nothing in the cycle may free one -- the truss
+    # goes to the oven in its fixture.
+    check("%s: every rod is kept when it is placed and no keeper is ever released" % tag,
+          P.count("release") == t.n_chords + t.n_diag
+          and not any(o.kind in ("unkeep", "free") for o in P.ops))
     est = structure.cycle_estimate(t)
     check("%s: the optimiser's closed-form estimate tracks the plan within 30%%" % tag,
           abs(est / s["total_min"] - 1.0) < 0.30,

@@ -28,8 +28,8 @@ from math import sin, cos, tan, radians, atan2, degrees, sqrt
 
 import numpy as np
 
-from .spec import (Truss, Cage, Magazine, Ring, Head, Gripper, Process,
-                   ring_swept_r, notch_mouth)
+from .spec import (Cage, Magazine, Head, Gripper, Process,
+                   notch_mouth)
 from .geometry import (TrussGeometry, FACES, radial, chord_phi, rot_x,
                        theta_chord_up, theta_face_up)
 
@@ -81,25 +81,41 @@ class Fixture:
     # ------------------------------------------------------------- pins
     def joint_exclusion(self):
         """Axial half-width round a joint nothing fixed may enter: the
-        ring's band or its spool, whichever is wider, plus the arm that
-        carries a pin (wider than the pin plate itself), plus clearance."""
-        return (Head.ring_axial_half() + max(Cage.PIN_T, Cage.ARM_W) / 2.0
-                + Process.SEAT_CLEAR)
+        ring's band or its spool, whichever is wider, plus HALF THE WOUND
+        BAND -- the ring starts each band a half-band to one side of the
+        joint and sweeps across it (measured: the spool met a pin arm
+        11 mm from a joint at 0.4 turns) -- plus the arm that carries a
+        pin (wider than the pin plate itself), plus clearance."""
+        return (Head.ring_axial_half() + self.t.band / 2.0
+                + max(Cage.PIN_T, Cage.ARM_W) / 2.0 + Process.SEAT_CLEAR)
 
     def pin_xs(self, k):
         """Pin stations along chord k.  Every free interval between two
-        joints (and between a chord end and its first joint) gets pins at
-        both ends of the interval and evenly between, never further apart
-        than PIN_PITCH -- so a chord is supported within the exclusion
-        distance of every joint and nowhere is a span longer than the
-        brief's 50 mm."""
+        forbidden zones -- a joint's exclusion, the gripper's footprint at
+        the chord's midpoint, the chord's ends -- gets pins at both ends
+        and evenly between, never further apart than PIN_PITCH: a chord is
+        supported within the exclusion distance of every joint and nowhere
+        is a span longer than the brief's 50 mm.  Overlapping zones are
+        merged first (the metre truss has a joint on its midpoint)."""
         t = self.t
         excl = self.joint_exclusion()
-        edges = [Cage.PIN_T] + [j.x for j in self.g.joints_on(k)] + [t.length - Cage.PIN_T]
+        gexcl = Gripper.PAD_L / 2.0 + Cage.PIN_T / 2.0 + 2.0
+        zones = sorted([(j.x - excl, j.x + excl) for j in self.g.joints_on(k)]
+                       + [(t.length / 2.0 - gexcl, t.length / 2.0 + gexcl)])
+        merged = []
+        for a, b in zones:
+            if merged and a <= merged[-1][1]:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], b))
+            else:
+                merged.append((a, b))
+        free = []
+        lo = Cage.PIN_T
+        for a, b in merged:
+            free.append((lo, a))
+            lo = b
+        free.append((lo, t.length - Cage.PIN_T))
         xs = []
-        for i in range(len(edges) - 1):
-            a = edges[i] + (excl if i > 0 else 0.0)
-            b = edges[i + 1] - (excl if i + 1 < len(edges) - 1 else 0.0)
+        for a, b in free:
             if b - a < Cage.PIN_T:
                 continue
             n = int(np.ceil((b - a) / Cage.PIN_PITCH)) + 1
@@ -130,8 +146,8 @@ class Fixture:
         the block's nearest point clears the ring's swept envelope at that
         joint by the seating clearance."""
         a = radians(self.t.alpha)
-        axial = (Head.ring_axial_half() + Process.SEAT_CLEAR + self.cradle_r()
-                 + Cage.CRADLE_L * cos(a) / 2.0)
+        axial = (Head.ring_axial_half() + self.t.band / 2.0 + Process.SEAT_CLEAR
+                 + self.cradle_r() + Cage.CRADLE_L * cos(a) / 2.0)
         return axial / cos(a)
 
     def face_normal_out(self, f):
@@ -168,8 +184,11 @@ class Fixture:
                     P = a[None, :] + s * (b - a)[None, :] - axis_pt[None, :]
                     # the seated head is a body of revolution about the
                     # chord bar its carriage box, which sits above the
-                    # chord when the chord is up -- away from a cradle
-                    d = float((head_distance(P, True) - self.cradle_r()).min())
+                    # chord when the chord is up -- away from a cradle.
+                    # It sweeps the band's width, so test both ends.
+                    hb = self.t.band / 2.0
+                    d = min(float((head_distance(P + np.array([sx, 0.0, 0.0]), True)
+                                   - self.cradle_r()).min()) for sx in (-hb, 0.0, hb))
                     if d >= Process.SEAT_CLEAR:
                         break
                     off += 0.5
@@ -287,7 +306,23 @@ class Fixture:
             rr.append(self.cradle_r())
         for q in self.posts:
             p0.append(Rm @ q.p0); p1.append(Rm @ q.p1); rr.append(Cage.POST_R)
+        # the spine down the axis, and the two end plates as fat discs
+        x0 = -(Cage.END_FREE + Cage.END_PLATE_T)
+        x1 = self.t.length + Cage.END_FREE + Cage.END_PLATE_T
+        p0.append(np.array([x0, 0.0, 0.0])); p1.append(np.array([x1, 0.0, 0.0]))
+        rr.append(self.spine_r())
+        for xa in (x0, self.t.length + Cage.END_FREE):
+            p0.append(np.array([xa, 0.0, 0.0]))
+            p1.append(np.array([xa + Cage.END_PLATE_T, 0.0, 0.0]))
+            rr.append(self.plate_r())
         return np.array(p0), np.array(p1), np.array(rr)
+
+    def spine_r(self):
+        return max(Cage.spine_r(self.g.R), Cage.SPINE_R_MIN)
+
+    def plate_r(self):
+        """The end plates reach nearly to the chords."""
+        return self.g.R - self.t.d_chord - 2.0
 
     def capture_range(self, rod):
         """How far off a V a rod may arrive and still drop in, mm."""

@@ -1,0 +1,160 @@
+"""Tier 1: the HAL contract, with physics -- and the ratchet.
+
+  * CONFORMANCE: the backend implements every verb.
+  * HONESTY: an axis believes the quantised setpoint and the screw does
+    the setpoint times its thermal scale -- the disagreement is the error
+    the camera exists for, and it must be there; the ring spins at the
+    rpm it is told and parks within the stop tolerance; the cage indexes
+    at the worm's rate.
+  * THE RATCHET: process.py reads no simulator state.  No `.d`, `.m`,
+    `_truth`, `ring_centre`, `rod_pose` anywhere in it.
+
+    python3 sim/scripts/truss/check_hal.py [-v]
+"""
+import os
+import re
+import sys
+
+os.environ.setdefault("MUJOCO_GL", "osmesa")
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+import numpy as np
+import mujoco
+
+from truss import structure, geometry, fixture, mjcf, cell, hal, motion
+from truss.spec import Ring, Gantry, Cage, stepper_scale_sigma
+from truss.geometry import TrussGeometry
+
+VERBOSE = "-v" in sys.argv
+RESULTS = []
+
+
+def check(name, ok, detail=""):
+    RESULTS.append((name, bool(ok), detail))
+    return bool(ok)
+
+
+def main():
+    t = structure.TRUSS_300
+    g = TrussGeometry(t)
+    fx = fixture.Fixture(g)
+    m = mujoco.MjModel.from_xml_string(mjcf.scene_cell(g, fx, stage="loaded"))
+    d = mujoco.MjData(m)
+    c = cell.CellSim(m, d, g, fx, rng=np.random.default_rng(7))
+    clk = cell.SimClock(m, d, c)
+    for _ in range(30):
+        clk.tick()
+
+    check("the backend implements the whole contract", hal.audit(c) == [],
+          ", ".join(hal.audit(c)) or "complete")
+    check("...and is registered against the ABCs, not duck-typed",
+          all(isinstance(c, k) for k in (hal.AxesHAL, hal.RingHAL, hal.CageHAL,
+                                         hal.GripperHAL, hal.DispenserHAL, hal.CutterHAL)))
+    check("one tick is one control period",
+          abs(clk.decim * m.opt.timestep - hal.Clock.PERIOD) < 1e-9)
+
+    # ------------------------------------------------------------ axes
+    x0 = c.at("x")
+    goal = x0 + 250.0
+    mv = motion.Move({"x": x0}, {"x": goal}, Gantry.V_MAX, Gantry.A_MAX)
+    tt = 0.0
+    while tt < mv.T:
+        c.goto("x", mv.at(tt)["x"])
+        tt += clk.PERIOD
+        clk.tick()
+    c.goto("x", goal)
+    for _ in range(30):
+        clk.tick()
+    believed, truth = c.at("x"), c.axis_truth("x")
+    check("an axis believes the quantised setpoint",
+          abs(believed - goal) <= Gantry.MM_PER_STEP / 2.0 + 1e-9,
+          "%.4f for %.4f" % (believed, goal))
+    check("...and the screw did the setpoint times its drawn scale",
+          abs(truth - ((believed - c._off["x"]) * c.scale["x"] + c._off["x"])) < 0.02,
+          "truth %.3f, believed %.3f, scale %.6f" % (truth, believed, c.scale["x"]))
+    check("the scale is a per-run draw of the right size",
+          0.0 < abs(c.scale["x"] - 1.0) < 4.0 * stepper_scale_sigma(),
+          "%.2e vs sigma %.2e" % (c.scale["x"] - 1.0, stepper_scale_sigma()))
+    check("settled() reports the axis settled when it is", c.settled("x"))
+    c.goto("x", goal + 30.0)
+    check("...and not the moment a new setpoint lands", not c.settled("x"))
+    for _ in range(60):
+        clk.tick()
+    z0 = c.at("z")
+    c.goto("z", z0 - 20.0)
+    for _ in range(60):
+        clk.tick()
+    check("z holds its setpoint against gravity to a step",
+          abs(c.axis_truth("z") - c.at("z")) < 2.0 * Gantry.MM_PER_STEP + 0.01,
+          "%.3f vs %.3f" % (c.axis_truth("z"), c.at("z")))
+    lim = c.limits()
+    check("limits are the travels", set(lim) == {"x", "y", "z", "d", "g", "w"})
+
+    # ------------------------------------------------------------ ring
+    c.spin(Ring.RPM)
+    for _ in range(100):
+        clk.tick()
+    a0 = c.ring_truth()
+    for _ in range(100):
+        clk.tick()
+    rpm = (c.ring_truth() - a0) / 360.0 / 2.0 * 60.0
+    check("the ring spins at the rpm it is told, within 3%%",
+          abs(rpm - Ring.RPM) < 0.03 * Ring.RPM, "%.1f rpm" % rpm)
+    fid = [c.angle() - c.ring_truth() for _ in range(50)]
+    check("the fiducial reads the true angle with a small noise",
+          abs(np.mean(fid)) < 0.05 and 0.0 < np.std(fid) < 0.2,
+          "mean %.3f sd %.3f deg" % (np.mean(fid), np.std(fid)))
+    c.park(-15.0)
+    n = 0
+    while not c.parked() and n < 300:
+        clk.tick(); n += 1
+    err = ((c.ring_truth() - (-15.0)) + 180.0) % 360.0 - 180.0
+    check("park lands the gap within the stop tolerance",
+          c.parked() and abs(err) < Ring.STOP_TOL, "%.2f deg in %.2f s" % (err, n * clk.PERIOD))
+
+    # ------------------------------------------------------------ cage
+    th0 = c.cage_truth()
+    c.index(th0 + 120.0)
+    n = 0
+    while not c.indexed() and n < 600:
+        clk.tick(); n += 1
+    took = n * clk.PERIOD
+    want = 120.0 / (6.0 * Cage.THETA_RPM)
+    check("the cage indexes 120 degrees at the worm's rate",
+          c.indexed() and abs(took - want) < 0.8, "%.2f s for %.2f" % (took, want))
+    err = ((c.cage_truth() - (th0 + 120.0)) + 180.0) % 360.0 - 180.0
+    check("...and lands within a fifth of a degree", abs(err) < 0.2, "%.3f deg" % err)
+    check("theta() is the worm's own count, which equals the target once indexed",
+          abs(c.theta() - (th0 + 120.0)) < 1e-9)
+
+    # ---------------------------------------------------------- keeper
+    r = g.chords[1]
+    check("a loaded rod is kept", c.kept(r.index))
+    c.release_keeper(r.index)
+    check("...and can be freed", not c.kept(r.index))
+    c.keep(r.index)
+    check("...and kept again where it is", c.kept(r.index))
+
+    # --------------------------------------------------------- ratchet
+    src = open(os.path.join(os.path.dirname(__file__), "..", "..", "truss", "process.py")).read()
+    body = re.sub(r'"""[\s\S]*?"""', "", src)
+    body = "\n".join(l.split("#")[0] for l in body.splitlines())
+    leaks = [w for w in ("\\.d\\b", "\\.m\\b", "_truth", "ring_centre", "rod_pose",
+                         "mujoco", "xpos", "qpos")
+             if re.search(w, body)]
+    check("process.py reads nothing below the HAL", not leaks, "found %s" % leaks)
+    lits = [l for l in re.findall(r"(?<![\w.])\d{2,4}(?:\.\d+)?(?![\w.])", body)
+            if float(l) not in (180.0, 360.0)]          # angle wraps are arithmetic
+    check("process.py carries no coordinate-scale literals (pinned at 0)",
+          len(lits) == 0, "%s" % lits[:6])
+
+    bad = sum(1 for _, ok, _ in RESULTS if not ok)
+    for nm, ok, det in RESULTS:
+        if VERBOSE or not ok:
+            print("  %s  %s%s" % ("ok  " if ok else "FAIL", nm,
+                                  ("  [%s]" % det) if det and (VERBOSE or not ok) else ""))
+    print("check_hal: %d checks, %d failed" % (len(RESULTS), bad))
+    return 1 if bad else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

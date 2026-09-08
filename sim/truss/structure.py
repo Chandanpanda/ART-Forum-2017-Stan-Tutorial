@@ -29,7 +29,6 @@ what stops the optimiser from flattening the diagonals to nothing.  Joint
 compliance is ignored -- it is the epoxy's job and the bench's to measure.
 numpy only.
 """
-from dataclasses import replace
 from math import pi, sin, cos, tan, radians, sqrt
 
 import numpy as np
@@ -136,7 +135,9 @@ def ring_fit(t):
     rim = ring_r_in() - r_in_needed(t)
     # the ring turns round one chord; the other two are `side` away
     others = t.side - (ring_swept_r() + t.d_chord / 2.0 + Process.SEAT_CLEAR)
-    return rim, others
+    # ...and the cage's spine runs down the axis, R away
+    spine = t.R - ring_swept_r() - 2.0 * Process.SEAT_CLEAR - Cage.SPINE_R_MIN
+    return rim, others, spine
 
 
 def gap_fits(t):
@@ -207,7 +208,7 @@ def cycle_estimate(t):
 
 # ------------------------------------------------------------ verdicts
 def analyse(t, load=Load):
-    rim, others = ring_fit(t)
+    rim, others, spine = ring_fit(t)
     return {
         "I": section_I(t), "EI": EI(t),
         "slope_deg": tip_slope_deg(t, load=load),
@@ -220,6 +221,7 @@ def analyse(t, load=Load):
         "n_joints": t.n_joints, "n_diag": t.n_diag, "run": t.run,
         "L_cut": t.L_cut, "mitre_face": t.mitre_face,
         "ring_rim_margin": rim, "ring_others_margin": others,
+        "ring_spine_margin": spine,
         "gap_margin": gap_fits(t),
         "cycle_min": cycle_estimate(t),
     }
@@ -254,6 +256,8 @@ def violations(t, m=None, load=Load, cycle_max_min=45.0):
         bad.append("ring rim")
     if m["ring_others_margin"] < 0.0:
         bad.append("ring vs other chords")
+    if m["ring_spine_margin"] < 0.0:
+        bad.append("ring vs spine")
     if m["gap_margin"] < 0.0:
         bad.append("gap")
     if m["cycle_min"] > cycle_max_min:

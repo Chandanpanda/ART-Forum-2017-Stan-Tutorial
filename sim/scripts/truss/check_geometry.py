@@ -57,17 +57,46 @@ def truss_checks(t, tag):
           "band %.1f, face %.1f" % (t.band, t.mitre_face))
     # THE TOPOLOGY CLAIM (brief 4.2), measured on the cluster itself
     j = js0[1]
-    reach = max(g.cluster_reach(j, dx) for dx in np.linspace(-Ring.W / 2, Ring.W / 2, 11))
-    check("%s: within the ring's band the cluster stays inside the rim" % tag,
-          reach + Process.SEAT_CLEAR <= ring_r_in() + 1e-6,
-          "reach %.2f + %.1f vs r_in %.1f" % (reach, Process.SEAT_CLEAR, ring_r_in()))
+    sweep = Ring.W / 2.0 + t.band / 2.0
+    reach = max(g.cluster_reach(j, dx) for dx in np.linspace(-sweep, sweep, 19))
+    ca = np.cos(np.radians(t.alpha))
+    check("%s: within the ring's band the cluster stays inside the rim, with the "
+          "clearance taken at the rim's corner" % tag,
+          (ring_r_in() - reach) * ca >= Process.SEAT_CLEAR - 1e-6,
+          "reach %.2f, slack %.2f x cos = %.2f vs %.1f"
+          % (reach, ring_r_in() - reach, (ring_r_in() - reach) * ca, Process.SEAT_CLEAR))
     check("%s: ...and the closed form agrees with the sampled cluster to 0.5 mm" % tag,
-          abs((spec.r_in_needed(t) - Process.SEAT_CLEAR) - reach) < 0.5,
-          "formula %.2f, sampled %.2f" % (spec.r_in_needed(t) - Process.SEAT_CLEAR, reach))
+          abs((spec.r_in_needed(t) - Process.SEAT_CLEAR / ca) - reach) < 0.5,
+          "formula %.2f, sampled %.2f" % (spec.r_in_needed(t) - Process.SEAT_CLEAR / ca, reach))
     tm = g.thread_mass()
     check("%s: thread on the truss is a fraction of the joint budget" % tag,
           0.0 < tm < t.mass_joints * 0.5,
           "%.3f g thread, %.2f g joint budget" % (tm, t.mass_joints))
+    # WHAT A HOOP GOES ROUND.  A diagonal touches the chord at the joint
+    # and nowhere else, so a hoop laid away from the joint finds a gap and
+    # beds on the chord under it -- measured wound, in check_ring.  The
+    # closed form for where that starts is Truss.bind_half, and the hoop
+    # perimeter has to change there and only there.
+    bh = t.bind_half()
+    gap = lambda dx: abs(dx) * np.tan(np.radians(t.alpha)) - t.d_diag / (2.0 * np.cos(np.radians(t.alpha)))
+    check("%s: at the binding half-width the members are exactly a thread apart" % tag,
+          abs(gap(bh) - t.thread_d) < 1e-9,
+          "%.3f mm at dx %.3f, thread %.2f" % (gap(bh), bh, t.thread_d))
+    check("%s: ...and they touch each other only within d_diag / 2 sin alpha of the joint" % tag,
+          abs(gap(t.d_diag / (2.0 * np.sin(np.radians(t.alpha))))) < 1e-9)
+    chord_hoop = np.pi * (t.d_chord + t.thread_d)
+    check("%s: a hoop inside the binding width goes round both members, one outside "
+          "goes round the chord alone" % tag,
+          g.hoop_perimeter(j, bh * 0.5) > chord_hoop + 0.3
+          and abs(g.hoop_perimeter(j, bh + 0.5) - chord_hoop) < 1e-9,
+          "inside %.2f, outside %.2f, chord alone %.2f"
+          % (g.hoop_perimeter(j, bh * 0.5), g.hoop_perimeter(j, bh + 0.5), chord_hoop))
+    check("%s: the band binds over a fraction of its width, so the hull everywhere "
+          "overstates the thread" % tag,
+          bh < t.band / 2.0 and g.thread_on_joint(j) < sum(
+              g.cluster_perimeter(j, float(dx)) for dx in
+              (np.arange(t.turns) * t.band / t.turns - t.band / 2.0 + t.band / t.turns / 2.0)),
+          "binds over %.1f of %.1f mm" % (2 * bh, t.band))
     # pins
     for k in range(t.n_chords):
         xs = fx.pin_xs(k)
@@ -135,7 +164,7 @@ def main():
     truss_checks(structure.TRUSS_1M, "1m")
     truss_checks(structure.TRUSS_300, "300")
     # A TRUSS IT HAS NEVER SEEN: not a default, not the brief's
-    other = Truss(length=600.0, side=70.0, alpha=50.0, d_chord=2.0, d_diag=1.5,
+    other = Truss(length=600.0, side=70.0, alpha=40.0, d_chord=2.0, d_diag=1.5,
                   name="other")
     truss_checks(other, "other")
     # motion profiles

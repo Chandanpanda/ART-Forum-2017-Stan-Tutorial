@@ -65,9 +65,17 @@ def main():
     # its own 200 Hz rule -- 45 degrees at 2 mm is a hair short, and the
     # optimiser's 40-degree, 92 mm answer clears it.  A finding, and one a
     # bench would confirm before a 228 was written on a datasheet.
+    # ...and its 45-degree diagonals want 11 mm of rim on a 10 mm ring once
+    # the band's sweep and the rim's corner are charged for
+    # (spec.r_in_needed): the brief's own ring is a millimetre short for
+    # the brief's own truss, which is why the optimiser lands at 40 degrees.
     check("brief's truss fails its own first-mode rule once the web's shear counts, "
-          "and nothing else",
-          set(structure.violations(brief)) == {"f1"}, str(structure.violations(brief)))
+          "and is marginal at the rim's corner -- nothing else",
+          set(structure.violations(brief)) == {"f1", "ring rim"},
+          str(structure.violations(brief)))
+    check("...by about a millimetre",
+          0.5 < spec.r_in_needed(brief) - ring_r_in() < 1.5,
+          "%.3f mm" % (spec.r_in_needed(brief) - ring_r_in()))
 
     # -------------------------------------------------- the defaults
     for t, L in ((structure.TRUSS_1M, 1000.0), (structure.TRUSS_300, 300.0)):

@@ -99,6 +99,9 @@ class Joint:
         return len(self.diags) == 2
 
 
+_N_BETWEEN = {}
+
+
 # ----------------------------------------------------------------- the truss
 class TrussGeometry:
     def __init__(self, truss: Truss):
@@ -151,9 +154,17 @@ class TrussGeometry:
         return p0 + np.array([x, 0.0, 0.0])
 
     def n_between(self, k, m):
-        """Unit y-z vector from chord k's axis toward chord m's."""
-        v = radial(chord_phi(m)) - radial(chord_phi(k))
-        return v / np.linalg.norm(v)
+        """Unit y-z vector from chord k's axis toward chord m's.
+
+        Cached on the pair, which is exact: it depends on the section's
+        three chord azimuths and on nothing about the truss.  It was 45%
+        of building a geometry, and the design optimiser builds ten
+        thousand of them."""
+        v = _N_BETWEEN.get((k, m))
+        if v is None:
+            v = radial(chord_phi(m)) - radial(chord_phi(k))
+            v = _N_BETWEEN[(k, m)] = v / np.linalg.norm(v)
+        return v
 
     def joints_on(self, k):
         """The joints of chord k, in x order."""

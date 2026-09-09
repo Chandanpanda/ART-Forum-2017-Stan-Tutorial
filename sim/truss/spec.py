@@ -22,8 +22,8 @@ that compute them (geometry, approach, schedule) take a Truss and a cell
 spec as arguments so they answer for the next truss too.
 """
 from dataclasses import dataclass
-from math import (pi, tan, sin, cos, asin, acos, radians, sqrt, floor, ceil,
-                  atan2, degrees)
+from math import (pi, tan, sin, cos, asin, acos, atan, radians, sqrt, floor,
+                  ceil, atan2, degrees)
 
 
 # ---------------------------------------------------------------- conversions
@@ -78,7 +78,14 @@ class Load:
     camera faces, which is bending slope at the tips and nothing a
     software calibration can absorb (brief 2.2).
     """
-    TIP_MASS        = 50.0     # g, one camera head
+    # ONE CAMERA HEAD.  This was a flat 50 g, carried from the brief, and
+    # it is the most consequential number in the design: it sets the tip
+    # force, dominates the Rayleigh mass, and so fixes both the angular
+    # budget and the first mode.  The module is 4 g.  Derived from the part
+    # now, so it cannot drift away from it again.
+    BRIEF_TIP_MASS  = 50.0     # g, the brief's assumption -- kept because
+                               # its published 228 Hz is reproducible only
+                               # against the head it was computed with
     LATERAL_G       = 3.0      # manoeuvre load, multiples of gravity
     G               = 9.81
     SLOPE_BUDGET    = 0.005    # deg, total angular drift, both faces
@@ -108,6 +115,11 @@ class Load:
     SECTION_MAX     = 100.0    # mm, largest triangle side the mount takes
     BUCKLE_SF       = 5.0      # chord Euler load over its working load
     TEST_FORCE      = 1.5      # N at the cantilever tip (brief 6)
+
+    @classmethod
+    def tip_mass(cls):
+        """g, one camera head: the module plus what terminates on it."""
+        return Payload.MASS + Payload.HEAD_EXTRA
 
 
 # ================================================================ THE TASK
@@ -926,12 +938,76 @@ class Payload:
         hx, hz = cls.HOLE_PITCH[0] / 2.0, cls.HOLE_PITCH[1] / 2.0
         return tuple((sx * hx, cls.HOLES_UP + sz * hz)
                      for sx in (-1.0, 1.0) for sz in (-1.0, 1.0))
-    # what a bonded joint may be asked to carry, for the fillet arithmetic
-    MASS        = 4.0                  # g [VERIFY: not on the drawing; the
-                                       # published figure for the bare
-                                       # module.  A case adds its own.]
+    # WHAT IT WEIGHS is not on the mechanical drawing.  It is on the
+    # vendor's module comparison table, which lists Module 3 at 4 g where
+    # Modules 1 and 2 are 3 g -- and the two drawings differ by exactly the
+    # 2.5 mm of extra depth the motorised focus needs, so the two masses
+    # agree with the two envelopes and neither is a guess.
+    MASS        = 4.0                  # g, the module (vendor table)
+    # This one IS a guess.  The flat flex terminates at the head, and its
+    # connector plus whatever strain relief the product ends up with hangs
+    # off the same bond.  Kept apart from MASS so the guess cannot hide
+    # inside the fact.  It does NOT include the mount: the mount's rods are
+    # members, and a model that carries them here too counts them twice.
+    HEAD_EXTRA  = 1.0                  # g [VERIFY: weigh a terminated head]
+    # The same table gives an envelope to the millimetre, from a different
+    # document than the drawing.  Two independent readings of one box is
+    # the only cross-check this part has, and CHECKS takes it.
+    ENVELOPE    = (25.0, 11.5, 24.0)   # mm, vendor table, BOX's axes
     BOND_MU     = 10.0                 # MPa allowable shear in a filleted joint
     FILLET_R    = 3.0                  # mm, the fillet the dispenser can lay
+
+    # ---------- FROM THE SENSOR ASSEMBLY DATASHEET, RP-009992-DS-1 (TNBA1392)
+    # A SECOND, INDEPENDENT DRAWING of the same part.  It confirms the
+    # mechanical one -- 10.8 +-0.15 square, 3.875 +-0.15 body height, a
+    # 5.75 barrel -- and then says the thing the mechanical drawing does
+    # not, which is that THE LENS MOVES.
+    SENSOR       = "IMX708-AAJH5-C"
+    BFL          = 4.74                # mm, back focal length
+    PIXEL        = 1.4e-3              # mm
+    F_NO         = 1.79                # +-5%
+    FOV_DIAG     = 75.0                # deg +-3, the lens's own spec
+    IMAGE_CIRCLE = 8.4                 # mm
+    # THE AUTOFOCUS.  An open-loop voice coil, and every one of these is
+    # a lens position that moves without the truss moving at all:
+    AF_STROKE    = (0.310, -0.050)     # mm, minimum travel
+    AF_POSTURAL  = 0.050               # mm, lens shift with ORIENTATION at
+                                       # a fixed drive current
+    AF_HYST      = 0.008               # mm
+    AF_TILT      = 8.0 / 60.0          # deg, lens axis against the sensor
+                                       # plane, over the stroke
+
+    @classmethod
+    def f_px(cls):
+        """The calibrated focal length, in pixels."""
+        return cls.BFL / cls.PIXEL
+
+    @classmethod
+    def fov_diagonal(cls):
+        """The diagonal field the published H and V imply, degrees -- the
+        cross-check against the lens's own 75 +- 3."""
+        h, v = (radians(a / 2.0) for a in cls.FOV)
+        return 2.0 * degrees(atan(sqrt(tan(h) ** 2 + tan(v) ** 2)))
+
+    @classmethod
+    def range_error_axial(cls, dv_mm, range_m):
+        """m of range error from an AXIAL lens shift of dv_mm.
+
+        The lens moving along its own axis changes the image distance,
+        which is what a calibration measures as the focal length.  Stereo
+        reads Z = f B / d, and a fractional error in f is the same
+        fractional error in Z: it does NOT cancel between the two cameras,
+        because both focal lengths enter the same way.  An INTRINSIC, and
+        the truss cannot help with it.
+        """
+        return range_m * dv_mm / cls.BFL
+
+    @classmethod
+    def range_error_yaw(cls, yaw_deg, range_m, baseline_mm=1000.0):
+        """m of range error from a relative YAW between the camera faces --
+        the truss's own budget, in the same units, so the two compare.
+        dZ = Z^2 dtheta / B, and the focal length cancels."""
+        return range_m ** 2 * radians(yaw_deg) / (baseline_mm / 1000.0)
 
     @classmethod
     def case_r(cls):
@@ -1311,4 +1387,40 @@ CHECKS = [
      Vision.mm_per_px(Vision.range_nominal()) * Vision.EDGE_SIGMA_PX < 0.02),
     ("...so the bracket, not the sensor, is the budget",
      Vision.EXT_SIGMA > 5.0 * Vision.mm_per_px(Vision.range_nominal()) * Vision.EDGE_SIGMA_PX),
+    # The payload has two independent descriptions -- a dimensioned drawing
+    # and a vendor table -- and they are the only way to catch having read
+    # the wrong module's drawing, which would move the standoff, the rod
+    # lengths and the mount's whole geometry without failing anything else.
+    ("the box read off the drawing agrees with the vendor's published envelope "
+     "to a millimetre on every axis",
+     all(abs(a - b) <= 1.0 for a, b in zip(Payload.BOX, Payload.ENVELOPE))),
+    ("...and the table's 4 g is Module 3's, not Module 2's: the extra mass "
+     "comes with the extra depth the motorised focus needs",
+     Payload.ENVELOPE[1] > 9.0 + 2.0 and abs(Payload.MASS - 4.0) < 1e-9),
+    ("a camera head is the module and its termination, and the guess is the "
+     "smaller half",
+     Payload.HEAD_EXTRA < Payload.MASS
+     and abs(Load.tip_mass() - (Payload.MASS + Payload.HEAD_EXTRA)) < 1e-9),
+    # The field of view is used to solve the mount's standoff, so it is
+    # worth knowing it is the right field.  The published horizontal and
+    # vertical come from one document and the lens's diagonal from another.
+    ("the published 66 x 41 degree field agrees with the lens's own 75 +- 3 "
+     "degree diagonal",
+     abs(Payload.fov_diagonal() - Payload.FOV_DIAG) <= 3.0),
+    # ---- AND THE FINDING THE SECOND DATASHEET BROUGHT ----------------
+    # The whole product argument is that a rigid spine removes the need to
+    # re-estimate the cameras' relative pose in flight.  That argument is
+    # about EXTRINSICS.  The module this rig is built around focuses with
+    # an open-loop voice coil, and its own datasheet says the lens moves
+    # 50 um with ORIENTATION at a fixed drive current -- which is 1.06% of
+    # the image distance, and therefore 1.06% of every range it reports.
+    # At 100 m that is more error than the entire inter-camera budget the
+    # truss is designed to hold, from inside one camera, with nothing bent.
+    ("the module's own autofocus moves the range answer further than the whole "
+     "truss budget does, so locking focus is a product requirement",
+     Payload.range_error_axial(Payload.AF_POSTURAL, 100.0)
+     > Payload.range_error_yaw(Load.SLOPE_BUDGET, 100.0, 1000.0)),
+    ("...and the tilt it adds while the lens is actually moving is worse again: "
+     "a millimetre of lever on 8 arcmin is a pixel and a half of principal point",
+     Payload.AF_TILT * pi / 180.0 * 1.0 / Payload.PIXEL > 1.0),
 ]

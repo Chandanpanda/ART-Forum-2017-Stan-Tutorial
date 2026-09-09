@@ -24,6 +24,7 @@ Three things this module decides that the brief leaves open:
 numpy only.
 """
 from dataclasses import dataclass
+from functools import cached_property
 from math import pi, sin, cos, tan, radians, atan2, degrees, sqrt
 
 import numpy as np
@@ -70,13 +71,31 @@ class Slot:
 
 
 class Fixture:
+    # LAZY ON PURPOSE.  A fixture is cheap to name and expensive to lay
+    # out -- the pins alone are 24 ms, and the design optimiser wants the
+    # magazine's extent for ten thousand candidates.  Deferring each part
+    # until it is read keeps ONE implementation of the layout instead of a
+    # closed form beside it that can drift; a check pins the two together
+    # only when there is one to pin.
     def __init__(self, geom: TrussGeometry):
         self.g = geom
         self.t = geom.t
-        self.pins = self._pins()
-        self.cradles = self._cradles()
-        self.posts = self._posts()
-        self.slots = self._magazine()
+
+    @cached_property
+    def pins(self):
+        return self._pins()
+
+    @cached_property
+    def cradles(self):
+        return self._cradles()
+
+    @cached_property
+    def posts(self):
+        return self._posts()
+
+    @cached_property
+    def slots(self):
+        return self._magazine()
 
     # ------------------------------------------------------------- pins
     def joint_exclusion(self):

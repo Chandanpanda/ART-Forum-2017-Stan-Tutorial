@@ -10,7 +10,7 @@ reason a lattice exists at all.
 The tube is swept alongside as a candidate rather than quoted from a
 table.  If it wins, the cell in sim/truss should not be built.
 """
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, replace
 import itertools
 
 import numpy as np
@@ -57,13 +57,21 @@ class Candidate:
 def truss_grid(sides, alphas, chords=STOCK_MM, diags=STOCK_MM, webs=("warren",),
                nose=None):
     """Every truss the shop could cut, with the diagonal never fatter than
-    the chord it lies on."""
+    the chord it lies on.
+
+    `nose` may be a Nose or a CALLABLE of the candidate.  It has to be able
+    to be a callable: the camera's standoff is solved from the section it
+    is bolted to -- a deeper truss puts more of itself in a 66 degree field
+    -- so a single nose shared across the grid would price the deep
+    sections as if they were free of it.  What that function knows about
+    cameras stays outside this package.
+    """
     out = []
     for s, a, dc, dd, w in itertools.product(sides, alphas, chords, diags, webs):
         if dd > dc:
             continue
-        out.append(Candidate("truss", side=s, alpha=a, d_chord=dc, d_diag=dd, web=w,
-                             nose=nose))
+        c = Candidate("truss", side=s, alpha=a, d_chord=dc, d_diag=dd, web=w)
+        out.append(replace(c, nose=nose(c)) if callable(nose) else replace(c, nose=nose))
     return out
 
 
@@ -73,7 +81,7 @@ def tube_grid(d_outs, walls):
 
 
 def run(candidates, duty, length=1000.0, mass_max_g=None, section_max_mm=None,
-        f1_min_hz=None, buildable=None):
+        f1_min_hz=None, buildable=None, rejects=None):
     """Evaluate every candidate; returns rows sorted by range error.
 
     CONSTRAINTS ARE APPLIED, NOT ASSUMED AWAY.  Range error falls
@@ -83,6 +91,14 @@ def run(candidates, duty, length=1000.0, mass_max_g=None, section_max_mm=None,
     (the section has to fit the airframe) and the modes (a deep section on
     thin diagonals is statically excellent and dynamically soft).  Every
     row keeps a `violates` list so a rejected design can still be read.
+
+    AND EVERY RULE THIS MODEL CANNOT SEE.  `rejects` is an optional
+    predicate on a Candidate returning a list of broken rule names, and it
+    is how the rules that belong to another model get applied here without
+    this package learning them.  A frame solver has no view of a diagonal's
+    own first mode against a propeller band, of whether a winding ring fits
+    round a joint, or of how long the cell takes to build the thing --
+    and each of those has rejected a design this sweep ranked first.
 
     AND WHETHER THE MACHINE CAN MAKE IT.  `buildable` is an optional
     predicate on a Candidate returning a margin in mm -- positive is
@@ -114,6 +130,8 @@ def run(candidates, duty, length=1000.0, mass_max_g=None, section_max_mm=None,
         r["build_mm"] = float(buildable(c)) if buildable is not None else float("inf")
         if r["build_mm"] < 0.0:
             bad.append("buildable")
+        if rejects is not None:
+            bad.extend(rejects(c))
         r["violates"] = bad
         r["feasible"] = not bad
         rows.append(r)

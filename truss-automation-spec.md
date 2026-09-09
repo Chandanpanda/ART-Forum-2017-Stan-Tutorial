@@ -471,6 +471,94 @@ by a pinion instead of the rail. It would have been built, and it would
 have needed a deliberately sloppy raceway to work at all, and nobody would
 have known why.
 
+### 7.2 What the camera's own datasheet changed, and what it cost
+
+The same shape of mistake, one layer up. The load case in §2.3 is *camera
+head 50 g at each end* and every structural conclusion in this document
+descends from it. Nobody had weighed one. A Raspberry Pi Camera Module 3 —
+the part this rig is built around — is **4 g** on the vendor's own
+comparison table, and the modules it supersedes are 3 g. The tip mass was
+an order of magnitude out, and it sets the tip force, dominates the
+Rayleigh mass, and therefore fixes both the angular budget and the first
+mode.
+
+Re-swept with the real head, the mount modelled, and every rule the cell
+and the members impose applied together (1470 candidates, 60–160 mm
+sections, 30–60° webs):
+
+| said | is |
+|---|---|
+| the 0.005° budget cannot be met inside a 100 mm section | met at **85 mm** |
+| the winding head's **bore** is the binding constraint on accuracy | the chosen design clears it by +0.37 mm |
+| the design is **section-limited** | it is limited by the **diagonals' own first mode** |
+| 0 designs meet mass, f1, budget and bore together | **7** break no rule at all |
+| the answer is `115/40/3.0/1.5`, 0.82 m at 100 m | `85/40/3.0/1.5`, **0.56 m** |
+
+What binds now is `MEMBER_F_MIN`: 831 of the 1062 candidates that hold the
+accuracy budget are refused because a 1.0 mm web rings inside the
+propellers' 200–330 Hz band. Give up that one rule and the sweep reaches
+0.358 m at 46.5 g — 36% truer and six grams lighter. That rule is about
+fatigue at a bonded joint, not about the cameras, and **nobody has pulled a
+joint with a 1.0 mm diagonal at blade-pass.** It is now the most valuable
+bench test in the programme, worth more than any remaining geometric choice.
+
+Three second-order things fell out of the same re-run, each of which had
+been silently wrong:
+
+- **The mount was a placeholder, and a placeholder is not a bound.** A
+  massless rigid bracket charges nothing for the mount's own mass and
+  compliance, and hangs the payload on the chord ends 66 mm off the axis.
+  Between a 50 g head and a 4 g one its error changes *sign*. No margin
+  could have covered both.
+- **The web angle in a design's name is a request, not a fact.** The bay
+  pitch rounds to a whole number of bays, so at a 100 mm section 35° and
+  40° are the same truss, built at 38.66°. The bore rule scales as `tan α`
+  and was being asked about the requested angle: 40 candidates passed it
+  that the head cannot actually enter.
+- **The loader's reach was not a design rule and should always have been.**
+  A slenderer truss with a finer web needs *longer* diagonal racks, so the
+  gantry's X travel is not monotonic in anything the structural rules see.
+  With the light head the optimiser's first answer was a 58 mm section
+  needing 1425 mm of a 1400 mm axis.
+
+### 7.3 The camera's own datasheet, part two: the lens moves
+
+`RP-009992-DS-1` (the TNBA1392 sensor assembly) confirms every mechanical
+number the first drawing gave — 10.8 ±0.15 square, 3.875 ±0.15 body height,
+a ⌀5.75 barrel — and the published 66 × 41° field implies a 73.7° diagonal
+against the lens's own 75 ±3°, so two independent documents agree. Then it
+says the thing neither the brief nor the mechanical drawing does.
+
+**The module focuses with an open-loop voice coil, and its tolerances are
+larger than the whole structural budget.** In the units §2.2 writes the
+budget in — range error at 100 m on a 1 m baseline, sensor BFL 4.74 mm,
+1.4 µm pixels:
+
+| term | what it is | at 100 m |
+|---|---|---|
+| **the entire inter-camera budget** | 0.005° relative yaw | **0.87 m** |
+| AF postural difference ±50 µm | lens shift with **orientation**, at fixed drive | **1.05 m** |
+| AF hysteresis 8 µm | | 0.17 m |
+| AF dynamic tilt 8′ | lens axis against the sensor, over the stroke | 1.7 px of principal point per mm of lever — **5–14 m** |
+
+An axial lens shift changes the image distance, which is what a calibration
+measures as the focal length. Stereo reads `Z = f B / d`, so a fractional
+error in `f` is the same fractional error in `Z`, and unlike a relative yaw
+it does **not** cancel between the two cameras: both focal lengths enter the
+same way. This is an *intrinsic*, and no amount of structural rigidity
+touches it.
+
+**So focus must be locked** — against the infinity stop for preference, or
+by using a fixed-focus module — and that is a product requirement, not a
+configuration choice. With focus locked, what remains is the postural term
+and the hysteresis. With focus free, the module by itself is an order of
+magnitude worse than everything the truss buys.
+
+Recorded here because it is the same failure as §7.1 and §7.2 one layer
+further out: a number nobody had looked up, quietly setting the answer.
+`Payload` now carries these as facts and `check_geometry` asserts the
+comparison, so the argument cannot be lost again.
+
 ---
 
 ## 8. Recommended build order

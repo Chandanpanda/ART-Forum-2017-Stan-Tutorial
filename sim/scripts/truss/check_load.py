@@ -19,11 +19,14 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from truss.glenv import headless        # noqa: E402  (before mujoco)
 headless()
+from math import cos, sin, radians
+
 import numpy as np
 import mujoco
 
 from truss import structure, geometry, fixture, mjcf, cell, inspector, schedule, approach
-from truss.spec import Head, Gripper, Process, Cage
+from truss.spec import (Head, Gripper, Process, Cage, Gantry,
+                        stepper_scale_sigma)
 from truss.geometry import TrussGeometry, theta_chord_up, theta_face_up, rot_x
 
 VERBOSE = "-v" in sys.argv
@@ -168,9 +171,45 @@ def main():
     r = g.diags[0]
     held = pick(c, clk, fx, r)
     check("a diagonal is picked from its rack", held)
-    e = place(c, clk, fx, r, dx=0.4, dy=-0.4)
-    check("...and released 0.4 mm off in x and y it seats within %.2f mm" % inspector.SEAT_TOL,
+    e = place(c, clk, fx, r)
+    check("...and released over its cradles it seats within %.2f mm" % inspector.SEAT_TOL,
           e < inspector.SEAT_TOL, "%.3f mm" % e)
+    # ------------------------- the diagonal's capture range, measured
+    # NOT A NUMBER PICKED TO PASS.  This read "released 0.4 mm off in x
+    # and y", which is 2.4 times the arrival error the machine can
+    # actually produce and outside the cradle's mouth, so it failed and
+    # said the fixture could not seat a diagonal.  What the check is for
+    # is whether the CRADLE catches what the GANTRY can miss by, so both
+    # sides are measured: the arrival error from the axis's repeatability
+    # and its screw growth, the capture by walking the release ACROSS the
+    # rod -- the binding direction; along it the 6 mm block has slack --
+    # until it no longer seats.
+    arrive = Gantry.REPEAT + stepper_scale_sigma() * t.length
+    nx, ny = -sin(radians(fx.place_pose(r)[1])), cos(radians(fx.place_pose(r)[1]))
+    drows, off = [], arrive
+    while off <= 64.0 * arrive:          # doubling, and stop at the first miss
+        g, fx, c, clk = fresh(t)
+        r = g.diags[0]
+        pick(c, clk, fx, r)
+        e = place(c, clk, fx, r, dx=off * nx, dy=off * ny)
+        drows.append((off, e))
+        if e >= inspector.SEAT_TOL:
+            break
+        off *= 2.0
+    dseat = [o for o, e in drows if e < inspector.SEAT_TOL]
+    check("a diagonal arriving anywhere the gantry can actually leave it -- its "
+          "repeatability plus the screw's growth over the truss -- seats within "
+          "%.2f mm" % inspector.SEAT_TOL,
+          bool(dseat) and max(dseat) >= arrive - 1e-9,
+          "arrival %.3f mm; %s" % (arrive,
+                                   " ".join("%.2f->%.3f" % (o, e) for o, e in drows)))
+    check("...and the cradle's capture is finite, so this is a measurement and not "
+          "an assumption -- and it is many times what the machine can miss by",
+          len(dseat) < len(drows) and max(dseat) > 8.0 * arrive,
+          "seats to %.2f mm (%.0fx the %.3f mm arrival), misses from %.2f"
+          % (max(dseat) if dseat else -1.0,
+             (max(dseat) / arrive) if dseat else 0.0, arrive,
+             min((o for o, e in drows if e >= inspector.SEAT_TOL), default=-1.0)))
     # ------------------------------- and WHY the plan turns when extended
     # approach.yaw_height's premise, measured: a rod held at a placing yaw
     # and retracted is drawn up beside the ring's plane, where a rod at

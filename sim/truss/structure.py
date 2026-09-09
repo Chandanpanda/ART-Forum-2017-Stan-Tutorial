@@ -37,6 +37,10 @@ from .spec import (Truss, Stock, Load, Ring, Gantry, Head, Cage, Process,
                    Dispenser, Cutter, Magazine, Gripper,
                    ring_r_in, ring_r_out, ring_swept_r, r_in_needed)
 from . import motion
+# The loader's reach is a design rule (see reach()), so the structural
+# optimiser needs the fixture.  Neither of these imports structure, so
+# there is no cycle; the aliases keep the module names free.
+from . import geometry as _geometry, fixture as _fixture
 
 
 # ------------------------------------------------------------- stiffness
@@ -63,7 +67,7 @@ def shear_stiffness(t):
 
 def tip_load(load=Load):
     """N at each camera head under the manoeuvre load."""
-    return load.TIP_MASS * 1e-3 * load.G * load.LATERAL_G
+    return load.tip_mass() * 1e-3 * load.G * load.LATERAL_G
 
 
 def cantilever(t):
@@ -94,7 +98,7 @@ def f1(t, load=Load):
     """First bending mode with a camera head on each end, Hz."""
     k = tip_stiffness(t) * 1000.0                      # N/m
     m_half = t.mass * (cantilever(t) / t.length) * 1e-3
-    m = load.TIP_MASS * 1e-3 + 0.2357 * m_half          # kg, Rayleigh
+    m = load.tip_mass() * 1e-3 + 0.2357 * m_half        # kg, Rayleigh
     return sqrt(k / m) / (2.0 * pi)
 
 
@@ -209,6 +213,31 @@ def cycle_estimate(t):
 
 
 # ------------------------------------------------------------ verdicts
+def reach(t):
+    """(X, Y) the gantry must cover to build this truss, mm.
+
+    A LOADER CONSTRAINT, and it is not monotonic in anything the structural
+    rules see: the diagonals sit in two end racks pitched along x, so a
+    slenderer truss with a finer web needs a LONGER machine, not a shorter
+    one.  Left out of the optimiser it is silent -- the design simply comes
+    back unbuildable, which is how a 58 mm section with 24 bays got picked.
+
+    Asked of the fixture itself rather than re-derived here, so the rack
+    the optimiser is sized against is the rack the loader will fetch from.
+    Memoised because design() asks ten thousand times and the layout
+    depends on the section, not on the rod diameters -- which the memo key
+    carries anyway, so it is a cache and not an approximation."""
+    key = (t.length, t.side, t.alpha, t.d_chord, t.d_diag)
+    hit = _REACH_MEMO.get(key)
+    if hit is None:
+        fx = _fixture.Fixture(_geometry.TrussGeometry(t))
+        hit = _REACH_MEMO[key] = (fx.x_reach(), fx.y_reach())
+    return hit
+
+
+_REACH_MEMO = {}
+
+
 def analyse(t, load=Load):
     rim, others, spine = ring_fit(t)
     return {
@@ -226,6 +255,7 @@ def analyse(t, load=Load):
         "ring_spine_margin": spine,
         "gap_margin": gap_fits(t),
         "cycle_min": cycle_estimate(t),
+        "x_reach": reach(t)[0], "y_reach": reach(t)[1],
     }
 
 
@@ -264,6 +294,10 @@ def violations(t, m=None, load=Load, cycle_max_min=45.0):
         bad.append("gap")
     if m["cycle_min"] > cycle_max_min:
         bad.append("cycle time")
+    if m["x_reach"] > Gantry.X_TRAVEL:
+        bad.append("longer than the gantry's X travel")
+    if m["y_reach"] > Gantry.Y_TRAVEL / 2.0:
+        bad.append("wider than the loader's Y reach")
     if t.band < t.mitre_face + 2.0:
         bad.append("band shorter than the mitre")
     if t.n_nodes < 3:
@@ -317,5 +351,24 @@ def binding_rules(grid):
 # ------------------------------------------------------- the defaults
 # THE DEFAULT TRUSSES ARE DERIVED.  check_structure asserts they are still
 # what design() returns, so nobody can quietly type a section in.
-TRUSS_1M, _GRID_1M = design(1000.0, name="camera_1m")
-TRUSS_300, _GRID_300 = design(300.0, name="camera_300")
+#
+# ...and SOLVED ON DEMAND.  Since the loader's reach became a design rule
+# each candidate costs a fixture, and the two grids together are twenty
+# seconds -- paid at import, by every module that only wanted Truss.  PEP
+# 562 keeps the spelling `structure.TRUSS_1M` and solves the grid the
+# first time somebody actually reads one.
+_LAZY = {"TRUSS_1M":  (1000.0, "camera_1m",   0),
+         "_GRID_1M":  (1000.0, "camera_1m",   1),
+         "TRUSS_300": (300.0,  "camera_300",  0),
+         "_GRID_300": (300.0,  "camera_300",  1)}
+_SOLVED = {}
+
+
+def __getattr__(name):
+    if name not in _LAZY:
+        raise AttributeError("module %r has no attribute %r" % (__name__, name))
+    length, dname, which = _LAZY[name]
+    if dname not in _SOLVED:
+        _SOLVED[dname] = design(length, name=dname)
+    globals()[name] = _SOLVED[dname][which]     # once; __getattr__ is a miss
+    return globals()[name]

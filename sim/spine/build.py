@@ -51,6 +51,21 @@ def _stations(length_m, pitch_m):
     return xs * (half / (n * pitch_m)) + half
 
 
+def effective_alpha(length, side, alpha):
+    """The web angle the lattice is ACTUALLY built at, degrees.
+
+    _stations rounds to a whole number of bays and then squeezes them onto
+    the length asked for, so the alpha in a candidate's name is a request,
+    not a fact: at a 100 mm section, 35 and 40 degrees are the SAME truss,
+    built at 38.66.  Any rule applied to the requested angle is being
+    applied to a truss that does not exist -- and the winding head's bore
+    is such a rule, scaling as tan(alpha), so the rounding is the
+    difference between a joint the head enters and one it does not.
+    """
+    xs = _stations(length * MM, side * MM / np.tan(np.radians(alpha)))
+    return float(np.degrees(np.arctan(side * MM / (xs[1] - xs[0]))))
+
+
 WEBS = ("warren", "x", "batten")
 
 
@@ -64,51 +79,60 @@ class Nose:
     PERPENDICULAR triangles and six struts is not, and the difference is a
     factor of three in yaw -- 0.50 of the budget against 1.43, measured.
 
-    WHICH FACE OF THE CAMERA BONDS TO IT is what took three attempts.  The
-    camera looks along the model's +y (metrics.Pose), so its back face is an
-    x-z plane and cannot lie against a y-z platform: a plane containing x
-    crosses a plane at constant x in a LINE, so it would meet the platform's
-    three rods at two points, not three lines.  But a cuboid has more than
-    one face.  Its INBOARD END face is a y-z plane -- the platform's own
-    plane -- and bonded there the housing gets three long line contacts and
-    still looks sideways.  So the camera is bonded end-on and hangs
-    outboard, which is why `payload_x` is here: the mass ends up half a
-    housing beyond the platform, and that offset is a moment arm under a
-    lateral manoeuvre which a mass sitting on the platform would not have.
+    WHAT THE STRUTS BOND TO is what took three attempts.  Bonding the
+    camera's INBOARD END FACE against the platform is the tidy answer -- a
+    y-z face against a y-z plane, three long line contacts -- and it is the
+    wrong one: the housing then hangs entirely outboard and its mass sits
+    half a module beyond the platform, which is a moment arm under a
+    lateral manoeuvre.  That is what `payload_x` measures, and it is the
+    single most expensive number in the mount.
+
+    The answer is to bond to the module's own metal enclosure at its
+    mid-length instead, so the mass sits IN the platform's plane and on the
+    spine's axis, and `payload_x` is zero.  Which face touches what is then
+    a bonding question for the cell, not a structural one.
 
     AND `payload_x` DECIDES EVERYTHING.  It is how far the camera's centre of
     mass sits outboard of the platform's plane, and it is the whole mount
-    problem:
+    problem.  On the chosen 85/40/3.0/1.5 truss, in fractions of the budget:
 
-        payload_x = 12.5 (bonded end-on)      1.84 of the budget
+        payload_x = 12.5 (bonded end-on)      1.22
         payload_x = 0    (CoM in the plane)   0.67
 
-    -- against 0.94 for the massless rigid placeholder the mount replaces.
-    (Both at d_strut 1.5.  DO NOT read the strut diameter off that sweep:
+    -- against 0.61 for the massless rigid placeholder the mount replaces.
+    (All at d_strut 1.5.  DO NOT read the strut diameter off that sweep:
     see the null below.)
-    Got right the mount does not cost accuracy, it BUYS it, because the
-    placeholder hung the camera's mass on the chord ends 66 mm off the axis
-    where it drives the end triangle, and the nose brings it onto the axis.
-    Got wrong by half a housing it nearly triples the mount's share and puts
-    the rig two times over budget.
 
-    So the platform triangle SURROUNDS the housing at its mid-length rather
-    than butting against its end face, and r_platform is then not free
-    either: the triangle's inscribed circle (r_platform / 2) has to clear
-    the housing's half-diagonal.  Beyond that, r_platform barely matters --
-    24 to 32 mm is 0.67 to 0.72.
+    THE PLACEHOLDER IS NOT A BOUND, IN EITHER DIRECTION.  At the brief's
+    assumed 50 g head the same three rows read 6.92, 1.44 and 1.60: the
+    placeholder was PESSIMISTIC there and is OPTIMISTIC here.  It makes two
+    opposite mistakes at once -- it charges nothing for the mount's own mass
+    and compliance, and it hangs the payload on the chord ends 66 mm off the
+    axis -- and which one dominates depends on what the camera weighs.  So
+    the mount is modelled, not allowed for.
 
-    A NULL, WHICH IS NOT AN OPTIMUM.  Swept on strut diameter the yaw under
-    a manoeuvre reads 2714, 523, 994, 2118, 3041, 3840 microdegrees at 0.8,
-    1.0, 1.2, 1.5, 2.0, 3.0 mm -- a dip at 1.0 that looks like the answer and
-    is not.  Signed, it goes -2714, -1338, -337, +415, ... : it CHANGES SIGN
-    between 1.0 and 1.1, because two contributions oppose there -- the
-    truss's own end rotation carried in through the struts, and the camera's
-    inertia deflecting them.  1.0 mm is a stocked diameter, so this is a trap
-    laid exactly where a designer would step.  The null moves with every
-    guess it depends on: at 1.0 mm a camera of 15 g instead of 50 flips the
-    sign again (-337 to +386).  So the diameter is chosen AWAY from it, and
-    check_spine asserts the sign change is still there rather than letting
+    r_platform IS THE PAYLOAD'S, NOT A CHOICE.  The struts land on the
+    module's own metal enclosure, which is rigid and load-bearing, so
+    r_platform is that block's circumradius across the spine (5.74 mm for a
+    Camera Module 3) and `platform_rigid` is true: there are no platform
+    rods at all, and so nothing of the mount can reach round in front of the
+    lens.  Three carbon rods surrounding the whole module at 29 mm instead
+    read 0.71 against the enclosure's 0.67 and cost six more rods.
+
+    A NULL, WHICH IS NOT AN OPTIMUM.  Swept on strut diameter at a 115 mm
+    section the signed yaw under a manoeuvre goes -167, +337, +590, +741,
+    +884 microdegrees at 0.6, 0.8, 1.0, 1.2, 1.5 mm: it CHANGES SIGN,
+    because two contributions oppose there -- the truss's own end rotation
+    carried in through the struts, and the camera's inertia deflecting them
+    -- and an unsigned sweep shows a dip that looks like an answer.  Above
+    the null there is no interior optimum at all; yaw rises with every
+    millimetre, so thinner is better right down to it.
+
+    AND THE NULL MOVES WITH THE NUMBERS IT DEPENDS ON.  At a stocked 1.0 mm
+    strut the same geometry sits on opposite sides of it at 50 g and at 5 g.
+    When the head was assumed to be 50 g the null sat exactly at 1.0 mm -- a
+    stocked diameter, a trap laid where a designer would step.  It is now
+    below 0.8.  check_spine asserts the sign change rather than letting
     someone rediscover the dip as a feature.
     """
     standoff:    float = 15.0
@@ -135,15 +159,23 @@ class Nose:
 
     @staticmethod
     def around(box=None, standoff=15.0, d_strut=1.5, d_batten=3.0, clearance=1.5,
-               rigid=False):
+               rigid=False, r_platform=None):
         """A nose whose platform triangle surrounds `box` (mm, x/y/z) at its
         mid-length, so the camera's centre of mass lies in the platform's
         plane.  The triangle's inscribed circle must clear the housing's
         half-diagonal in the y-z section, and a triangle's inscribed circle
-        is half its circumradius."""
+        is half its circumradius.
+
+        `r_platform` overrides that when the struts land on something the
+        payload already has -- the module's own metal enclosure -- rather
+        than on three rods laid round it.  The caller passes the radius of
+        whatever is being bonded to (with `rigid`, since it is then not a
+        rod triangle); THIS package does not know what a Camera Module is.
+        """
         box = (25.0, 11.3, 23.862) if box is None else box   # RP-008153-DS-1
         half_diag = 0.5 * (box[1] ** 2 + box[2] ** 2) ** 0.5
-        return Nose(standoff=standoff, r_platform=2.0 * (half_diag + clearance),
+        r = 2.0 * (half_diag + clearance) if r_platform is None else float(r_platform)
+        return Nose(standoff=standoff, r_platform=r,
                     platform_rigid=rigid,
                     payload_x=0.0, payload_box=tuple(box),
                     d_strut=d_strut, d_platform=d_strut, d_batten=d_batten)

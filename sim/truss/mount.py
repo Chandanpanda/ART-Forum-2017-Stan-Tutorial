@@ -22,17 +22,29 @@ nothing can end up in the lens's 66 x 41 degree field (`fov_clear`).
 
 WHERE THE CAMERA'S MASS GOES, and it is the whole design.  The enclosure is
 centred on the lens, so bonding to it puts BOTH the mass and the optical
-axis on the spine's axis at once.  spine measured what that is worth:
+axis on the spine's axis at once.  spine measured what that is worth, on
+the chosen 85/40/3.0/1.5 truss at the solved 21.4 mm standoff, in fractions
+of the yaw budget:
 
-    bonded end-on, mass half a module outboard   1.84 of the yaw budget
-    mass in the platform's plane                 0.81
-    the massless rigid bracket it replaces       0.94
+                                              4 g module    a 50 g head
+    bonded end-on, mass half a module out        1.22           6.92
+    the enclosure, mass in the platform's plane  0.67           1.44
+    three rods surrounding the module instead    0.71           1.66
+    the massless rigid bracket it replaces       0.61           1.60
 
-Nothing else about the mount comes close.  The lever arm the struts get --
-the enclosure is only 5.74 mm in circumradius across the spine -- is second
-order beside it: three carbon rods surrounding the whole module at 29 mm
-would be 0.68 against the enclosure's 0.81, and cost six rods, six joints,
-and the clear view.
+Nothing else about the mount comes close to the first row.  The lever arm
+the struts get -- the enclosure is only 5.74 mm in circumradius across the
+spine -- is second order beside it, and bonding to the enclosure beats
+three rods laid round the module at 29 mm anyway, while costing six fewer
+rods, six fewer joints, and nothing in front of the lens.
+
+READ THE LAST ROW TWICE.  The placeholder this replaces is OPTIMISTIC at
+the real head and PESSIMISTIC at the one the brief assumed: its error
+changes sign between them, because it makes two opposite mistakes at once
+-- it charges nothing for the mount's own mass and compliance, and it hangs
+the payload on the chord ends 66 mm off the axis.  No margin on a
+placeholder could have covered both, which is the argument for solving the
+mount rather than allowing for it.
 
 WHAT MAKES IT BUILDABLE, which was the open question.  A strut points in a
 general direction and the gripper has ONE yaw axis, so on its own the
@@ -240,6 +252,25 @@ def solve(geom, payload=Payload, d_strut=1.5, clear=None, standoff_mm=None):
     return Mount(tuple(rods), rp, so, d_strut, tuple(poses))
 
 
+def nose_spec(geom, payload=Payload, d_strut=1.5, d_batten=3.0):
+    """This mount as PLAIN NUMBERS, for a structural model to be built from.
+
+    The two packages meet here and only here.  sim/spine knows how to solve
+    a frame and nothing about Camera Modules or winding heads; sim/truss
+    knows the part and the machine.  So the mount is handed over as a dict
+    of millimetres -- the same way the cell hands the ring's bore to the
+    spine sweep -- rather than either package importing the other.
+
+    Keys are spine.build.Nose.around's arguments, so it is
+    `Nose.around(**nose_spec(geom))` at the far end.
+    """
+    return {"box": tuple(payload.BOX),
+            "standoff": fov_standoff(geom, payload, d_strut),
+            "r_platform": platform_radius(payload),
+            "rigid": True,              # the enclosure IS the platform
+            "d_strut": d_strut, "d_batten": d_batten}
+
+
 # --------------------------------------------------------- buildability
 def pose_for(axis, tol=1e-9):
     """(cage theta, gripper yaw) that lays a rod along `axis` in the cage
@@ -327,5 +358,6 @@ CHECKS = [
     ("a filleted rod end is stiffer than the rod it holds, so the bond is not the compliance",
      fillet_stiffness(1.5)[0] > 150e3 * pi * 0.75 ** 2 / 60.0),
     ("...and carries the service load a thousand times over",
-     fillet_strength(1.5) > 100.0 * Payload.MASS / 1000.0 * 9.81 * 3.0),
+     fillet_strength(1.5) > 100.0 * (Payload.MASS + Payload.HEAD_EXTRA)
+     / 1000.0 * 9.81 * 3.0),
 ]

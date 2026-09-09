@@ -7,69 +7,69 @@ material data or the constraints change, and replace this.
 
 THE CHOICE, on the quadrotor duty, a 1 m baseline and 100 m accuracy:
 
-    a 115 mm chord triangle, 40 degree diagonals, 3 mm chords, 1.5 mm web
+    an 85 mm chord triangle, 40 degree diagonals, 3 mm chords, 1.5 mm web
 
-against the 92/40/3.0/2.0 the cell was first built for:
+    mass                52.6 g      of a 70 g ceiling
+    range error         0.56 m      at 100 m, 0.56% of the range
+    yaw budget          0.67        of 0.005 degrees between the faces
+    first mode           278 Hz     against the 200 the brief asks
+    ring bore          +0.37 mm     the winding head enters every joint
+    cell                21.9 min    30 joints; X 1359 of 1400, Y 130 of 150
 
-    mass              45.5 g   against 54.4 g      16% lighter
-    range error       0.82 m   against 1.24 m      34% truer at 100 m
-    yaw budget        0.94     against 1.42        inside it, not over
-    first mode         199 Hz  against 195 Hz      no worse
-    build time        21.6 min against 24.1 min    24 joints, not 27
-
-WHAT IT COSTS, and neither is free:
-
-  * The section grows from 92 to 115 mm, past the 100 mm the brief
-    assumes the airframe can swallow.  This is THE trade: the accuracy
-    budget cannot be met inside 100 mm at 3 g by any design in the sweep,
-    with any stock, in either web.  Someone has to decide whether the
-    airframe or the accuracy gives.
-  * The 1.5 mm diagonals put their own first mode under the 330 Hz the
-    propellers reach.  A diagonal singing at 300 Hz is a local mode; what
-    it costs the cameras is in the transmissibility column, not in its
-    frequency, and there it is no worse than the design it replaces.
+It is the TRUEST design that breaks no rule at all -- of 1470 candidates
+swept over sections 60..160 mm and webs 30..60 degrees, in every stock
+diameter, SEVEN break none.  The lightest of those seven is 75/35/3.0/1.5
+at 51.2 g and 0.68 m, so the whole span of the feasible set is 1.4 g and
+0.12 m: there is no trade left inside it worth arguing about.
 
 ---------------------------------------------------------------------------
-RE-RUN, after the winding head's own review, with the cell's BORE added to
-the sweep as a fourth constraint (sweep_spine.bore_margin).  Every number
-above still holds.  Two things changed around it, and the second is the
-one to read:
+WHAT MOVED, AND WHY THIS REPLACES THE 115 mm ANSWER
 
-  * THIS DESIGN NOW MISSES f1 BY 1 Hz.  199 against the brief's 200.  That
-    is 0.5%, against a modulus that is a typical value and moves f1 by 10%
-    per 20% of itself, so it is not a real distinction -- but it is why
-    sweep_spine no longer names this design, and it should not be quietly
-    rounded away.  The E measurement is what settles it.
-  * THE RING'S BORE IS NOW THE BINDING CONSTRAINT ON THE PRODUCT'S
-    ACCURACY, and nothing in the tree said so before.  The bore a joint
-    needs scales as tan(alpha), so the head limits the WEB ANGLE -- and the
-    web angle is what buys accuracy.  Swept over sides 80..180 and webs
-    35..55 degrees:
+The previous record chose 115/40/3.0/1.5 and said the ring's bore was the
+binding constraint on the product's accuracy.  Both were artefacts of ONE
+number that had never been measured: the camera head was carried at 50 g,
+a placeholder from the brief, against a Camera Module 3 that the vendor's
+own table weighs at 4 g.  Everything downstream of a tip mass ten times
+too large was answering a different question.
 
-        all four constraints (mass, f1, budget, bore)     0 designs
-        give up the BORE (open the ring 1.5 mm)          28 designs
-        give up f1 (soft-mount harder)                  124 designs
-        give up the budget                                0 designs
-        give up mass                                      0 designs
+With the real head:
 
-    So the bore is the cheapest thing to give, by a wide margin, and it is
-    the only one that gives a design meeting everything else:
+  * THE TRUSS IS ITS OWN LOAD.  52.6 g of structure carries 2 x 5 g of
+    camera, so five sixths of the manoeuvre load is the spine's own mass.
+    Adding carbon to stiffen it now costs accuracy as often as it buys it
+    -- the X web comes back with a HIGHER first mode and a WORSE angular
+    error than the single-diagonal one, which at 50 g it did not.
+  * THE SECTION NO LONGER BINDS.  The budget is met at 85 mm, inside the
+    100 mm the airframe swallows.  The old answer's headline cost -- "the
+    accuracy budget cannot be met inside 100 mm by any design in the
+    sweep" -- was a consequence of the placeholder, not of the physics.
+  * NEITHER DOES THE BORE.  This design clears the winding head's 20 mm
+    bore by 0.37 mm with the ring's run-out charged against it.  Opening
+    the ring is still worth something -- give up the bore and 100/45/3.0/2.0
+    reaches 0.48 m -- but it costs 13 g to buy 0.08 m, where before it was
+    the only way to meet the budget at all.
+  * WHAT BINDS INSTEAD IS THE DIAGONALS' OWN FIRST MODE.  1062 of the 1470
+    candidates hold the accuracy budget.  What refuses them, most often
+    first, is a 1.0 mm web whose members ring inside the propellers'
+    200-330 Hz band: 831 of the 1062.  Give up that one rule and the sweep
+    reaches 100/35/3.0/1.0 -- 46.5 g and 0.358 m, six grams lighter and
+    36% truer than the design above.
 
-        warren 120/45/3.0/1.5   45.7 g   budget 0.88   0.77 m at 100 m
-                                f1 200 Hz, and 0.76 mm short of bore
+    THAT IS THE TRADE TO PUT ON A BENCH NEXT.  MEMBER_F_MIN is a rule
+    about fatigue at a joint, not about the cameras: what a singing
+    diagonal costs the calibration is in the transmissibility, and the
+    model says that column is no worse.  If a pulled joint survives a 1.0
+    mm diagonal at blade-pass, the product is 36% more accurate for six
+    grams less.  Nobody has pulled one.
 
-    Ring.ID is 20.0 mm.  ID 21.5 buys that design: 6% truer than this one,
-    0.2 g heavier, and f1 met rather than missed.  What it costs is a
-    re-check of the head -- EXIT_R sits at 11.0 and would have 0.25 mm of
-    clearance over a 10.75 mm bore, which is too little, so the exit guide
-    moves too.  THAT IS A DECISION, NOT A DERIVATION, and it is not made
-    here: it trades the machine's head against the product's accuracy, and
-    both are someone's to weigh.
-
-WHAT IT DOES NOT COST: the winding head, as built.  At 40 degrees this
-design fits the bore with +0.45 mm to spare (measured, with Ring.RUN_OUT
-charged against it).  A 45 degree web is truer and does not fit -- which
-is the whole finding above.
+WHAT THE MOUNT COSTS, now that it is modelled rather than placeheld: the
+camera stands 21.4 mm off the chord ends, solved so that nothing of the
+truss is inside a 66 x 41 degree field (truss.mount.fov_standoff), and the
+six struts of each nose bond to the module's own metal enclosure so its
+mass sits on the spine's axis and in the platform's plane.  The massless
+rigid bracket this replaces is not a bound on it in either direction --
+its error changes sign between a 50 g head and a 5 g one -- which is the
+argument for modelling the mount rather than putting a margin on it.
 """
 from dataclasses import dataclass
 
@@ -92,7 +92,9 @@ class Chosen:
                     d_chord=self.d_chord, d_diag=self.d_diag, name=self.name)
 
 
-OPTIMAL_1M = Chosen("optimal_1m", 1000.0, 115.0, 40.0, 3.0, 1.5)
-# the short test piece, the same sweep at 300 mm: a shorter cantilever
-# needs far less section, and the ring's minimum is what binds instead
-OPTIMAL_300 = Chosen("optimal_300", 300.0, 66.0, 45.0, 2.0, 1.0)
+OPTIMAL_1M = Chosen("optimal_1m", 1000.0, 85.0, 40.0, 3.0, 1.5)
+# The short test piece, the same sweep at 300 mm: a quarter of the
+# cantilever needs a fraction of the section, so the accuracy budget is
+# spent at 0.30 and what binds is the cell -- the ring's rim, the joint
+# angle it has qualified, and having enough bays to be a truss at all.
+OPTIMAL_300 = Chosen("optimal_300", 300.0, 70.0, 45.0, 1.0, 1.0)

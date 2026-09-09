@@ -249,6 +249,62 @@ drag a clamped rod out of its seat (0.119 mm during a wind against 0.118
 mm from the same rotation with no thread at all — gravity at the new
 attitude, not the thread), and the thread it consumes is the arithmetic's.
 
+## The payload, and the number that moved everything
+
+The truss is a stereo camera's spine, so the camera is a spec, not an
+accessory. Two vendor drawings describe it, and reading both is what caught
+the mistakes.
+
+**`RP-008153-DS-1`, the mechanical drawing.** The box, the four M2 holes at
+21.00 × 12.50, the ⌀5.75 barrel, and the metal enclosure — 10.8 mm square,
+3.875 proud, rigid and load-bearing, centred on the lens. `Payload` carries
+all of it, read off the drawing's own geometry rather than its dimension
+labels.
+
+**The mass was never on either drawing, and it was carried at 50 g.** The
+vendor's comparison table weighs a Camera Module 3 at **4 g**. Everything
+downstream of a tip mass an order of magnitude too large was answering a
+different question: the section, the binding constraint, and the choice of
+web all moved when it was corrected. What the spine package found is in
+`sim/spine/README.md`; what it cost the *cell* is that the design it builds
+is now `85/40/3.0/1.5` rather than `115/40/3.0/1.5`, and the latter was
+never buildable — 0.16 mm short of the ring's bore.
+
+**`RP-009992-DS-1`, the sensor assembly.** It confirms the enclosure to the
+tolerance, and the published 66 × 41° field implies a 73.7° diagonal against
+the lens's own 75 ± 3°, so two independent documents agree. Then it says the
+thing neither the brief nor the mechanical drawing does: **the lens moves.**
+The module focuses with an open-loop voice coil whose postural difference is
+±50 µm at a fixed drive current — 1.06% of the image distance, and therefore
+1.06% of every range it reports. At 100 m that is **1.05 m**, against the
+0.87 m that is the *entire* inter-camera budget the truss exists to hold.
+It is an intrinsic; no rigidity touches it. **Focus has to be locked**, and
+`check_geometry` asserts the comparison so the argument cannot be lost.
+
+## The camera mount
+
+`mount.py` solves a nine-rod nose at each end: three end battens closing the
+triangle of chord ends, six octahedral struts, and no platform rods at all —
+the struts bond straight to the module's own metal enclosure, so the mass
+sits on the spine's axis and in the platform's plane, and nothing of the
+mount can reach round in front of the lens.
+
+Three things are solved rather than chosen. The camera faces a **face** of
+the truss, not a chord (aimed along a chord, that chord's end sits 12° off
+the optical axis and no useful standoff clears it). The **standoff** is
+bisected on `fov_clear` until nothing of the truss or the mount is in a
+66 × 41° field — 21.4 mm for the chosen section, and it grows with the
+section, which is why the spine sweep charges each candidate its own. And
+every strut's direction is checked against what the machine has: a rod held
+at gripper yaw ψ with the cage at θ lands along `(cos ψ, sin ψ cos θ,
+−sin ψ sin θ)`, which covers the whole sphere, so `pose_for` returns the
+pair and no axis has to be added.
+
+Every mount joint is bonded, not wound: the ring cannot reach past the last
+joint and does not need to. A fillet on a 1.5 mm rod carries about a
+kilonewton against a service load of 0.44 N, and comes out stiffer than the
+strut it holds — so the strut is the compliance and the bond is not.
+
 ## The suites
 
 415 checks in twelve suites, about 12 minutes for the full tier.

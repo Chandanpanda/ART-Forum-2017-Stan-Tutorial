@@ -113,6 +113,13 @@ class Nose:
     """
     standoff:    float = 15.0
     r_platform:  float = 24.0
+    # THE PLATFORM MAY BE THE PAYLOAD'S OWN ENCLOSURE.  A Camera Module 3
+    # carries a rigid, load-bearing metal block round its lens; when the
+    # struts bond to that, the three platform rods are not needed at all --
+    # which also means nothing of the mount can end up in front of the lens.
+    # The lever arm is then the enclosure's, and small; that is second order
+    # once the mass is in the plane, and the model says by how much.
+    platform_rigid: bool = False
     # THE END BATTEN IS WHAT SETS THE FIRST MODE, and it is not the struts.
     # The mode at 180 Hz is the truss's own section triangle breathing at
     # mid-span -- the nose's nodes move at 0.17 of the amplitude, so the nose
@@ -127,7 +134,8 @@ class Nose:
     d_platform:  float = 1.5
 
     @staticmethod
-    def around(box=None, standoff=15.0, d_strut=1.5, d_batten=3.0, clearance=1.5):
+    def around(box=None, standoff=15.0, d_strut=1.5, d_batten=3.0, clearance=1.5,
+               rigid=False):
         """A nose whose platform triangle surrounds `box` (mm, x/y/z) at its
         mid-length, so the camera's centre of mass lies in the platform's
         plane.  The triangle's inscribed circle must clear the housing's
@@ -136,6 +144,7 @@ class Nose:
         box = (25.0, 11.3, 23.862) if box is None else box   # RP-008153-DS-1
         half_diag = 0.5 * (box[1] ** 2 + box[2] ** 2) ** 0.5
         return Nose(standoff=standoff, r_platform=2.0 * (half_diag + clearance),
+                    platform_rigid=rigid,
                     payload_x=0.0, payload_box=tuple(box),
                     d_strut=d_strut, d_platform=d_strut, d_batten=d_batten)
 
@@ -233,7 +242,10 @@ def warren_truss(length, side, alpha, d_chord, d_diag, material=None,
                 nodes.append([x0 + sign * nose.standoff * MM,
                               rp * np.cos(phi[k]), rp * np.sin(phi[k])])
             for k in range(3):
-                members.append(Member(plat[k], plat[(k + 1) % 3], sec_p, material,
+                members.append(Member(plat[k], plat[(k + 1) % 3],
+                                      Section.rect(0.010, 0.003) if nose.platform_rigid
+                                      else sec_p,
+                                      mat.BRACKET if nose.platform_rigid else material,
                                       tag="platform"))
                 members.append(Member(base[k], plat[k], sec_s, material, tag="strut"))
                 members.append(Member(base[k], plat[(k + 1) % 3], sec_s, material,

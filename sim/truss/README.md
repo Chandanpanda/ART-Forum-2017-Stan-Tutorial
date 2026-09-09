@@ -408,6 +408,72 @@ joint and does not need to. A fillet on a 1.5 mm rod carries 141 N against a
 service load of 0.147 N, and comes out stiffer than the strut it holds — so the
 strut is the compliance and the bond is not.
 
+## The whole build, end to end
+
+```
+python3 sim/scripts/truss/demo_assembly.py                 # 300 mm, headless
+python3 sim/scripts/truss/demo_assembly.py --1m            # the metre truss
+python3 sim/scripts/truss/demo_assembly.py --video out.mp4 # record it
+python3 sim/scripts/truss/demo_assembly.py --gui           # watch it live
+python3 sim/scripts/truss/demo_assembly.py --shots DIR     # a still per phase
+```
+
+One plan, from racks a person has filled by hand to a truss with a camera on
+each end. The mount is a **phase of the plan**, not a drawing hung on the
+cage: thirteen rods an end plus the camera on its carrier, at cage angles the
+same worm indexes and gripper yaws the same servo turns, then an epoxy fillet
+at every rod end.
+
+```
+955 ops, 21.2 min simulated
+9 rods loaded and seated, 9 joints wound, 9 bands dosed
+28 mount parts placed, 52 fillets laid
+<truss 9/9 joints, 9 rods seated of 9, 1.35 g on the joints>
+```
+
+Nothing in it is a scripted animation — every pose comes from `schedule.plan`
+and is executed by `process.Executor` through the HAL against the same cell
+the checks use, so if it collides here it collides in `check_approach`.
+
+**Six things the run found that no static check was asking.** They are worth
+listing because each is a class of question the suites did not have:
+
+- **The mount rods fell on the floor.** A truss rod is released a millimetre
+  above a V and the V takes it. The mount has no V's — its rods are laid onto
+  the collar and onto each other — so the keeper has to take each one while
+  the jaws are still shut. On the machine that is a tack before the gripper
+  lets go.
+- **The rack put its own blocks under the gripper's pads.** Two V-blocks
+  `BLOCK_IN` from each end is the layout for a 300 mm chord; on a 42 mm strut
+  it lands them 0.08 mm from the middle, which is where the pads close.
+  `Magazine.blocks` solves the layout from the rod's length now, and returns
+  *nothing* below the length at which nothing is left.
+- **The camera is not a rod in its receptacle.** It is a 24 mm slab on a 9 mm
+  base with a pin out of one side. On V-blocks under the boss it rolls off;
+  in a flat nest it topples and drags itself out; with a wall-thickness of
+  slack it slides 1.7 mm and puts its own board 0.3 mm inside where the pads
+  close. It gets a printed pocket to the carrier's own fit, near wall split
+  at the boss and stopping below the pads' reach, with a detent.
+- **And the boss was too short — for the head, not the pads.** The ring's
+  raceway reaches to within 14.3 mm of the grip point at the collar's offset,
+  and the collar's top is 14.9 above it, so the head landed on the plate
+  before the jaws reached the boss. `Carrier.boss_l` is now whichever is
+  longer, the pads' rule or the head's envelope: 42.9 mm against 14.0.
+- **The bond pass was aimed under the work.** The mount's rods sit all round
+  the cage and the dispenser only reaches over the top; sent to cage
+  coordinates at θ = 0 it stalled the z axis against the fixture and shook
+  the truss off its own V's. Every fillet turns its own point up now.
+- **The end battens were below the z axis's floor.** `rot_x(θ+180)` with the
+  yaw negated is the same line in the cage's frame, but the rod's *position*
+  flips with it; three battens an end came out 4.7 mm under what the gantry
+  can reach. `poses_for` offers both and the plan takes the higher.
+
+What is still open: 46 of the 955 ops overran their planned duration, all of
+them `axes settle` or `stroke settle` in the mount and bond phases — the head
+pressing on something as it works inside the cage. The plan completes and the
+inspector passes the truss, but those are real contacts and the approach
+solver does not yet plan the mount's own moves the way it plans the ring's.
+
 ## The fixture had to come out, and could not
 
 The cage was drawn as a thing to wind onto and never as a thing to get back.

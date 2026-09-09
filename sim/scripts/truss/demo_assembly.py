@@ -73,6 +73,8 @@ def main():
     ap.add_argument("--speed", type=float, default=40.0,
                     help="simulated seconds per recorded second")
     ap.add_argument("--seed", type=int, default=3)
+    ap.add_argument("--stalls", action="store_true",
+                    help="list the ops whose sensor did not answer in time")
     a = ap.parse_args()
 
     t, g, fx, P, xml, n_drops = build(a.metre, a.seed)
@@ -147,6 +149,17 @@ def main():
     print(inspector.report(rep) if hasattr(inspector, "report") else rep)
     if msgs:
         print("%d warnings" % len(msgs))
+    if ex.slow:
+        by = {}
+        for op, took in ex.slow:
+            by[(op.phase, op.kind)] = by.get((op.phase, op.kind), 0) + 1
+        print("ops that overran the plan, by phase: %s"
+              % ", ".join("%s/%s x%d" % (p2, k, n)
+                          for (p2, k), n in sorted(by.items(), key=lambda kv: -kv[1])))
+        if a.stalls:
+            for op, took in ex.slow:
+                print("    %-6s %-8s planned %.2f s, took %.2f" % (op.phase, op.kind,
+                                                                    op.dt, took))
 
     if a.shots:
         os.makedirs(a.shots, exist_ok=True)
@@ -167,8 +180,8 @@ def main():
                 os.path.join(a.shots, "nose_end%d.png" % end))
         print("wrote %d stills to %s" % (len(shots) + 3, a.shots))
     if a.video and frames:
-        write_video(a.video, frames, a.fps)
-        print("wrote %s: %d frames at %d fps" % (a.video, len(frames), a.fps))
+        got = write_video(a.video, frames, a.fps)
+        print("wrote %s: %d frames at %d fps" % (got, len(frames), a.fps))
     return 0
 
 
@@ -189,11 +202,12 @@ def write_video(path, frames, fps):
             p.stdin.write(f.tobytes())
         p.stdin.close()
         p.wait()
-        return
+        return path
     gif = path.rsplit(".", 1)[0] + ".gif"
     ims = [Image.fromarray(f) for f in frames]
     ims[0].save(gif, save_all=True, append_images=ims[1:],
                 duration=int(1000 / fps), loop=0)
+    return gif
 
 
 if __name__ == "__main__":

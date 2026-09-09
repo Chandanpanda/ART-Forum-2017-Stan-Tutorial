@@ -912,8 +912,12 @@ class Cage:
     # check_mount re-derives it against the payload, the field of view and
     # SECTION_MAX, so it cannot drift away from the camera it was sized
     # for.  It is not free: it pushes the end racks out with it, and the
-    # chosen truss then wants 1399 mm of the gantry's 1400.
-    END_FREE    = 40.0
+    # chosen truss then wants 1391 mm of the gantry's 1400.
+    #
+    # It was 40 while the camera was aimed 30 degrees off a chord and needed
+    # 21 mm of standoff to stop photographing it.  Aimed at a face the field
+    # costs no standoff at all, and eight millimetres of this came back.
+    END_FREE    = 32.0
     POST_R      = 1.5          # thread anchor post
     POST_OFF    = 8.0          # post from the chord end, axially
     CRADLE_L    = 6.0          # along the diagonal

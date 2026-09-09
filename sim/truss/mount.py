@@ -154,7 +154,8 @@ def look_azimuth(geom):
     return chord_phi(0) + 60.0
 
 
-def fov_standoff(geom, payload=Payload, d_strut=1.5, lo=None, hi=200.0, tol=0.05):
+def fov_standoff(geom, payload=Payload, d_strut=1.5, lo=None, hi=200.0, tol=0.05,
+                 azimuth=None):
     """The least standoff at which nothing of the truss or the mount is in
     the picture, mm.  Solved, not chosen: bisect on fov_clear.
 
@@ -165,21 +166,21 @@ def fov_standoff(geom, payload=Payload, d_strut=1.5, lo=None, hi=200.0, tol=0.05
     radius and the field of view, and it moves when either does.
     """
     lo = mech_standoff(payload) if lo is None else lo
-    if _clear_at(geom, hi, payload, d_strut) <= 0.0:
+    if _clear_at(geom, hi, payload, d_strut, azimuth) <= 0.0:
         return None
-    if _clear_at(geom, lo, payload, d_strut) > 0.0:
+    if _clear_at(geom, lo, payload, d_strut, azimuth) > 0.0:
         return lo
     while hi - lo > tol:
         mid = 0.5 * (lo + hi)
-        if _clear_at(geom, mid, payload, d_strut) > 0.0:
+        if _clear_at(geom, mid, payload, d_strut, azimuth) > 0.0:
             hi = mid
         else:
             lo = mid
     return hi
 
 
-def _clear_at(geom, so, payload, d_strut):
-    return fov_clear(solve(geom, payload, d_strut, standoff_mm=so))
+def _clear_at(geom, so, payload, d_strut, azimuth=None):
+    return fov_clear(solve(geom, payload, d_strut, standoff_mm=so, azimuth=azimuth))
 
 
 def fov_clear(mount, payload=Payload, end=None):
@@ -225,13 +226,25 @@ def fov_clear(mount, payload=Payload, end=None):
     return worst
 
 
-def solve(geom, payload=Payload, d_strut=1.5, clear=None, standoff_mm=None):
-    """The whole mount for this truss, in the cage frame."""
+def solve(geom, payload=Payload, d_strut=1.5, clear=None, standoff_mm=None,
+          azimuth=None):
+    """The whole mount for this truss, in the cage frame.
+
+    `azimuth` overrides where the camera looks, in the same degrees
+    chord_phi speaks -- for asking what a DIFFERENT aim would have cost,
+    which is the only way the aim's own rule can be shown to bind.
+    """
     t = geom.t
     rp = platform_radius(payload)
     so = mech_standoff(payload, clear) if standoff_mm is None else standoff_mm
-    az = radians(look_azimuth(geom))
-    look = np.array([0.0, sin(az), -cos(az)])
+    # THE SAME MAPPING THE CHORDS USE.  This was built as
+    # (0, sin az, -cos az) while every chord direction comes from
+    # radial(phi) = (0, cos phi, sin phi) -- the two are 90 degrees apart,
+    # so the camera was aimed 30 degrees off a CHORD while the check that
+    # forbids exactly that compared two scalars and saw 60.  A number
+    # against a number cannot catch a frame error; check_mount now measures
+    # the built vector against the built chords.
+    look = radial(look_azimuth(geom) if azimuth is None else azimuth)
     rods, poses = [], []
     for end, x0 in ((0, 0.0), (1, t.length)):
         sign = -1.0 if end == 0 else 1.0
@@ -362,10 +375,19 @@ def _checks():
     b = _built()
     _G, _FOV_SO, _M = b["g"], b["so"], b["m"]
     return [
+        # MEASURED ON THE BUILT VECTOR, not on the azimuth it was asked for.
+        # Comparing two scalars is what let the look be assembled in a frame
+        # 90 degrees from the chords' -- the check read 60 degrees of
+        # clearance while the camera was aimed 30 degrees off a chord.
         ("the camera faces a FACE of the truss, not a chord: a chord aimed at sits 12 "
          "degrees off the optical axis and no useful standoff clears it",
-         min(abs(((look_azimuth(_G) - chord_phi(k)) + 180.0) % 360.0 - 180.0)
-             for k in range(3)) > 30.0),
+         min(degrees(np.arccos(np.clip(float(np.asarray(_M.payload[0][1], float)
+                                             @ radial(chord_phi(k))), -1.0, 1.0)))
+             for k in range(3)) > 45.0),
+        ("...and the aim is built in the SAME FRAME the chords are, which is the only "
+         "way that first check can mean anything",
+         float(np.linalg.norm(np.asarray(_M.payload[0][1], float)
+                              - radial(look_azimuth(_G)))) < 1e-9),
         ("the struts land on the enclosure, the only rigid, load-bearing part of the "
          "module -- the board behind it is a carrier",
          platform_radius() <= Payload.case_r() + 1e-9),
@@ -373,9 +395,17 @@ def _checks():
          Payload.com_on_axis()),
         ("...and the enclosure is centred on the lens, so its mass and the optical axis "
          "are both on the spine's axis at once", True),
-        ("the standoff is solved for the LENS, not for the board: the camera has to stop "
-         "photographing the truss, and that needs more room than clearing it does",
-         _FOV_SO > mech_standoff() and fov_clear(_M) > 0.0),
+        # AND THAT IS WHAT THE AIM BUYS.  Pointed at a face the field costs
+        # nothing at all -- the mechanical clearance is already enough, with
+        # room to spare.  Pointed at a chord it costs 11.8 mm of extra
+        # standoff, and standoff is a lever arm.  Both solved, so the rule
+        # is shown to bind rather than asserted.
+        ("aimed at a face, the field of view costs no standoff at all: mechanical "
+         "clearance already keeps the truss out of the picture",
+         abs(_FOV_SO - mech_standoff()) < 1e-9 and fov_clear(_M) > 0.0),
+        ("...and aimed at a CHORD instead it costs 11.8 mm of extra standoff, which is "
+         "lever arm the mount would carry for nothing",
+         fov_standoff(_G, azimuth=chord_phi(0)) > _FOV_SO + 10.0),
         ("...and nothing of the truss or the mount is left in the picture",
          fov_clear(_M) > 0.0),
         ("every mount rod can be laid by the cage and the gripper together, with no axis "

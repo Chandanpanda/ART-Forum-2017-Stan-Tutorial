@@ -153,7 +153,7 @@ def main():
     check("...and the winding head parked at a thread post still fits in the same room",
           Cage.END_FREE >= Cage.POST_OFF + Head.ring_axial_half() + Process.SEAT_CLEAR)
     check("making that room is NOT free: it pushes the end racks out with it, and the "
-          "chosen truss is inside the gantry's X travel by a hair",
+          "chosen truss is inside the gantry's X travel with 17 mm to spare",
           x_now <= Gantry.X_TRAVEL
           and reach_with(t, Magazine.DIAG_PITCH, Magazine.CHORD_PITCH, 20.0)[0]
           < x_now,

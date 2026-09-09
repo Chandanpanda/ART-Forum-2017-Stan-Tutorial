@@ -98,12 +98,28 @@ def main():
     for _ in range(100):
         clk.tick()
     rpm = (c.ring_truth() - a0) / 360.0 / 2.0 * 60.0
-    check("the ring spins at the rpm it is told, within 3%%",
+    check("the ring spins at the rpm it is told, within 3%% (measured after the "
+          "spin-up ramp, which is %.1f s of the spec's own)" % Ring.SPINUP_S,
           abs(rpm - Ring.RPM) < 0.03 * Ring.RPM, "%.1f rpm" % rpm)
-    fid = [c.angle() - c.ring_truth() for _ in range(50)]
-    check("the fiducial reads the true angle with a small noise",
-          abs(np.mean(fid)) < 0.05 and 0.0 < np.std(fid) < 0.2,
-          "mean %.3f sd %.3f deg" % (np.mean(fid), np.std(fid)))
+    # THE ANGLE IS AN ENCODER READ, NOT A FIDUCIAL.  The friction drive
+    # slipped, so the turns had to be counted by watching a mark go past
+    # and the reading carried a noise; a toothed rim on phased pinions
+    # cannot slip (check_drive measures 0.30 deg of a 7.50 deg tooth over a
+    # revolution), so the count at the motor IS the angle and the only
+    # error left is quantisation.  This is the check that replaced the
+    # fiducial's, and it asserts the opposite property: no noise at all.
+    enc = [c.angle() - c.ring_truth() for _ in range(50)]
+    check("the ring's angle is the drive's encoder: true to half a count",
+          abs(np.mean(enc)) <= cell.RING_ENC_DEG / 2.0 + 1e-9,
+          "%.5f deg of a %.5f count" % (np.mean(enc), cell.RING_ENC_DEG))
+    check("...and quantised, not noisy: read it fifty times and it does not move",
+          np.std(enc) == 0.0
+          and all(abs(c.angle() / cell.RING_ENC_DEG
+                      - round(c.angle() / cell.RING_ENC_DEG)) < 1e-6 for _ in range(5)),
+          "sd %.2e deg" % np.std(enc))
+    check("...and fine enough to park by: a count is a fraction of the stop tolerance",
+          cell.RING_ENC_DEG < Ring.STOP_TOL / 10.0,
+          "%.4f deg of %.1f" % (cell.RING_ENC_DEG, Ring.STOP_TOL))
     c.park(-15.0)
     n = 0
     while not c.parked() and n < 300:

@@ -132,7 +132,9 @@ def ring_fit(t):
     """The two closed-form clearances the ring needs at a joint, mm.
     Positive is room.  approach.py sweeps the real thing; these are what
     the optimiser can afford to evaluate thousands of times."""
-    rim = ring_r_in() - r_in_needed(t)
+    # the bore, less the run-out: the ring's centre moves in its raceway,
+    # and a bore clearance that ignores that is 0.08 mm optimistic
+    rim = ring_r_in() - Ring.RUN_OUT - r_in_needed(t)
     # the ring turns round one chord; the other two are `side` away
     others = t.side - (ring_swept_r() + t.d_chord / 2.0 + Process.SEAT_CLEAR)
     # ...and the cage's spine runs down the axis, R away

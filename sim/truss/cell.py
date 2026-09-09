@@ -34,7 +34,12 @@ AXES = ("x", "y", "z", "d", "g", "w")
 _JOINT = {"x": "gx", "y": "gy", "z": "gz", "d": "gd", "g": "gg", "w": "gw"}
 _ACT = {"x": "a_x", "y": "a_y", "z": "a_z", "d": "a_d", "g": "a_g", "w": "a_w"}
 YAW_STEP = 0.1                  # deg, a hobby servo's command resolution
-FID_NOISE = 0.05                # deg, the fiducial read
+# THE RING'S ANGLE IS AN ENCODER READ NOW, NOT A FIDUCIAL.  Friction drive
+# slipped, so the turns had to be counted by watching a mark go past; a
+# toothed rim on phased pinions cannot slip, so the motor's own count is
+# the ring's angle and the only error left is quantisation.  The encoder is
+# on the PINION, and the ring turns Mesh.ratio of a pinion turn.
+RING_ENC_DEG = 360.0 * Ring.mesh().ratio / Ring.ENCODER_CPR
 
 
 def _quat_from_mat(R):
@@ -80,6 +85,9 @@ class CellSim(hal.AxesHAL, hal.RingHAL, hal.CageHAL, hal.GripperHAL,
         for a in AXES:
             self.goto(a, self._set[a])
         self._park = None
+        self._rate = 0.0
+        self._ring_cmd = float(np.degrees(self.d.qpos[self.m.jnt_qposadr[self.j_ring]]))
+        self._ring_w = 0.0
         self._cage_target = 0.0
         self._cage_cmd = 0.0
         # rods the scene built already kept take the kept masks
@@ -135,15 +143,21 @@ class CellSim(hal.AxesHAL, hal.RingHAL, hal.CageHAL, hal.GripperHAL,
 
     # ------------------------------------------------------------- ring
     def spin(self, rpm):
+        """Wind at this speed.  A RATE, SERVED AS A RAMPING POSITION -- the
+        drive is a stepper, and a stepper is a position source (see
+        Ring.servo_kp: driven as a velocity, any gain the timestep could
+        integrate was too soft to reject the hinge's own damping)."""
         self._park = None
-        self.d.ctrl[self.a_ring] = rpm * 2.0 * np.pi / 60.0
+        self._rate = float(rpm) * 6.0            # deg/s at the ring
 
     def park(self, az_deg):
         self._park = float(az_deg)
+        self._rate = 0.0
 
     def angle(self):
-        q = float(self.d.qpos[self.m.jnt_qposadr[self.j_ring]])
-        return float(np.degrees(q) + self.rng.normal(0.0, FID_NOISE))
+        """The ring's angle, from the drive's encoder: quantised, not noisy."""
+        q = float(np.degrees(self.d.qpos[self.m.jnt_qposadr[self.j_ring]]))
+        return float(np.round(q / RING_ENC_DEG) * RING_ENC_DEG)
 
     def parked(self, tol=None):
         tol = Ring.STOP_TOL if tol is None else tol
@@ -154,14 +168,28 @@ class CellSim(hal.AxesHAL, hal.RingHAL, hal.CageHAL, hal.GripperHAL,
         err = ((self._park - q) + 180.0) % 360.0 - 180.0
         return abs(err) < tol and abs(w) < 30.0
 
-    def _serve_ring(self):
+    def _serve_ring(self, dt):
+        """March the commanded ring angle at Ring.servo_acc, toward a rate
+        while winding and toward an angle while parking."""
+        acc, w_max = Ring.servo_acc(), Ring.RPM_MAX * 6.0
         if self._park is None:
-            return
-        q = np.degrees(self.d.qpos[self.m.jnt_qposadr[self.j_ring]])
-        err = ((self._park - q) + 180.0) % 360.0 - 180.0
-        w_max = Ring.RPM_MAX * 6.0
-        w = float(np.clip(4.0 * err, -w_max, w_max))
-        self.d.ctrl[self.a_ring] = np.radians(w)
+            want = float(np.clip(self._rate, -w_max, w_max))
+            step = acc * dt
+            self._ring_w += float(np.clip(want - self._ring_w, -step, step))
+            self._ring_cmd += self._ring_w * dt
+        else:
+            q = self._ring_cmd
+            err = ((self._park - q) + 180.0) % 360.0 - 180.0
+            # brake in time: stop inside the distance this rate needs
+            if abs(err) <= self._ring_w ** 2 / (2.0 * acc):
+                self._ring_w = max(0.0, self._ring_w - acc * dt)
+            else:
+                self._ring_w = min(w_max, self._ring_w + acc * dt)
+            step = np.sign(err) * self._ring_w * dt
+            if abs(step) > abs(err):
+                step, self._ring_w = err, 0.0
+            self._ring_cmd += step
+        self.d.ctrl[self.a_ring] = np.radians(self._ring_cmd)
 
     # ------------------------------------------------------------- cage
     def index(self, theta_deg):
@@ -351,15 +379,24 @@ class CellSim(hal.AxesHAL, hal.RingHAL, hal.CageHAL, hal.GripperHAL,
     # ------------------------------------------------------------- tick
     def tick_hook(self, dt):
         """The firmware's own loops, once per control tick."""
-        self._serve_ring()
         self._serve_cage(dt)
         self._serve_grip()
 
     def substep_hook(self):
-        """Physics the firmware does not see, after every physics step:
-        resin wets what it touches the instant it touches it.  Judged
-        once a control tick, a drop that had met the chord's crest and
-        been pushed off it again inside the tick was already falling."""
+        """Physics the firmware does not see, after every physics step.
+
+        THE RING'S STEP GENERATOR IS HARDWARE, not a firmware loop.  Served
+        once per 50 Hz tick, the ring's commanded angle jumped 7.2 degrees
+        at a time and the ring arrived in 2.5 ms and waited 17.5 -- the mean
+        speed was right and the instantaneous one was eight times it.  A
+        stepper's driver clocks far faster than the loop that tells it what
+        speed to run, so the command marches here.
+
+        Resin also wets what it touches the instant it touches it: judged
+        once a control tick, a drop that had met the chord's crest and been
+        pushed off it again inside the tick was already falling.
+        """
+        self._serve_ring(float(self.m.opt.timestep))
         if self._drops_live:
             self._serve_drops()
 

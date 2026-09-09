@@ -125,26 +125,34 @@ optimiser making the lattice coarser still.
 Geometry is **derived, not tabulated**: `structure.design()` sweeps the
 triangle, the diagonal angle and the stock against the rules of §6 plus
 two the machine imposes (the ring must fit round a joint; the cage's spine
-must fit under the ring's spool). These are its answers.
+must fit under the ring). These are its answers.
 
 | Parameter | 300 mm truss | 1000 mm truss |
 |---|---|---|
-| Chord triangle side | 66 mm | 92 mm |
+| Chord triangle side | 62 mm | 92 mm |
 | Chord diameter | 2 mm pultruded | 3 mm pultruded |
 | Diagonal diameter | 1 mm pultruded | 2 mm pultruded |
-| Bay pitch | 64 mm | 106 mm |
-| Diagonal angle to chord | 45° | 40° |
-| Joints per truss | 12 | 27 |
-| Mass | 7.4 g | 54.9 g |
-| Tip slope at 3 g | 0.0009° | 0.0023° |
-| First mode / member mode | 377 / 454 Hz | 201 / 384 Hz |
+| Bay pitch | 86 mm | 106 mm |
+| Diagonal angle to chord | 35° | 40° |
+| Joints per truss | 9 | 27 |
+| Mass | 6.7 g | 54.9 g |
+| Tip slope at 3 g | 0.0010° | 0.0023° |
+| First mode / member mode | 380 / 338 Hz | 201 / 384 Hz |
+| Ring's bore margin at a joint | 2.28 mm | 0.12 mm |
 
 **The 40 mm section of revision 1 cannot be built by this machine.** It is
-stiff enough several times over — 0.0011°, 502 Hz — but the C-ring sweeps
-32 mm of radius about the chord it winds, and a 40 mm triangle puts the
+stiff enough several times over — 0.0011°, 502 Hz — but the ring sweeps
+20 mm of radius about the chord it winds, and a 40 mm triangle puts the
 cage's spine and the other two chords inside that. A short truss's section
 has a lower bound set by the winding head, not by the loads, and only a
 model of the fabrication finds it (`check_structure`).
+
+The 300 mm truss's numbers moved when the head did. Its section is bound by
+the machine, not the loads, so the head's swept radius falling from 32 mm to
+20 (the spool came off the rim, §4.5) let the optimiser take a smaller,
+shallower truss: side 62 at 35° instead of 66 at 45°, three bays instead of
+four, 9 joints instead of 12. The metre truss is load-bound and did not
+move.
 
 Chord stock: pultruded solid rod, 230 GPa fibre at ~65 % volume fraction, Tg 170 °C, 11.3 g/m for 3 mm. Axial CTE near zero.
 
@@ -253,7 +261,7 @@ The Warren geometry avoids this entirely:
 | **Y** | Cross-axis positioning, and reaching the magazines | **±150 mm** — visual centring needs ±2 mm, but the chord rack sits ±134 mm off the axis |
 | **Z** | Lowers ring onto joint, lifts clear | 150 mm travel is ample: the cage indexes under the head at 95 mm and the lift between joints is **13 mm**, the least that clears the next pin |
 | **W (gripper yaw)** | Turns a rod from the rack's orientation to its placing angle | **±95°; see below** |
-| **Ring rotation** | Continuous winding | Friction-driven, see §4.5 |
+| **Ring rotation** | Continuous winding | Toothed rim, three phased pinions on one belt, see §4.5 |
 
 **A yaw axis IS required, once rod loading is automated.** For winding the
 brief is right: chords are parallel to the axis and the ring plane never
@@ -287,11 +295,25 @@ Recommended for X/Y/Z: NEMA 17 direct-coupled to SFU1204 ballscrew on MGN12 line
 The critical subsystem. Everything else is conventional motion control.
 
 - C-ring, 40 mm outer diameter and 20 mm bore, with a **60° gap** in its circumference, on a **4 mm** plate (§4.2 — a 10 mm plate fits no truss the loads would choose)
-- Carries a thread spool and a passive tensioner (felt pad and spring is the standard solution). The spool block sweeps 32 mm of radius, and that — not the truss — is what sets how fat the cage's spine may be
-- Driven by **two friction wheels 90° apart** on the ring's outer edge, so one is always engaged when the gap passes the other
+- **Corrected: the ring is its own spool.** Revision 1 hung a spool block on the rim and paid 32 mm of swept radius for it — the number that set how fat the cage's spine could be. A whole metre truss is 7.8 m of 0.15 mm thread: 139 mm³, less than one epoxy drop. It winds into a **groove in the ring's own web** (mean radius 15 mm, 2 × 2 mm, 60 % packing → 10.7 m), the way a toroidal winder's shuttle carries its wire. Nothing protrudes, the rim is left for the drive, the swept radius is the rim itself, and the cage's spine grows from 3 mm to 8
+- **Corrected: driven on its teeth, not by friction.** Two friction wheels 90° apart were three faults at once: the orbiting spool struck each wheel once a revolution; two wheels are a drive and not a bearing, and nothing else located the ring; and the thread alone asks 0.022 N·m against a slip torque of 0.03 that was a guess — friction slips silently, which is why the turns had to be counted by watching a fiducial go past
+- **The tooth counts are solved, not chosen** (`Ring.mesh()`). The first toothed draft wrote 72 teeth on the rim and a 12-tooth pinion of 6 mm pitch radius: module 0.556 against module 1.0 — two gears that cannot mesh, and nothing caught it, because a tooth count can only ever be wrong silently. The solver takes the rim's tip circle as given (nothing may stand proud of the swept radius), requires a whole number of teeth on the rim **and in the gap** so the far side arrives in phase, takes the smallest pinion that neither undercuts (2/sin²α teeth) nor swallows its own bearing, checks Lewis at the root with a factor of 3, refuses any module whose pinion would hang below the rim, and of the survivors takes the coarsest. Answer: **module 0.8, 48 teeth on the rim, 8 of them in the gap, an 18-tooth pinion, 1:2.67, 6.0 MPa in the root**
+- **Three pinions on one belt, phased** (`Ring.pinion_az()`, `drive.pinion_phase()`). Placed by maximising the smaller of two margins in degrees — clear of the mouth, and further apart than a gap plus two contact arcs, so one gap cannot unmesh two: **66°/180°/294°, 18.6° in hand**. One motor and a belt, not three servos: three independently commanded shafts on a closed loop are over-constrained, and the rig jammed with all three saturated and the ring turning backwards
+- **The turns are known at the motor.** A toothed rim cannot slip, so the ring's angle is an encoder read on the pinion shaft and the only error left is quantisation: 4000 counts through 1:2.67 is **0.034° at the ring**. The fiducial is gone
+- **Corrected: the raceway's mouth is 60°, not 100°, and it is solved** (`Ring.race_mouth()`). It was sized to contain the ring's 60° gap. That is not the requirement: only the chord ever reaches the rail's radius, and only at one azimuth — at the ring's own x-window the diagonals are inside 5 mm of the chord's axis and never see the rail at 23 mm. What does pull the other way is depth, because the rail's lowest point sits at `rail·cos(mouth/2)` and a narrow mouth hangs it below the rim the head has to get down past. So the mouth is the narrowest that still costs no envelope, `2·acos(rim/rail)` = **59.6°**. §7 records what the 100° version did
 - **Corrected: it must stop with the gap toward the joint's face, not straight down.** "Gap down" is the right idea and the wrong number. The gap has to admit the whole cluster, and the two mitred ends lie against the chord along the face normal, 30° off vertical at a chord-up joint — exactly the edge of a 60° gap. Measured at the band's ends, where the descent is tightest: parked toward the face the ring clears by 1.9 mm, parked straight down by 0.6 mm. The angle is solved per joint and alternates in sign as the joints alternate faces
 
-Prior art: this is an orbital cable-wrapping head, scaled down. The mechanism is proven; the engineering is in miniaturisation and tension control.
+**What the drive is measured against** (`check_drive`, Tier 2): the ring is
+built as a **free body** — no hinge, no weld, six degrees of freedom — held
+by nothing but the C-channel raceway and three pinions with real involute
+teeth, and turned against the thread. One revolution: the ring arrives where
+the shaft says to **0.30° of a 7.50° tooth**, crossing a pinion with the gap
+costs **0.04°**, at least two pinions are engaged throughout, the steady
+demand is **0.028 N·m of a 0.120 rating** against a thread's own 0.022, and
+the ring's centre moves **0.072 mm**. Still true at RPM_MAX and twice the
+tension. Press one pinion on a quarter of a pitch out and it jams.
+
+Prior art: this is an orbital cable-wrapping head, scaled down. The mechanism is proven; the engineering is in miniaturisation, tension control and the fact that the drive has to survive the gap going past it.
 
 **Thread strategy:** do not cut between joints. Run one continuous thread per chord — tight bands at each joint, a single straight strand between. This reduces anchoring operations from 120 to 6 and the inter-joint strand is negligible in mass.
 
@@ -417,6 +439,35 @@ Flagged honestly rather than assumed solved:
 6. **The band binds over a fraction of its width** (§3.2). Whether 18 turns of which ~4 grip is the right recipe is a question for the pull-out test, not the simulation. If grip is what the joint needs, a narrower band at the same turn count is the change to try first.
 
 7. **Nothing in the model is a strength test.** The geometry, the reach, the clearances and the clock are simulated; the bond is not. §8 stands unchanged.
+
+8. **The drive torque and the rail's friction are still `[VERIFY]`.** `Ring.DRIVE_TORQUE` (0.12 N·m at the ring, a NEMA 8 through 4:1) and `Ring.RACE_MU` (0.15, a dry rail) are the two numbers `check_drive` measures a demand *against* rather than measures. The demand it does measure is 0.028 N·m steady, so there is room for both to be a good deal worse than assumed — but the raceway's own friction coefficient is the term the wedge multiplies, and a real rail on a film is nearer 0.05 than 0.15.
+
+9. **The ring's run-out is a raceway property nothing has built yet.** `Ring.RUN_OUT` = 0.08 mm is what `check_drive` measures with three pinions and a C-channel, and the spec charges it against both the ring's bore (which leaves the metre truss 0.12 mm) and its swept radius. It is a *calibration*, in the sense of §CLAUDE.md: a constant with a suite that re-measures it. A real raceway with a real bearing surface may do better or worse, and the metre truss's bore margin is thin enough that it matters which.
+
+### 7.1 What the drive review changed, and what it cost
+
+Recorded because the mistake generalises. The head's drive was reviewed
+after a reader asked the obvious question — *where does the motor shaft go,
+if the rod is on the axis?* — and every step of the answer had already been
+written down wrongly:
+
+| written | actual | how it was found |
+|---|---|---|
+| two friction wheels on the rim | the spool orbited on the same rim and struck each wheel once a revolution | reading the two envelopes against each other; a head is not checked against itself |
+| a slip torque of 0.03 N·m | the thread alone asks 0.022, and friction slips silently | arithmetic |
+| a split gate to close the gap for winding | there is nowhere for a gate to park: aside it scrapes the chord, radial it fouls the pin arm | the clearance solver refused it |
+| 72 rim teeth, a 12-tooth pinion at 6 mm | module 0.556 against module 1.0 — the drive could not have turned | sizing the rig; nothing else would ever have said so |
+| three velocity servos, one per pinion | a closed loop over-constrained: all three saturated, the ring turned backwards | the rig |
+| pinions at 110/205/300 | 48° of mouth margin and 11 of spacing; the solver's 66/180/294 has 18.6 of each | the solver |
+| a raceway mouth of 100° | 160° of dead arc; the ring wedged and the drive jammed at every clearance under 0.12 mm | the rig, and only the rig |
+
+The last one is the one worth remembering. The 100° mouth was not a typo
+or a rounding — it was a **correct deduction from a false premise** (that
+the raceway's mouth must contain the ring's gap). It cost nothing visible:
+the design still turned, because the ring wandered far enough to be caught
+by a pinion instead of the rail. It would have been built, and it would
+have needed a deliberately sloppy raceway to work at all, and nobody would
+have known why.
 
 ---
 

@@ -22,7 +22,8 @@ that compute them (geometry, approach, schedule) take a Truss and a cell
 spec as arguments so they answer for the next truss too.
 """
 from dataclasses import dataclass
-from math import pi, tan, sin, cos, radians, sqrt, floor
+from math import (pi, tan, sin, cos, asin, acos, radians, sqrt, floor, ceil,
+                  atan2, degrees)
 
 
 # ---------------------------------------------------------------- conversions
@@ -240,19 +241,89 @@ class Truss:
 
 
 # ============================================================ THE MACHINE
-class Ring:
-    """The C-ring winding head (brief 4.5): a 40 mm ring with a 60 degree
-    gap, a spool and tensioner riding on its rim, two friction wheels
-    90 degrees apart on the outside edge.
+@dataclass(frozen=True)
+class Mesh:
+    """A solved gear mesh: what Ring.mesh() found (all mm, MPa)."""
+    m:         float        # module
+    n_ring:    int          # teeth on the rim
+    n_pinion:  int
+    r_pitch:   float        # ring's pitch radius
+    r_pinion:  float        # pinion's pitch radius
+    centre:    float        # ring centre to pinion centre
+    tip_r:     float        # how far the pinion's tip reaches from the ring centre
+    sigma:     float        # MPa in the pinion's tooth root at DRIVE_TORQUE
 
-    The gap is what lets a closed hoop of thread go round ONE rod without
-    a hand-off; the inner radius is what has to clear the two diagonals
-    that leave the joint at alpha.  Both are asserted against the truss in
-    structure.ring_fit, not assumed here.
+    @property
+    def ratio(self):
+        """Ring turns per pinion turn."""
+        return self.n_pinion / float(self.n_ring)
+
+
+_RING_MEMO = {}
+
+
+class Ring:
+    """The winding head: a gapped ring in a raceway, driven on its teeth by
+    phased pinions.
+
+    WHY IT IS DRIVEN FROM ITS EDGE.  A ring that encircles a rod cannot
+    have a shaft through it -- the rod is where the shaft would go -- so
+    the drive acts on its rim.  That is an orbital welding head, scaled
+    down, and the mechanism is not in doubt.  What was wrong was the
+    detail, and three faults were measured in the first version:
+
+      * THE SPOOL AND THE DRIVE WANTED THE SAME SURFACE.  The spool block
+        swept 20 to 32 mm of radius on the rim; a 6 mm friction wheel
+        pressed on that rim occupies 20 to 32 mm too, and sat axially on
+        the 4 mm ring inside the spool's own 14.  The orbiting spool
+        struck each drive wheel once a revolution.  Nothing caught it
+        because both were lumped into one head solid and a head is not
+        checked against itself.
+      * NOTHING LOCATED THE RING.  Two friction wheels are a drive, not a
+        bearing, and no guide roller was ever specified.
+      * THE FRICTION HAD NO MARGIN.  The thread tension alone asks about
+        0.022 N.m about the ring's axis against a slip torque of 0.03 that
+        was itself a guess, and friction slips silently, which is why the
+        turns had to be counted by a fiducial rather than known.
+
+    WHAT REPLACES IT, and what the geometry refused on the way.  Closing
+    the gap for winding was tried first: a gate of the gap's own arc,
+    slid aside to admit the rod.  The clearance solver refused it, and the
+    reason generalises -- parked aside, the gate still spans the ring's
+    full radial depth pointing at the work, so on the way down it scrapes
+    the chord, and moved radially instead it fouls the pin arm.  There is
+    nowhere clear for a gate to park.  So the gap stays open, and what is
+    fixed is the drive:
+
+      * TEETH, NOT FRICTION.  The rim is toothed and driven by pinions, so
+        the turns are known at the motor rather than inferred, and the
+        torque margin is a tooth's, not a coefficient's.
+      * THREE PINIONS, PHASED, ON ONE BELT.  Spaced wider than the gap, so
+        at least two are always meshed, and rigidly synchronised so a
+        pinion re-enters the teeth in phase after the gap has passed it.
+        One motor, not three: three independently commanded shafts geared
+        to one ring are an over-constrained closed loop, and check_drive
+        jammed with all three saturated and the ring turning backwards.
+        They are most of the bearing as well as the drive -- the raceway
+        cannot locate the ring in the mouth's own direction, so what does
+        is the pinions (race_mouth, capture_wander, RUN_OUT).
+      * THE GAP IS A WHOLE NUMBER OF TEETH.  Otherwise the far side of the
+        gap arrives out of phase and the re-entering pinion butts a tooth
+        instead of finding a space.
+      * THE MOUTH IS AS NARROW AS THE WORK ALLOWS.  Written wide enough to
+        contain the gap, it left a dead arc that let the ring wedge; see
+        race_mouth for what that cost and why the premise was false.
+      * THE RING IS ITS OWN SPOOL.  The whole metre truss takes 7.8 m of
+        0.15 mm thread, which is 139 cubic millimetres, less than a drop.
+        It is wound into a GROOVE IN THE RING'S OWN WEB, the way a
+        toroidal winder's shuttle carries its wire.  Nothing protrudes,
+        the rim is left for the drive, and the head's swept radius falls
+        from 32 mm to the rim itself -- which is what let the cage's spine
+        grow from 3 mm to 8.
     """
     OD          = 40.0
     ID          = 20.0
-    GAP         = 60.0         # deg, open arc
+    GAP         = 60.0         # deg, open arc: how the rod gets in
     # A THIN PLATE, NOT A DRUM.  The ring sweeps the whole band as the x
     # axis feeds, so its body reaches band/2 + W/2 from the joint, where
     # the diagonals have risen toward the rim: at 10 mm wide no truss in
@@ -261,24 +332,370 @@ class Ring:
     W           = 4.0          # mm, axial width of the ring body
     # the thread leaves the ring here, on a guide inside the rim
     EXIT_R      = 11.0
-    # spool + tensioner block on the outside of the rim: radial, tangential,
-    # axial extents.  Azimuth is measured from the gap's centre, so 180 puts
-    # it diametrically opposite -- uppermost when the gap points down.
-    SPOOL       = (12.0, 14.0, 14.0)
-    SPOOL_AZ    = 180.0
+    # ---- the thread, wound into the ring's own web
+    GROOVE_R    = 15.0         # mm, mean radius of the channel
+    GROOVE_D    = 2.0          # mm, radial depth
+    GROOVE_W    = 2.0          # mm, axial width
+    PACKING     = 0.6          # of the channel, wound thread
+    # ---- the drive: teeth on the rim, three phased pinions.
+    # NOTHING BELOW IS A TOOTH COUNT.  The first version of this drive wrote
+    # one: 72 teeth on the rim and a 12-tooth pinion of 6 mm pitch radius.
+    # Those are module 0.556 and module 1.0, and two gears of different
+    # module do not mesh -- the drive could not have turned.  Nothing caught
+    # it, because a tooth count is exactly the kind of number that is only
+    # ever wrong silently.  So the counts are SOLVED (Ring.mesh) from the
+    # facts below, and check_geometry re-solves them.
+    MODULES     = (0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.8, 1.0, 1.25, 1.5, 2.0)
+    PRESSURE_ANGLE = 20.0      # deg, standard involute
+    BEARING_OD  = 6.0          # mm, an MR63 -- the smallest the pinion can
+    BEARING_W   = 2.5          # mm, its width; two of them straddle the ring
+    PINION_WALL = 0.8          # mm of metal between the bearing and the root
+    PINION_SIGMA = 60.0        # MPa allowable in the pinion's tooth root
+    PINION_SF   = 3.0          # on that, before a module is acceptable
+    DRIVE_TORQUE = 0.12        # N.m the pinions can deliver at the ring
+                               # [VERIFY: a NEMA 8 through 4:1 -- the number
+                               # check_drive measures the demand against]
+    ENCODER_CPR = 4000         # counts per turn on the pinion shaft
+    MOTOR_INERTIA = 2.0e-7     # kg.m^2, a NEMA 8 rotor
+    REDUCTION   = 4.0          # motor to pinion shaft
+    STEP_DEG    = 1.8          # a 200-step hybrid stepper, at the motor
+    # ---- the raceway the pinions and their idlers are carried in
+    RACE_T      = 3.0          # mm of rail either side of the rim
+    RACE_CLEAR  = 0.05         # mm, an H7/g6 running fit at 40 mm (0.009
+                               # to 0.050)
+    # HOW FAR THE RING'S CENTRE ACTUALLY MOVES, measured by check_drive with
+    # the pinions in place and re-measured by it every run.  The clearance
+    # is not the answer on its own: the mouth and the gap leave an arc where
+    # no rail can touch the ring, so it travels until rail half a dead arc
+    # away catches it (capture_wander bounds that at 0.30).
+    #
+    # THIS NUMBER IS WHY THE MOUTH IS SOLVED AND NOT CHOSEN.  With the
+    # mouth at 100 degrees the dead arc was 160, the catch was 80 degrees
+    # oblique, and a 2 N thread became 7 N on the rail: the drive JAMMED
+    # every time the gap crossed a pinion, at any clearance under 0.12, and
+    # only ran at all at 0.15 or looser -- where the ring travelled far
+    # enough to fetch up against a pinion instead.  A design that needs a
+    # LOOSE fit to turn is a design being held by the wrong part.  With the
+    # mouth solved (60.5) the dead arc is 120, and it turns at every
+    # clearance from 0.05 to 0.20, at RPM_MAX, at twice the tension.
+    RUN_OUT     = 0.08         # mm, measured 0.076
+    RACE_MU     = 0.15         # rail friction, dry [VERIFY: a real one runs
+                               # on a film and is nearer 0.05]
     RPM         = 60.0         # winding speed
-    RPM_MAX     = 150.0        # friction-wheel drive ceiling
+    RPM_MAX     = 150.0
     SPINUP_S    = 0.5          # 0 -> RPM
-    WHEEL_SPACING = 90.0       # deg between the two friction wheels
-    WHEEL_R     = 6.0
-    SLIP_TORQUE = 0.03         # N.m before a friction wheel slips [VERIFY]
     STOP_TOL    = 3.0          # deg, how well the gap can be parked
-    MASS        = 40.0         # g, ring + spool + thread
-    # The structure above the ring -- drive wheels, their motor, the
-    # carriage plate -- as a box in the ring's frame, z up from the ring
-    # centre: (x half, y half, z0, z1).  It has to clear the cage when the
-    # ring is seated, and it is what the approach solver sweeps.
+    MASS        = 22.0         # g, ring + thread
+    # The structure above the ring -- the raceway, the pinions, their motor,
+    # the carriage plate -- as a box in the ring's frame, z up from the ring
+    # centre: (x half, y half, z0, z1).
     HEAD_BOX    = (22.0, 30.0, 24.0, 90.0)
+
+    @classmethod
+    def groove_capacity(cls, thread_d):
+        """Metres of thread the ring's own channel holds."""
+        arc = 2.0 * pi * cls.GROOVE_R * (360.0 - cls.GAP) / 360.0
+        vol = arc * cls.GROOVE_D * cls.GROOVE_W * cls.PACKING
+        return vol / (pi * (thread_d / 2.0) ** 2) / 1000.0
+
+    @classmethod
+    def _sig(cls):
+        """Everything mesh/race_mouth/pinion_az read, as a cache key.
+
+        THESE ARE SOLVERS AND THEY ARE CALLED FROM INNER LOOPS.  pinion_az
+        scans 18000 candidate spacings and mesh calls it once per module;
+        approach.head_distance calls mesh on every sampled obstacle point,
+        which is thousands of times per station.  Uncached, check_approach
+        went from 4 minutes to over 50.  Keyed on the inputs rather than
+        cached outright so that a rig which changes RACE_CLEAR (or a rim
+        that is not this one) re-solves instead of getting a stale answer.
+        """
+        return (cls.OD, cls.ID, cls.GAP, cls.W, cls.MODULES, cls.PRESSURE_ANGLE,
+                cls.BEARING_OD, cls.PINION_WALL, cls.PINION_SIGMA, cls.PINION_SF,
+                cls.DRIVE_TORQUE, cls.RACE_CLEAR, cls.RACE_T)
+
+    @classmethod
+    def mesh(cls):
+        """Solve the rim/pinion mesh.  Returns a Mesh, or raises.
+
+        The ring's TIP circle is its rim -- the rim is the head's swept
+        radius and nothing may stand proud of it -- so the pitch radius is
+        OD/2 minus one addendum, and the module then fixes the tooth count.
+        A module is admissible when
+
+          * the rim takes a whole number of teeth, AND the gap spans a whole
+            number of them, so the far side of the gap arrives in phase and
+            a re-entering pinion finds a space rather than a tooth;
+          * the smallest pinion that avoids undercut (2/sin^2(alpha) teeth)
+            also clears its own bearing;
+          * THE DRIVE DOES NOT COST ENVELOPE.  A pinion hangs below the
+            ring's centre by its azimuth, and the head has to get down over
+            a chord: the rule is that the RIM decides how far the head
+            reaches down, not the drive.  This is what rules out the coarse
+            modules -- 1.25 puts a pinion 21.4 mm down against the rim's 20.
+
+        Of the admissible ones the drive takes the COARSEST, because that
+        is the strongest tooth and nothing else discriminates: the pinion's
+        tip radius varies by 0.4 mm over the whole admissible set and the
+        rim sets the envelope regardless, so spending margin on a finer
+        tooth buys nothing.  (Measured over the standard modules: 0.2
+        admissible at 18.3 MPa, 0.5 at 9.9, 0.8 at 6.2; 1.25 and 2.0 are
+        stronger still and refused on envelope.)
+        """
+        key = ("mesh",) + cls._sig()
+        if key in _RING_MEMO:
+            return _RING_MEMO[key]
+        best = None
+        n_undercut = int(ceil(2.0 / sin(radians(cls.PRESSURE_ANGLE)) ** 2))
+        for m in cls.MODULES:
+            r_pitch = cls.OD / 2.0 - m           # tip circle IS the rim
+            n_ring = 2.0 * r_pitch / m
+            if abs(n_ring - round(n_ring)) > 1e-9:
+                continue
+            n_ring = int(round(n_ring))
+            gap_teeth = n_ring * cls.GAP / 360.0
+            if abs(gap_teeth - round(gap_teeth)) > 1e-9:
+                continue
+            # the pinion: big enough not to undercut, and big enough that
+            # its tooth root stands outside its own bearing
+            n_p = n_undercut
+            while n_p * m / 2.0 - 1.25 * m < cls.BEARING_OD / 2.0 + cls.PINION_WALL:
+                n_p += 1
+            r_p = n_p * m / 2.0
+            # Lewis at the root: tangential load from the drive torque over
+            # the ring's pitch radius, on the rim's own face width.  Y is
+            # the 20-degree full-depth fit 0.484 - 2.87/N.
+            F = cls.DRIVE_TORQUE / (r_pitch * 1e-3)
+            Y = 0.484 - 2.87 / n_p
+            sigma = F / (cls.W * 1e-3 * m * 1e-3 * Y) / 1e6
+            if sigma * cls.PINION_SF > cls.PINION_SIGMA:
+                continue
+            M = Mesh(m=m, n_ring=n_ring, n_pinion=n_p, r_pitch=r_pitch,
+                     r_pinion=r_p, centre=r_pitch + r_p, tip_r=r_pitch + r_p + m,
+                     sigma=sigma)
+            if cls.pinion_depth(M) > cls.OD / 2.0 + 1e-9:
+                continue                          # the drive would cost envelope
+            if best is None or m > best.m:
+                best = M
+        if best is None:
+            raise ValueError("no standard module meshes a %.1f mm rim with a "
+                             "%.0f degree gap" % (cls.OD, cls.GAP))
+        _RING_MEMO[key] = best
+        return best
+
+    @classmethod
+    def pinion_depth(cls, mesh=None):
+        """How far the deepest pinion and its bearing block hang below the
+        ring's centre, with the mouth aimed straight down."""
+        M = cls.mesh() if mesh is None else mesh
+        r_block = max(M.r_pinion + M.m, cls.BEARING_OD / 2.0)
+        return max(M.centre * cos(radians(az)) + r_block
+                   for az in cls.pinion_az(M))
+
+    @classmethod
+    def teeth_in_gap(cls):
+        return cls.mesh().n_ring * cls.GAP / 360.0
+
+    @classmethod
+    def contact_half(cls, mesh=None):
+        """Degrees of RING arc one pinion can have its teeth in: the arc its
+        tip circle subtends at the ring's centre."""
+        M = cls.mesh() if mesh is None else mesh
+        return degrees(asin(min(1.0, (M.r_pinion + M.m) / M.centre)))
+
+    @classmethod
+    def pinion_az(cls, mesh=None):
+        """Where the three pinions go, in degrees from the mouth's centre.
+
+        Two constraints, both in degrees, so they trade against each other
+        directly:
+
+          * every pinion's contact arc stays off the mouth -- there is no
+            raceway there to carry it, and the work comes in through it;
+          * adjacent pinions are further apart than a gap plus two contact
+            arcs, or one gap can unmesh two of them at once and the ring is
+            left held by a single roller.
+
+        The problem is symmetric about the mouth, so the family is one
+        pinion opposite the mouth and two at +-s, and the solver takes the s
+        that maximises the SMALLER of the two margins.  (The hand-picked
+        110/205/300 had 48 degrees of mouth margin and 11 of spacing: it
+        spent margin where it was already rich.)
+        """
+        ch = cls.contact_half(mesh)
+        key = ("az", cls.race_mouth(), cls.GAP, ch)
+        if key in _RING_MEMO:
+            return _RING_MEMO[key]
+        floor_ = cls.race_mouth() / 2.0 + ch
+        need = cls.GAP + 2.0 * ch
+        best, best_s = -1e9, 120.0
+        for i in range(1, 18000):
+            s = i * 0.01
+            mouth = (180.0 - s) - floor_
+            spacing = min(s, 360.0 - 2.0 * s) - need
+            v = min(mouth, spacing)
+            if v > best:
+                best, best_s = v, s
+        out = (180.0 - best_s, 180.0, 180.0 + best_s)
+        _RING_MEMO[key] = out
+        return out
+
+    @classmethod
+    def pinion_margin(cls, mesh=None):
+        """The margin, in degrees, that pinion_az achieved."""
+        az = cls.pinion_az(mesh)
+        ch = cls.contact_half(mesh)
+        floor_ = cls.race_mouth() / 2.0 + ch
+        need = cls.GAP + 2.0 * ch
+        mouth = min(abs(((a + 180.0) % 360.0) - 180.0) for a in az) - floor_
+        sp = sorted(az)
+        spacing = min(sp[1] - sp[0], sp[2] - sp[1], 360.0 - (sp[2] - sp[0])) - need
+        return min(mouth, spacing)
+
+    @classmethod
+    def race_mouth(cls):
+        """The opening in the raceway, degrees.  Solved, not chosen.
+
+        WHAT THE MOUTH IS ACTUALLY FOR.  It was written 100 degrees so the
+        ring's 60-degree gap would fit inside it, on the reasoning that the
+        work comes in through both.  That is not the requirement.  Only the
+        CHORD ever reaches the raceway's radius, and only at one azimuth:
+        the diagonals at the ring's own x-window are inside 5 mm of the
+        chord's axis (r_in_needed) and never see the rail at 23.  A 3 mm
+        chord subtends 8.6 degrees at the rail.  So the mouth does not have
+        to contain the gap, and the 100 degrees was 40 degrees of dead arc
+        bought for nothing -- dead arc being what lets the ring wander and
+        wedge (capture_wander, wedge_torque).
+
+        What does pull the other way is depth: the rail's lowest point sits
+        at rail_r_out * cos(mouth/2), and a narrow mouth hangs it below the
+        rim, which is what the head has to get down past.  So the mouth is
+        the NARROWEST that still costs no envelope -- the rim decides how
+        far the head reaches down, the drive does not -- and that is
+        2 acos(rim / rail).
+        """
+        return 2.0 * degrees(acos(min(1.0, (cls.OD / 2.0)
+                                      / (cls.OD / 2.0 + cls.RACE_CLEAR + cls.RACE_T))))
+
+    @classmethod
+    def chord_at_rail(cls, d_chord, clear):
+        """Degrees of mouth a chord of this diameter needs at the rail."""
+        return 2.0 * degrees(asin(min(1.0, (d_chord / 2.0 + clear) / (cls.OD / 2.0))))
+
+    @classmethod
+    def wedge_torque(cls, force):
+        """Rail friction when a side load pushes the ring into the dead arc,
+        as a torque about the ring's axis, N.m.
+
+        The catch is oblique: the ring is held by rail half a dead arc away,
+        so a load F is carried by normals F / (2 cos phi) each and the
+        friction they make is mu F r / cos phi.  This is the term that took
+        the drive's whole rating at a 0.05 mm clearance and a 160-degree
+        dead arc, and it is why the mouth is no wider than it has to be.
+        """
+        phi = radians(min(89.0, cls.capture_arc() / 2.0))
+        return cls.RACE_MU * force * (cls.OD / 2.0 / 1000.0) / cos(phi)
+
+    @classmethod
+    def inertia(cls):
+        """The ring's polar moment about its own axis, kg.m^2 -- a thin
+        annulus of MASS between the bore and the rim."""
+        r1, r2 = cls.ID / 2000.0, cls.OD / 2000.0
+        return cls.MASS / 1000.0 * (r1 * r1 + r2 * r2) / 2.0
+
+    @classmethod
+    def drive_armature(cls):
+        """The motor's rotor, reflected through the reduction and the mesh
+        to the ring's own axis, kg.m^2.
+
+        REAL HARDWARE, AND THE CELL NEEDS IT.  It is six times the ring's
+        own inertia, so leaving it out does not just lose a little fidelity
+        -- it makes the ring's velocity loop unintegrable.  The cell's
+        hinge carried armature 1e-7, a placeholder, and that was survivable
+        only while the spool's mass sat out on the rim; with the spool gone
+        the ring got light, kv*dt/I went to 2.6, and the servo chattered
+        between 15 and 0 rad/s every step.  check_hal saw it as a park that
+        never landed.
+        """
+        return cls.REDUCTION ** 2 * cls.MOTOR_INERTIA / cls.mesh().ratio ** 2
+
+    @classmethod
+    def servo_kp(cls):
+        """The ring's position loop, N.m per radian AT THE RING.
+
+        A STEPPER IS A POSITION SOURCE, not a velocity one, and that is
+        what makes it stiff: its torque runs up to the rating over about
+        one full step of lag, so the stiffness is the rating over a step
+        and there is nothing to choose.  Referred from the pinion shaft to
+        the ring, torque divides by the mesh ratio and angle multiplies by
+        it, so the stiffness divides by its square.
+
+        The cell drove the ring as a VELOCITY instead, and any gain soft
+        enough for the timestep to integrate was too soft to reject the
+        hinge's own damping: the ring ran 340 deg/s of a commanded 360 and
+        check_hal read it as a 5.6 per cent speed error.  A position loop
+        has no steady error to reject.
+        """
+        return cls.shaft_kp() / cls.mesh().ratio ** 2
+
+    @classmethod
+    def shaft_kp(cls):
+        """The same stiffness at the PINION SHAFT, where the motor is:
+        N.m per radian.  The shaft carries DRIVE_TORQUE * ratio (power is
+        conserved, the ring turns `ratio` of a shaft turn) and develops it
+        over one full step of the motor through the reduction."""
+        return (cls.DRIVE_TORQUE * cls.mesh().ratio
+                / radians(cls.STEP_DEG / cls.REDUCTION))
+
+    @classmethod
+    def servo_kv(cls):
+        """...critically damped on what that loop actually carries: the
+        ring plus the drive's rotor reflected to the ring's axis."""
+        return 2.0 * (cls.servo_kp() * (cls.inertia() + cls.drive_armature())) ** 0.5
+
+    @classmethod
+    def servo_acc(cls):
+        """deg/s^2 the ring's command ramps at: 0 to RPM in SPINUP_S.  An
+        acceleration, not a time to whatever speed is asked for."""
+        return cls.RPM * 6.0 / cls.SPINUP_S
+
+    @classmethod
+    def capture_arc(cls):
+        """The widest arc over which the raceway CANNOT touch the ring.
+
+        A contact needs ring at that azimuth and rail at that azimuth.  The
+        ring is missing over its gap, which turns; the rail is missing over
+        the mouth, which does not.  Worst case they lie side by side, and
+        the dead arc is their sum.
+        """
+        return cls.GAP + cls.race_mouth()
+
+    @classmethod
+    def capture_wander(cls):
+        """How far the ring's CENTRE can move in the raceway, mm.
+
+        A circle in a channel one clearance larger stops when its rim
+        reaches the wall in the direction it moved -- at the clearance, if
+        there is wall there.  Pushed into the dead arc there is not, and it
+        runs on until the nearest live azimuth catches it, which takes
+        clearance / cos(half the dead arc).  Beyond a dead arc of 180
+        degrees nothing catches it and the ring leaves the machine, so this
+        is the capture criterion as well as the number.
+
+        Measured against the rig at 0.35 mm (check_drive): the pinions,
+        which this ignores, are most of what holds the ring.
+        """
+        half = radians(cls.capture_arc() / 2.0)
+        if cls.capture_arc() >= 180.0:
+            return float("inf")
+        return cls.RACE_CLEAR / cos(half)
+
+    @classmethod
+    def pinions_meshed(cls, gap_az=0.0):
+        """How many pinions have teeth under them with the gap here."""
+        ch = cls.contact_half()
+        return sum(1 for az in cls.pinion_az()
+                   if abs(((az - gap_az) + 180.0) % 360.0 - 180.0) > cls.GAP / 2.0 + ch)
 
 
 class Gantry:
@@ -328,7 +745,9 @@ class Head:
 
     @staticmethod
     def ring_axial_half():
-        return max(Ring.W, Ring.SPOOL[2]) / 2.0
+        """Half the axial width of everything on the head at the ring's
+        radius: the rim and the rails that carry it."""
+        return Ring.W / 2.0 + Ring.RACE_T
 
     @staticmethod
     def disp_x():
@@ -395,9 +814,11 @@ class Cage:
     CRADLE_L    = 6.0          # along the diagonal
     CRADLE_T    = 1.5          # wall
     CRADLE_ANGLE = 90.0
-    # THE SPINE IS SIZED BY THE SPOOL.  The ring's spool sweeps 32 mm round
-    # the chord, and the chord is R from the cage's axis; whatever tube
-    # runs down that axis has to fit in what is left (measured: an 8 mm
+    # THE SPINE IS SIZED BY THE HEAD'S REACH BELOW THE CHORD.  The ring
+    # sweeps its own rim round the chord and the raceway's rail reaches
+    # deeper still at the mouth's edge; the chord is R from the cage's
+    # axis, so whatever tube runs down that axis has to fit in what is
+    # left (measured with the old spool on the rim: an 8 mm
     # spine met the spool at the first joint of the 300 mm truss).  So the
     # spine is as thick as the truss allows up to SPINE_R_MAX, and a truss
     # that leaves less than SPINE_R_MIN cannot be wound by this ring.
@@ -470,15 +891,44 @@ class Vision:
     CAM_CLEAR   = 3.0          # mm between the module and its neighbours
     FPS         = 30.0
     EDGE_SIGMA_PX = 0.15       # per-frame edge-fit noise
-    # what a look is actually good to, along the chord, 1 sigma: MEASURED
-    # by check_vision on rendered frames (the chord's centreline is found
-    # to hundredths; the joint's x comes from where the diagonals' lines
-    # meet it, and a lever arm of 1/sin(alpha) on their lateral fit is
-    # what sets this).  ModelVision draws its noise from it.
-    LOOK_SIGMA  = 0.15         # mm
+    # WHAT A LOOK IS GOOD TO ALONG THE CHORD, 1 sigma, mm.  MEASURED by
+    # check_vision on rendered frames, and it is a LAW, not a constant: the
+    # chord's own centreline is found to hundredths, but the joint's x comes
+    # from where the two diagonals' LINES meet it, and their lateral fit
+    # carries a lever arm of 1/sin(alpha).  So a shallower web is a worse
+    # look, in proportion.
+    #
+    # Written as one number it was 0.15, measured on a 45-degree truss.  The
+    # optimiser then moved the 300 mm design to 35 degrees and the rendered
+    # rms went to 0.1951 -- which is 0.15 / (sin 35 / sin 45) = 0.185, to
+    # within the scatter of nine joints.  A number would have read that as a
+    # broken camera; the law says the truss got shallower.
+    LOOK_SIGMA_REF   = 0.20    # mm [MEASURED by check_vision: 0.1951 rms
+                               # over nine joints of the 300 mm truss, both
+                               # run directions, rounded up]
+    LOOK_ALPHA_REF   = 35.0    # deg, the web it was measured on
+    # AND HOW MUCH CHORD THE LOOK NEEDS IN FRAME, mm.  A calibration, and
+    # check_vision re-measures it: the joint's x comes from where the two
+    # diagonals' lines meet the chord, and a line needs a run to be fitted
+    # on.  The camera rides in a bay whose radius follows the head's, so
+    # when the spool came off the rim the camera came in with it -- range
+    # 55 mm to 47, field 22.7 mm of chord to 19.4 -- and the pixel path
+    # lost the first joint of every chord and its rms went to 0.30 mm
+    # against the look_sigma the web asks for.  So the standoff is solved
+    # for the field as well as for the envelope.
+    # ...swept 24/28/32/38/45 against the rendered path: 24 finds every
+    # joint, 28 is the best rms, and past 32 the range grows faster than the
+    # resolution and the bracket's bias stops passing through cleanly.
+    LOOK_FIELD  = 28.0         # mm [MEASURED by check_vision]
     EXT_SIGMA   = 0.10         # mm, camera-to-ring calibration bias, 1 sigma
     EXT_ANG_SIGMA = 0.10       # deg
     SAG_MIN     = 1.5          # mm of strand sag that means tensioner slip
+
+    @classmethod
+    def look_sigma(cls, alpha):
+        """1 sigma of a look along the chord, mm, for a web at `alpha`."""
+        return (cls.LOOK_SIGMA_REF * sin(radians(cls.LOOK_ALPHA_REF))
+                / sin(radians(alpha)))
 
     @classmethod
     def f_px(cls):
@@ -501,11 +951,22 @@ class Vision:
         return cls.CAM_W + 2.0 * cls.CAM_CLEAR
 
     @classmethod
+    def look_standoff(cls):
+        """Range at which LOOK_FIELD mm of chord fills the frame's height
+        (the chord runs up the image -- see cam_frame)."""
+        return cls.LOOK_FIELD * cls.f_px() / cls.H
+
+    @classmethod
     def cam_pos(cls):
-        """Ring frame, mm."""
+        """Ring frame, mm.  Outboard of the head's widest static part AND
+        far enough back that the look's field fits: the head's envelope
+        alone used to decide this, and it stopped being the binding term
+        when the head shrank."""
         x = Head.ring_axial_half() + Head.TOOL_CLEAR + cls.cam_bay() / 2.0
-        z = ring_r_out() + Ring.SPOOL[0] + cls.CAM_CLEAR + cls.CAM_W / 2.0
-        return (x, 0.0, z)
+        z_env = race_r_out() + cls.CAM_CLEAR + cls.CAM_W / 2.0
+        r = cls.look_standoff()
+        z_field = cls.cam_aim()[2] + sqrt(max(0.0, r * r - x * x))
+        return (x, 0.0, max(z_env, z_field))
 
     @classmethod
     def cam_aim(cls):
@@ -564,8 +1025,69 @@ def ring_r_out():
 
 
 def ring_swept_r():
-    """The largest radius anything on the ring reaches while it turns."""
-    return ring_r_out() + Ring.SPOOL[0]
+    """The largest radius anything ON THE RING reaches while it turns.
+
+    The bobbin is recessed in the annulus now, so this is the rim -- plus
+    the RUN_OUT, because the ring is not on a shaft: it runs in a raceway
+    and check_drive measures its centre moving.  The raceway and the pinion
+    reach further, but they do not turn: they are the head's static
+    envelope, not its swept one, and race_r_out() is where they end.
+    """
+    return ring_r_out() + Ring.RUN_OUT
+
+
+def rail_r_out():
+    """Outer radius of the C-channel the ring runs in.  This is what the
+    ring is captured by, and it is continuous over everything but the
+    mouth."""
+    return ring_r_out() + Ring.RACE_CLEAR + Ring.RACE_T
+
+
+def race_r_out():
+    """The head's widest STATIC radius: a pinion's tip, which stands further
+    out than the rail does."""
+    return max(rail_r_out(), Ring.mesh().tip_r)
+
+
+def head_lowest():
+    """How far the head reaches below the ring's centre, with the mouth
+    aimed straight down at the work.
+
+    Taken over the parts that are actually there, not over a blanket
+    annulus at the widest static radius -- the widest static radius is a
+    pinion, and a pinion is three discs at known azimuths, not a ring:
+
+      * the rim, all the way round (the ring turns, so the gap is nowhere
+        in particular): ring_r_out();
+      * the rail, which starts at half the mouth off vertical and is
+        deepest exactly there;
+      * each pinion, a disc of its own tip radius hung at its azimuth,
+        plus the bearing block that carries it.
+
+    The blanket-annulus version of this said 22.5 mm; the parts say the rim
+    wins at 20, because the pinions the annulus was drawn round sit high.
+    """
+    M = Ring.mesh()
+    deep = [ring_r_out(),
+            rail_r_out() * cos(radians(Ring.race_mouth() / 2.0))]
+    r_block = max(M.r_pinion + M.m, Ring.BEARING_OD / 2.0)
+    for az in Ring.pinion_az():
+        deep.append(M.centre * cos(radians(az)) + r_block)
+    return max(deep)
+
+
+def gap_aim_limit():
+    """How far off straight down the ring's gap may be parked.
+
+    NOT a raceway constraint any more.  It was (Ring.race_mouth - GAP)/2, on
+    the belief that the gap had to sit inside the mouth; Ring.race_mouth
+    says why it does not, and with the mouth solved that formula returns a
+    quarter of a degree and would have frozen the aiming the approach
+    solver depends on.  What actually limits the aim is the gap's own
+    half-width against the chord it has to keep admitting.
+    """
+    return Ring.GAP / 2.0 - Ring.chord_at_rail(max(Stock.DIAMETERS),
+                                               Process.SEAT_CLEAR) / 2.0
 
 
 def gap_chord():
@@ -608,14 +1130,53 @@ def capture_range(d_rod):
 
 
 CHECKS = [
-    ("one friction wheel is always on the ring: wheel spacing exceeds the gap",
-     Ring.WHEEL_SPACING > Ring.GAP),
+    ("the raceway's mouth passes the largest chord stocked, with seating clearance, "
+     "which is the only thing that ever reaches the rail's radius",
+     Ring.race_mouth() > Ring.chord_at_rail(max(Stock.DIAMETERS), Process.SEAT_CLEAR)),
+    ("...and it is no wider than that, so the rim and not the raceway decides how "
+     "far the head reaches below a chord",
+     head_lowest() <= ring_r_out() + 1e-9),
+    ("...and the gap can still be aimed as far as the cluster asks",
+     gap_aim_limit() > 20.0),
+    ("the ring cannot leave its raceway: the gap and the mouth side by side still "
+     "leave live rail within a quarter turn of every direction",
+     Ring.capture_arc() < 180.0),
+    ("...what it can wander inside it fits in the bore the largest truss leaves",
+     Ring.capture_wander() < 0.5),
+    ("...and the wedge that oblique catch makes costs a tenth of the rating, "
+     "not the whole of it",
+     Ring.wedge_torque(2.0 + Ring.MASS / 1000.0 * 9.81) < Ring.DRIVE_TORQUE / 5.0),
+    ("the rim and the pinion are the same module, so the drive can mesh at all",
+     abs(2.0 * Ring.mesh().r_pitch / Ring.mesh().n_ring - Ring.mesh().m) < 1e-9
+     and abs(2.0 * Ring.mesh().r_pinion / Ring.mesh().n_pinion - Ring.mesh().m) < 1e-9),
+    ("...and nothing of the drive stands proud of the rim, which is the swept radius",
+     Ring.mesh().r_pitch + Ring.mesh().m <= ring_r_out() + 1e-9),
+    ("the pinion's tooth carries the drive torque with the stated factor",
+     Ring.mesh().sigma * Ring.PINION_SF <= Ring.PINION_SIGMA),
+    ("...and its root stands outside its own bearing",
+     Ring.mesh().r_pinion - 1.25 * Ring.mesh().m
+     >= Ring.BEARING_OD / 2.0 + Ring.PINION_WALL - 1e-9),
+    ("the gap spans a whole number of teeth, so a pinion re-enters in phase",
+     abs(Ring.teeth_in_gap() - round(Ring.teeth_in_gap())) < 1e-9),
+    ("at least two pinions are meshed wherever the gap is",
+     min(Ring.pinions_meshed(a) for a in range(0, 360, 1)) >= 2),
+    ("...because the solver spaced them wider than a gap plus two contact arcs",
+     Ring.pinion_margin() > 0.0),
+    ("every pinion's contact arc sits clear of the mouth, where the work comes in",
+     all(abs(((az + 180.0) % 360.0) - 180.0)
+         > Ring.race_mouth() / 2.0 + Ring.contact_half() for az in Ring.pinion_az())),
+    ("the thread groove is cut inside the ring's own section",
+     ring_r_in() < Ring.GROOVE_R - Ring.GROOVE_D / 2.0
+     and Ring.GROOVE_R + Ring.GROOVE_D / 2.0 < ring_r_out()
+     and Ring.GROOVE_W < Ring.W),
+    ("...and holds a whole truss of thread, so nothing is reloaded mid-cycle",
+     Ring.groove_capacity(0.15) > 8.0),
     ("the gap admits the largest chord stocked, with room",
      gap_chord() >= max(Stock.DIAMETERS) + 2.0 * Process.SEAT_CLEAR),
     ("the exit guide is inside the rim and outside the inner clearance",
      ring_r_in() < Ring.EXIT_R < ring_r_out()),
-    ("the spool is opposite the gap, so it is uppermost when the gap is down",
-     abs(Ring.SPOOL_AZ - 180.0) < 1e-9),
+    ("the head reaches less far below the chord than the old spool did",
+     head_lowest() < 32.0),
     ("a full step is finer than the repeatability it has to deliver",
      Gantry.MM_PER_STEP < Gantry.REPEAT),
     ("screw growth over a shift exceeds the repeatability -- which is why the "

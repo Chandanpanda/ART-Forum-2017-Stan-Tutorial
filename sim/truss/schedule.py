@@ -104,7 +104,7 @@ def look_x(t, joint):
     Measured (check_vision): seen through the plate's gap from the far
     side, one diagonal of two is lost and the joint's x comes back up to
     2 mm off; on the camera's side both are in view and it is within
-    LOOK_SIGMA.  On a run toward the camera's side this is the band start
+    look_sigma.  On a run toward the camera's side this is the band start
     and costs nothing; on the return run it is a band's width away."""
     side = 1.0 if Vision.cam_pos()[0] >= 0.0 else -1.0
     return float(joint.x) - side * t.band / 2.0

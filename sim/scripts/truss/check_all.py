@@ -27,6 +27,7 @@ FAST = [
     ("check_cycle",     "a truss made end to end, judged by the inspector"),
 ]
 SLOW = [
+    ("check_drive",     "the ring's drive: a free ring, real teeth, one belt"),
     ("check_ring",      "one joint wound with a real thread"),
     ("check_vision",    "the chord found in rendered frames"),
 ]

@@ -24,7 +24,7 @@ from math import pi, cos, sin, radians, degrees, atan2, sqrt
 import numpy as np
 
 from .spec import (mm, Truss, Ring, Gantry, Head, Gripper, Cage, Magazine,
-                   Dispenser, Vision, ring_r_in, ring_r_out)
+                   Dispenser, Vision, ring_r_in, ring_r_out, rail_r_out)
 from . import band as _band
 
 C_ROD, C_CAGE, C_HEAD = "0.12 0.12 0.13 1", "0.55 0.58 0.62 1", "0.85 0.45 0.15 1"
@@ -256,7 +256,6 @@ def head_body(geom, fixture, z_lo, start=None):
     t = geom.t
     sx, sy, sz = start if start is not None else (-Cage.POST_OFF, 0.0, z_lo + Gantry.Z_TRAVEL - 5.0)
     r_in, r_out = ring_r_in(), ring_r_out()
-    sr, st, sxw = Ring.SPOOL
     hx, hy, hz0, hz1 = Ring.HEAD_BOX
     lo, hi = fixture.x_range()
     out = [
@@ -280,7 +279,10 @@ def head_body(geom, fixture, z_lo, start=None):
                        (1, 0, 0), (0, 1, 0), "0.35 0.35 0.38 0.35", HEAD_B, ROD | CAGE, mass=900.0),
         # ---- the ring ----
         '      <body name="ring" pos="0 0 0" gravcomp="1">',
-        '        <joint name="ring" type="hinge" axis="1 0 0" damping="1e-5" armature="1e-7"/>',
+        # the armature is the DRIVE's rotor reflected to this axis, not a
+        # numerical placeholder: see Ring.drive_armature
+        '        <joint name="ring" type="hinge" axis="1 0 0" damping="1e-5" armature="%.9f"/>'
+        % Ring.drive_armature(),
         '        <site name="ring_exit" pos="0 0 %.6f" size="0.0005"/>' % mm(Ring.EXIT_R),
         '        <site name="ring_fid" pos="0 0 %.6f" size="0.0005"/>' % mm(-r_out),
     ]
@@ -299,12 +301,43 @@ def head_body(geom, fixture, z_lo, start=None):
         out.append('        ' + box("ring%d" % i, c, (Ring.W / 2.0, arc * 0.55, (r_out - r_in) / 2.0),
                                     (1, 0, 0), tan_, C_RING, HEAD_B, ROD | CAGE,
                                     mass=Ring.MASS * 0.7 / (n * (360.0 - Ring.GAP) / 360.0)))
+    # the thread, wound into a groove in the ring's own web: a visual band
+    # inside the section, adding nothing to the envelope
+    out.append('        ' + cylinder("thread", (-Ring.GROOVE_W / 2.0, 0, 0),
+                                     (Ring.GROOVE_W / 2.0, 0, 0),
+                                     Ring.GROOVE_R + Ring.GROOVE_D / 2.0,
+                                     "0.90 0.80 0.20 0.35", 0, 0, mass=Ring.MASS * 0.1))
     out += [
-        # spool block on the rim, opposite the gap (up when the gap is down)
-        '        ' + box("spool", (0.0, 0.0, r_out + sr / 2.0), (sxw / 2.0, st / 2.0, sr / 2.0),
-                         (1, 0, 0), (0, 1, 0), "0.75 0.30 0.30 1", HEAD_B, ROD | CAGE,
-                         mass=Ring.MASS * 0.3),
         '      </body>',
+        # ---- the raceway: what carries the ring, and does not turn.  Open
+        # over the mouth, where the work comes in.
+    ]
+    M = Ring.mesh()
+    n_race = 20
+    r_race0, r_race1 = r_out + Ring.RACE_CLEAR, rail_r_out()
+    rr_mid = (r_race0 + r_race1) / 2.0
+    arc = 2 * pi * rr_mid / n_race
+    for i in range(n_race):
+        psi = 2 * pi * (i + 0.5) / n_race
+        if abs(((degrees(psi) + 180.0) % 360.0) - 180.0) < Ring.race_mouth() / 2.0:
+            continue
+        c = (0.0, rr_mid * sin(psi), -rr_mid * cos(psi))
+        tan_ = (0.0, cos(psi), sin(psi))
+        out.append('      ' + box("race%d" % i, c, (Ring.W / 2.0 + Ring.RACE_T, arc * 0.55,
+                                                    (r_race1 - r_race0) / 2.0),
+                                  (1, 0, 0), tan_, "0.35 0.35 0.40 1", HEAD_B, ROD | CAGE,
+                                  mass=6.0))
+    # THE PINIONS ARE COSMETIC HERE and their teeth are not drawn: in the
+    # cell the ring is a hinge on an actuator, so what the drive has to
+    # prove -- that it locates the ring and turns it without losing a tooth
+    # -- cannot be asked of a hinge.  truss.drive asks it, of real teeth.
+    for k, az in enumerate(Ring.pinion_az()):
+        a = radians(az)
+        c = np.array([0.0, M.centre * sin(a), -M.centre * cos(a)])
+        out.append('      ' + cylinder("pinion%d" % k, c - np.array([Ring.W / 2.0, 0, 0]),
+                                       c + np.array([Ring.W / 2.0, 0, 0]), M.r_pinion + M.m,
+                                       "0.85 0.55 0.15 1", HEAD_B, ROD | CAGE, mass=3.0))
+    out += [
         # ---- the dispenser on its stroke ----
         '      <body name="disp" pos="%.6f 0 %.6f" gravcomp="1">' % (mm(Head.disp_x()), mm(Head.TIP_PARK)),
         '        <joint name="gd" type="slide" axis="0 0 -1" range="0 %.6f" damping="2"/>'
@@ -426,10 +459,11 @@ def scene_cell(geom, fixture, stage="empty", start=None, timestep=5e-4, n_drops=
     <position name="a_g" joint="gg" kp="3000" kv="40" forcerange="-30 30"/>
     <position name="a_w" joint="gw" kp="0.8" kv="0.01" forcerange="-0.3 0.3"/>
     <position name="a_f" tendon="jaws" kp="300" kv="3" forcerange="-15 15"/>
-    <velocity name="a_ring" joint="ring" kv="0.02" forcerange="-%g %g"/>
+    <position name="a_ring" joint="ring" kp="%.6f" kv="%.6f" forcerange="-%g %g"/>
     <position name="a_cage" joint="cage" kp="60" kv="2.5" forcerange="-6 6"/>
   </actuator>""" % (Gantry.STALL_N["x"], Gantry.STALL_N["x"], Gantry.STALL_N["y"], Gantry.STALL_N["y"],
-                    Gantry.STALL_N["z"], Gantry.STALL_N["z"], Ring.SLIP_TORQUE, Ring.SLIP_TORQUE)
+                    Gantry.STALL_N["z"], Gantry.STALL_N["z"], Ring.servo_kp(),
+                    Ring.servo_kv(), Ring.DRIVE_TORQUE, Ring.DRIVE_TORQUE)
     ten = """  <tendon>
     <fixed name="jaws">
       <joint joint="gf_l" coef="1"/>

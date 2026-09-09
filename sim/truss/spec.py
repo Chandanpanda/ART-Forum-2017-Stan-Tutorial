@@ -146,6 +146,47 @@ class Carrier:
         return -v / _np.linalg.norm(v)
 
 
+class Bracket:
+    """The one rigid part in the mount, and why there has to be one.
+
+    THE CAMERA HAS NO THREE-POINT SURFACE.  A hexapod needs three landings
+    in a plane roughly parallel to the truss's end triangle -- that is,
+    perpendicular to the spine.  This module offers two candidates and both
+    fail, measured on the frame model at the chosen truss:
+
+        the housing's inboard face, 8.5 x 3.0 mm      1.16 of the budget
+        the board's own M2 holes, board rigid         0.72   (flattering)
+        ...the same, board at its real 216 N/mm       3.31
+        a rigid collar carrying landings at 8 mm      0.64
+
+    The housing face is stiff but too thin to be a triangle -- 1.5 mm of
+    depth against 4.25 of width.  The mounting holes make a proper triangle
+    and then work through FR4 over 21 mm, which is 26 times softer than the
+    strut bonded to it; that path is not a mount, it is a spring.
+
+    So: a collar bonded round the housing -- the stiff part -- with three
+    arms presenting the landings clear of it.  It is the machined part this
+    design spent a long time claiming it did not need, and the claim was
+    only ever true of a mount whose third landing was in mid air.
+    """
+    WALL        = 1.5          # mm, the collar's wall round the housing
+    ARM_W       = 2.0          # mm [VERIFY: printed or milled]
+    MASS        = 0.8          # g [VERIFY: print one and weigh it]
+
+    @classmethod
+    def landing_r(cls, payload=None):
+        """Radius at which the arms present the three landings, mm.
+
+        Derived from the housing it wraps, not chosen: the collar has to
+        clear the housing's own circumradius, and beyond that the radius
+        barely matters -- swept 3 to 24 mm the budget moves 9%, where
+        ROTATING the triangle off the chords moves it 20%.  So it is taken
+        as small as the collar allows, which is also the shortest arm.
+        """
+        p = Payload if payload is None else payload
+        return p.case_r() + cls.WALL
+
+
 # ============================================================ THE PRODUCT
 class Load:
     """The stereo rig's load case and budgets (brief 2.2, 2.3, 6).

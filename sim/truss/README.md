@@ -316,27 +316,51 @@ would say it for certain.
 
 ## The camera mount
 
-`mount.py` solves a nine-rod nose at each end: three end battens closing the
-triangle of chord ends, six octahedral struts, and no platform rods at all —
-the struts bond straight to the module's own metal enclosure, so the mass
-sits on the spine's axis and in the platform's plane, and nothing of the
-mount can reach round in front of the lens.
+`mount.py` solves a nine-rod nose at each end — three end battens closing the
+triangle of chord ends, six octahedral struts — plus **one small rigid collar**
+bonded round the camera's lens housing, whose three short arms carry the
+landings the struts reach for.
 
-Three things are solved rather than chosen. The camera faces a **face** of
-the truss, not a chord (aimed along a chord, that chord's end sits 12° off
-the optical axis and no useful standoff clears it). The **standoff** is
-bisected on `fov_clear` until nothing of the truss or the mount is in a
-66 × 41° field — 21.4 mm for the chosen section, and it grows with the
-section, which is why the spine sweep charges each candidate its own. And
-every strut's direction is checked against what the machine has: a rod held
-at gripper yaw ψ with the cage at θ lands along `(cos ψ, sin ψ cos θ,
-−sin ψ sin θ)`, which covers the whole sphere, so `pose_for` returns the
-pair and no axis has to be added.
+**That collar is the part this design spent a long time claiming it did not
+need**, and the claim was only ever true of a mount whose third landing was in
+mid air. A hexapod wants three landings in a plane roughly parallel to the end
+triangle. The camera offers two candidate surfaces and the frame model refuses
+both:
 
-Every mount joint is bonded, not wound: the ring cannot reach past the last
+| where the six struts could land | fraction of the yaw budget |
+|---|---|
+| the housing's own inboard face, 8.5 × 3.0 mm | **1.08** — over |
+| the board's four M2 holes, board modelled rigid | 0.73 — the flattering model |
+| …the same, board at its real 216 N/mm | far over |
+| **a collar carrying the landings at 7.51 mm** | **0.64** |
+
+The housing face is the only surface parallel to the end triangle and it is
+too thin to *be* a triangle — 3.0 mm of depth against 8.5 of width. The
+mounting holes make a proper triangle and then work through FR4 over 21 mm,
+which is **26 times softer than the strut bonded to it**: that path is not a
+mount, it is a spring. So the collar bonds to the housing — the stiff part —
+and presents the landings where a hexapod can use them.
+
+Three things are solved rather than chosen. The camera faces a **face** of the
+truss, not a chord (aimed along a chord it needs 28.9 mm of standoff instead
+of 14.1, and standoff is a lever arm). The **standoff** is bisected on
+`fov_clear` until nothing of the truss, the mount or the collar's arms is in a
+62.2 × 48.8° field. And every strut's direction is checked against what the
+machine has: a rod held at gripper yaw ψ with the cage at θ lands along
+`(cos ψ, sin ψ cos θ, −sin ψ sin θ)`, which covers the whole sphere, so
+`pose_for` returns the pair and no axis has to be added.
+
+Every rod joint is bonded, not wound: the ring cannot reach past the last
 joint and does not need to. A fillet on a 1.5 mm rod carries 141 N against a
 service load of 0.147 N, and comes out stiffer than the strut it holds — so
 the strut is the compliance and the bond is not.
+
+**How the landing bug survived.** The landings were placed on a ring centred
+on the *spine's* axis and asserted to lie on the housing by comparing a radius
+with a circumradius — a number against a number. The housing does not straddle
+that axis. `landing_in_camera` and `housing_extent` now put the question in
+the camera's own frame, where "is this point on the part?" has an answer, and
+`check_mount` asks it.
 
 ### The cell could not pick up a camera, and could not be made to
 
@@ -379,13 +403,13 @@ model says so rather than the cell finding out.
 
 ## The suites
 
-447 checks in thirteen suites, about 12 minutes for the full tier.
+450 checks in thirteen suites, about 12 minutes for the full tier.
 
 | suite | tier | what it would have caught |
 |---|---|---|
 | `check_geometry` | 0 | a spec assertion that no longer holds; a truss whose derived quantities disagree |
 | `check_structure` | 0 | the beam model against the brief; an optimiser that runs to the sweep's edge; a section the winder cannot enter; a truss whose racks the gantry cannot reach the ends of |
-| `check_mount` | 0 | a camera the gripper cannot hold; a fix that costs more axis than the machine has; a module that lands in the end plate; a strut in shot |
+| `check_mount` | 0 | a camera the gripper cannot hold; a fix that costs more axis than the machine has; a module that lands in the end plate; a strut in shot; **a strut landing on nothing at all** |
 | `check_approach` | 0 | a station with no margin; a sampling hole a rod fell through; a retracted rod in the rim; a post loop through the fixture |
 | `check_schedule` | 0 | a rod released at the wrong angle; a yaw with the gripper in; a loop that touches |
 | `check_model` | 1 | a V whose flanks stood proud; a head on the spine; a ring not the solver's |

@@ -1,6 +1,6 @@
 """The camera mount, solved: a six-strut nose at each end of the truss.
 
-WHAT IT IS.  Nine rods per end and no plate, no bracket, no machined part:
+WHAT IT IS.  Nine rods per end and ONE machined part:
 
     3 END BATTENS closing the triangle of chord ends.  An octahedron is two
       triangles and six struts; with the base triangle open the three chord
@@ -9,45 +9,57 @@ WHAT IT IS.  Nine rods per end and no plate, no bracket, no machined part:
       brief 4.2 prohibits -- but the prohibition binds where the ring has to
       WORK, and the last joint is `end_margin` inboard of here.  The ring
       never comes out this far.
-    6 STRUTS, octahedral: each chord end feeds two platform points, so no
-      joint has to carry a moment.
+    6 STRUTS, octahedral: each chord end feeds two landings, so no joint has
+      to carry a moment.
+    1 COLLAR round the camera's lens housing, with three short arms carrying
+      the landings clear of it.
 
-THE PLATFORM IS THE CAMERA'S OWN LENS HOUSING.  A Camera Module 2 carries a
-square holder round its lens -- 8.5 mm square, measured off RP-008149-DS-1 --
-which is PLASTIC rather than the metal can the module this was first drawn
-against had.  That turns out not to matter: check_mount measures the housing
-against the struts and it is still several times their stiffness in the
-weakest plastic it could be, so the strut is the compliance and the payload
-is not.  So the struts bond straight to that holder and there are no platform
-rods at all, which is worth more than the three rods it saves: with nothing
-of the mount reaching round the front, nothing can end up in the lens's
-62.2 x 48.8 degree field (`fov_clear`).
+THE COLLAR IS THE PART THIS DESIGN SPENT A LONG TIME CLAIMING IT DID NOT
+NEED, and the claim was only ever true of a mount whose third landing was in
+mid air.  A hexapod wants three landings in a plane roughly parallel to the
+end triangle.  A Camera Module 2 offers two candidate surfaces and the frame
+model refuses both, at the chosen truss and a 4 g head:
 
-WHERE THE CAMERA'S MASS GOES, and it is the whole design.  The enclosure is
-centred on the lens, so bonding to it puts BOTH the mass and the optical
-axis on the spine's axis at once.  spine measured what that is worth, on
-the chosen 85/40/3.0/1.5 truss at the solved 21.4 mm standoff, in fractions
-of the yaw budget:
+    the housing's inboard face, 8.5 x 3.0 mm       1.08 of the yaw budget
+    the board's own M2 holes, board modelled rigid  0.73  (the flattering one)
+    ...the same, board at its real 216 N/mm        far over
+    a collar carrying landings at 7.51 mm          0.64
 
-                                              4 g module    a 50 g head
-    bonded end-on, mass half a module out        1.22           6.92
-    the enclosure, mass in the platform's plane  0.67           1.44
-    three rods surrounding the module instead    0.71           1.66
-    the massless rigid bracket it replaces       0.61           1.60
+The housing face is the only surface parallel to the end triangle and it is
+too thin to be a triangle -- 3.0 mm of depth against 8.5 of width.  The
+mounting holes make a proper triangle and then work through FR4 over 21 mm,
+which is twenty-six times softer than the strut bonded to it: that path is
+not a mount, it is a spring.  So the collar bonds to the housing -- the stiff
+part -- and presents the landings where a hexapod can use them.
 
-Nothing else about the mount comes close to the first row.  The lever arm
-the struts get -- the enclosure is only 5.74 mm in circumradius across the
-spine -- is second order beside it, and bonding to the enclosure beats
-three rods laid round the module at 29 mm anyway, while costing six fewer
-rods, six fewer joints, and nothing in front of the lens.
+AND THE RING OF LANDINGS IS NOT CENTRED ON THE HOUSING'S OWN AXIS BY LUCK.
+It was centred on the SPINE's axis and asserted to lie on the housing by
+comparing a radius with a circumradius.  The housing does not straddle the
+spine's axis -- it is a shallow block on the FRONT of the module -- so two
+landings of three came out on it and the third came out off the back of the
+board.  A number against a number cannot answer "is this point on the part";
+`landing_in_camera` and `housing_extent` put the question in the camera's own
+frame, where it has an answer, and check_mount asks it.
 
-READ THE LAST ROW TWICE.  The placeholder this replaces is OPTIMISTIC at
-the real head and PESSIMISTIC at the one the brief assumed: its error
-changes sign between them, because it makes two opposite mistakes at once
--- it charges nothing for the mount's own mass and compliance, and it hangs
-the payload on the chord ends 66 mm off the axis.  No margin on a
-placeholder could have covered both, which is the argument for solving the
-mount rather than allowing for it.
+WHERE THE CAMERA'S MASS GOES, and it is the whole design.  The housing is
+centred on the lens, so bonding to it puts BOTH the mass and the optical axis
+on the spine's axis at once.  spine measured what that is worth, on the
+chosen 85/40/3.0/1.5 truss at the solved 14.1 mm standoff, in fractions of
+the yaw budget:
+
+                                            4 g module    a 50 g head
+    the collar, mass in the landings' plane    0.64          1.37
+    bonded end-on, mass half a module out      1.12          7.29
+    the massless rigid bracket it replaces     0.59          1.60
+
+Nothing else about the mount comes close to that first row against the
+second.  And read the last one twice: the placeholder is OPTIMISTIC at the
+real head and PESSIMISTIC at the one the brief assumed -- its error changes
+sign between them, because it makes two opposite mistakes at once.  It
+charges nothing for the mount's own mass and compliance, and it hangs the
+payload on the chord ends 66 mm off the axis.  No margin on a placeholder
+could have covered both, which is the argument for solving the mount rather
+than allowing for it.
 
 WHAT MAKES IT BUILDABLE, which was the open question.  A strut points in a
 general direction and the gripper has ONE yaw axis, so on its own the
@@ -73,7 +85,7 @@ from math import atan2, cos, degrees, pi, radians, sin, sqrt
 
 import numpy as np
 
-from .spec import Payload, Process, Truss
+from .spec import Bracket, Payload, Process, Truss
 from .geometry import chord_phi, radial, rot_x
 
 # the three chords of a face, as geometry.FACES has them
@@ -124,12 +136,59 @@ class Mount:
 def platform_radius(payload=Payload):
     """Where the six struts land, as a radius from the spine's axis.
 
-    The enclosure IS the platform, so this is its circumradius ACROSS the
-    spine -- the holder is CASE square in plan but only CASE_PROUD thick
-    toward the scene, and it is the thin direction the struts have to work
-    with.  Not chosen: change the module and it moves.
+    THIS USED TO BE THE HOUSING'S OWN CIRCUMRADIUS, on the belief that the
+    struts bonded straight to it.  They cannot: a ring of landings centred
+    on the spine's axis only lies on the housing if the housing straddles
+    that axis, and it does not -- it is a shallow block on the FRONT of the
+    module.  Two of the three landings came out on it and the third came out
+    off the back of the board, in mid air, for as long as this existed.  The
+    check that was meant to catch it compared a radius with a circumradius
+    and never asked whether a point was inside the solid.
+
+    So the landings are on a BRACKET now, a collar round the housing, and
+    this is the radius its arms present them at.
     """
-    return 0.5 * sqrt(payload.CASE_PROUD ** 2 + payload.CASE[1] ** 2)
+    return Bracket.landing_r(payload)
+
+
+def housing_extent(payload=Payload):
+    """The housing as a box in the CAMERA's own frame, mm:
+    ((x lo, x hi), (L lo, L hi), (U lo, U hi)) about the module's centre,
+    with L the viewing direction.  The block is square in the board's plane
+    and stands CASE_PROUD proud of it, on the front."""
+    h = payload.CASE[0] / 2.0
+    return ((-h, h), (payload.BOX[1] / 2.0 - payload.CASE_PROUD,
+                      payload.BOX[1] / 2.0), (-h, h))
+
+
+def landing_frame(geom, payload=Payload):
+    """(x, look, up) unit vectors of the camera's own frame, cage coords."""
+    look = radial(look_azimuth(geom))
+    xh = np.array([1.0, 0.0, 0.0])
+    up = np.cross(look, xh)
+    return xh, look, up / np.linalg.norm(up)
+
+
+def _in_box(v, box):
+    return all(lo - 1e-9 <= c <= hi + 1e-9 for c, (lo, hi) in zip(v, box))
+
+
+def landing_in_camera(mount, geom, end=0, payload=Payload):
+    """Each strut landing in the camera's own frame -- the only frame in
+    which 'is this point on the part?' is a question with an answer."""
+    xh, look, up = landing_frame(geom, payload)
+    c = np.asarray(mount.payload[end][0], float)
+    out, seen = [], set()
+    for r in mount.of(end):
+        if r.kind != "strut":
+            continue
+        key = tuple(np.round(r.p1, 6))
+        if key in seen:
+            continue
+        seen.add(key)
+        d = np.asarray(r.p1, float) - c
+        out.append((float(d @ xh), float(d @ look), float(d @ up)))
+    return out
 
 
 def mech_standoff(payload=Payload, clear=None):
@@ -262,6 +321,15 @@ def solve(geom, payload=Payload, d_strut=1.5, clear=None, standoff_mm=None,
             d = radial(chord_phi(k)) * rp
             plat.append(np.array([x0 + sign * (so - back), d[1], d[2]]))
         n = t.n_chords
+        # THE BRACKET'S ARMS, from the collar round the housing out to each
+        # landing.  Carried as rods so they are in the field-of-view test
+        # with everything else: a part that reaches out past the housing is
+        # exactly the sort of thing that ends up in shot.
+        for k in range(n):
+            d = radial(chord_phi(k))
+            root = np.array([x0 + sign * (so - back),
+                             d[1] * payload.case_r(), d[2] * payload.case_r()])
+            rods.append(Strut("arm", len(rods), root, plat[k], Bracket.ARM_W / 2.0, end))
         for k in range(n):
             rods.append(Strut("batten", len(rods), base[k], base[(k + 1) % n],
                               d_strut / 2.0, end))
@@ -388,9 +456,21 @@ def _checks():
          "way that first check can mean anything",
          float(np.linalg.norm(np.asarray(_M.payload[0][1], float)
                               - radial(look_azimuth(_G)))) < 1e-9),
-        ("the struts land on the enclosure, the only rigid, load-bearing part of the "
-         "module -- the board behind it is a carrier",
-         platform_radius() <= Payload.case_r() + 1e-9),
+        # CONTAINMENT, NOT RADIUS.  The check this replaces compared
+        # platform_radius() with case_r() -- a number against a number --
+        # and passed while one landing of three sat off the back of the
+        # board in mid air.  These ask where the points ARE.
+        ("no landing is inside the housing: they are on the bracket's arms, clear of "
+         "the block it wraps",
+         all(not _in_box(v, housing_extent())
+             for v in landing_in_camera(_M, _G))),
+        ("...and none is left floating on the spine's axis either -- every one is at "
+         "the bracket's own radius, to a micron",
+         all(abs(sqrt(v[1] ** 2 + v[2] ** 2) - Bracket.landing_r()) < 1e-3
+             for v in landing_in_camera(_M, _G))),
+        ("a ring of landings centred on the SPINE's axis could not have lain on the "
+         "housing at all, because the housing does not straddle that axis",
+         housing_extent()[1][0] > 0.0),
         ("...so the camera's mass lies in the platform's plane, which is the whole design",
          Payload.com_on_axis()),
         ("...and the enclosure is centred on the lens, so its mass and the optical axis "
@@ -412,9 +492,11 @@ def _checks():
          "the machine does not have",
          all(float(np.linalg.norm(axis_from(*pose_for(r.axis)) - r.axis)) < 1e-9
              for r in _M.rods)),
-        ("the platform radius is the enclosure's ACROSS the spine, which is its thin way",
-         abs(platform_radius()
-             - 0.5 * sqrt(Payload.CASE_PROUD ** 2 + Payload.CASE[1] ** 2)) < 1e-9),
+        ("the landing radius is derived from the housing the collar wraps, not chosen",
+         abs(platform_radius() - (Payload.case_r() + Bracket.WALL)) < 1e-9),
+        ("...and the bracket's own arms are not in the picture either -- they are "
+         "counted in the field test with every other rod",
+         len(_M.by_kind("arm")) == 6 and fov_clear(_M) > 0.0),
         ("a filleted rod end is stiffer than the rod it holds, so the bond is not the compliance",
          fillet_stiffness(1.5)[0] > 150e3 * pi * 0.75 ** 2 / 60.0),
         ("...and carries the service load a thousand times over",

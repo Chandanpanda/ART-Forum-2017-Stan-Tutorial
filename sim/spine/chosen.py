@@ -11,17 +11,19 @@ a Raspberry Pi Camera Module 2 at each end:
     an 85 mm chord triangle, 40 degree diagonals, 3 mm chords, 1.5 mm web
 
     mass                52.5 g      of a 70 g ceiling
-    range error         0.53 m      at 100 m, 0.53% of the range
-    yaw budget          0.62        of 0.005 degrees between the faces
+    range error         0.55 m      at 100 m, 0.55% of the range
+    yaw budget          0.64        of 0.005 degrees between the faces
     first mode           281 Hz     against the 200 the brief asks
     ring bore          +0.37 mm     the winding head enters every joint
     cell                21.9 min    30 joints; X 1383 of 1400, Y 130 of 150
 
-It is the TRUEST design that breaks no rule at all -- of 1470 candidates
-swept over sections 60..160 mm and webs 30..60 degrees, in every stock
-diameter, SEVEN break none.  The lightest of those seven is 75/35/3.0/1.5
-at 51.1 g and 0.65 m, so the whole span of the feasible set is 1.4 g and
-0.12 m: there is no trade left inside it worth arguing about.
+Of 1482 candidates swept over sections 60..160 mm and webs 30..60 degrees,
+in every stock diameter, SEVEN break no rule at all.  One of the seven is
+marginally truer -- 90/35/3.0/2.0 at 0.541 m against 0.546 -- and costs 9.3
+grams for those five millimetres, which is not a trade worth making; it also
+sits at 201 Hz against this design's 281.  The lightest of the seven is
+75/35/3.0/1.5 at 51.1 g and 0.66 m.  So the feasible set spans 1.4 g and
+0.12 m end to end, and the choice inside it is close to arbitrary.
 
 ---------------------------------------------------------------------------
 WHAT MOVED, AND WHY THIS REPLACES THE 115 mm ANSWER
@@ -73,19 +75,34 @@ and it is a gram lighter, which is why the numbers above are slightly
 better than the ones they replace rather than slightly worse.
 
 WHAT THE MOUNT COSTS, now that it is modelled rather than placeheld: the
-camera stands 14.1 mm off the chord ends -- which is the mechanical
-clearance and nothing more, because aimed at a FACE of the truss the
-62.2 x 48.8 degree field costs no standoff at all.  It read 21.1 mm until
-the aim was found to be assembled in a frame 90 degrees from the chords',
-pointing the camera 30 degrees off one; the check that forbids exactly that
-was comparing two azimuths as numbers instead of the built vector against
-the built chords.  Aimed at a chord the field would cost 28.9 mm, and
-standoff is a lever arm.  The six struts of each nose bond to the module's
-own lens housing so its mass sits on the spine's axis and in the platform's
-plane.  The massless
-rigid bracket this replaces is not a bound on it in either direction --
-its error changes sign between a 50 g head and a 4 g one -- which is the
-argument for modelling the mount rather than putting a margin on it.
+camera stands 14.1 mm off the chord ends -- the mechanical clearance and
+nothing more, because aimed at a FACE of the truss the 62.2 x 48.8 degree
+field costs no standoff at all.  It read 21.1 mm until the aim was found to
+be assembled in a frame 90 degrees from the chords', pointing the camera 30
+degrees off one.
+
+AND THE MOUNT HAS ONE MACHINED PART AFTER ALL: a small rigid collar bonded
+round the module's lens housing, whose three arms carry the landings the six
+struts reach for.  The struts were assumed to bond straight to the housing;
+they cannot.  A ring of landings centred on the spine's axis only lies on the
+housing if the housing straddles that axis, and it does not -- two landings
+of three came out on it and the third came out off the back of the board.
+Neither surface the camera really offers will hold the budget: its housing
+face is the only one parallel to the end triangle and is too thin to be a
+triangle (1.08), and its own mounting holes make a proper triangle and then
+work through FR4 that is 26 times softer than the strut bonded to it.  The
+collar reads 0.64.
+
+Both were checks comparing a number with a number -- an azimuth against an
+azimuth, a radius against a circumradius -- where the question was about
+geometry.  check_mount asks the geometric question now, in the camera's own
+frame.
+
+THE MASSLESS RIGID BRACKET the mount replaces is still not a bound on it in
+either direction: its error changes sign between a 50 g head and a 4 g one,
+0.59 against 0.64 here and 1.60 against 1.37 there.  No margin could have
+covered both, which is the argument for solving the mount rather than
+allowing for it.
 """
 from dataclasses import dataclass
 

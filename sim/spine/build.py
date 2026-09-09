@@ -111,14 +111,24 @@ class Nose:
     axis -- and which one dominates depends on what the camera weighs.  So
     the mount is modelled, not allowed for.
 
-    r_platform IS THE PAYLOAD'S, NOT A CHOICE.  The struts land on the
-    module's own lens housing, so r_platform is that block's circumradius
-    across the spine (4.93 mm for a Camera Module 2's 8.5 mm square) and
-    `platform_rigid` is true: there are no platform rods at all, and so
-    nothing of the mount can reach round in front of the lens.  Three carbon
-    rods surrounding the whole module instead cost six more rods and read
-    worse.  The housing is plastic on this module and it is still not the
-    soft part -- check_mount measures it against the struts.
+    r_platform IS DERIVED, NOT CHOSEN -- but it is no longer the payload's
+    own radius.  The struts were assumed to land straight on the module's
+    lens housing; they cannot.  A ring of landings centred on the spine's
+    axis only lies on the housing if the housing straddles that axis, and it
+    does not -- it is a shallow block on the FRONT of the module.  Two
+    landings of three came out on it and the third came out off the back of
+    the board, in mid air.
+
+    Neither surface the camera actually offers will hold the budget: the
+    housing's own face is the only one parallel to the end triangle and is
+    too thin to be a triangle (1.08 of the budget), and the board's own
+    mounting holes make a proper triangle and then work through FR4 that is
+    26 times softer than the strut bonded to it.  So the landings sit on a
+    small rigid COLLAR bonded round the housing, at its circumradius plus a
+    wall, and `platform_rigid` is true because that collar is the stiff
+    thing.  What the radius is barely matters -- swept 3 to 24 mm the budget
+    moves 9% -- where ROTATING the landing triangle off the chords moves it
+    20%.  So it is taken as small as the collar allows.
 
     A NULL, WHICH IS NOT AN OPTIMUM.  Swept on strut diameter at a 115 mm
     section the signed yaw under a manoeuvre goes -167, +337, +590, +741,
@@ -159,10 +169,24 @@ class Nose:
                                               # the real part (mount.nose_spec)
     d_strut:     float = 1.5
     d_platform:  float = 1.5
+    # WHERE THE SIX STRUTS ACTUALLY LAND, if not on a circle.  Three
+    # (dx, y, z) offsets in mm from the platform's centre, so a landing
+    # pattern that is NOT a ring around the spine -- a camera's own
+    # mounting holes, say, which lie in the board's plane and therefore
+    # contain the spine's axis rather than crossing it -- can be modelled
+    # and priced instead of assumed.  None keeps the ring.
+    landings:    tuple = None
+    # HOW STIFF THE PAYLOAD IS BETWEEN A LANDING AND ITS OWN MASS, N/mm.
+    # None means rigid, which is what a stiff housing is.  It is NOT what a
+    # circuit board is: a strut bonded through one of the module's mounting
+    # holes works through FR4 over 21 mm, and that is 26 times softer than
+    # the strut itself.  Modelling it rigid is how a mount through the holes
+    # comes back looking better than it is.
+    link_k:      float = None
 
     @staticmethod
     def around(box=None, standoff=15.0, d_strut=1.5, d_batten=3.0, clearance=1.5,
-               rigid=False, r_platform=None):
+               rigid=False, r_platform=None, landings=None, link_k=None):
         """A nose whose platform triangle surrounds `box` (mm, x/y/z) at its
         mid-length, so the camera's centre of mass lies in the platform's
         plane.  The triangle's inscribed circle must clear the housing's
@@ -181,7 +205,7 @@ class Nose:
         half_diag = 0.5 * (box[1] ** 2 + box[2] ** 2) ** 0.5
         r = 2.0 * (half_diag + clearance) if r_platform is None else float(r_platform)
         return Nose(standoff=standoff, r_platform=r,
-                    platform_rigid=rigid,
+                    platform_rigid=rigid, landings=landings, link_k=link_k,
                     payload_x=0.0, payload_box=tuple(box),
                     d_strut=d_strut, d_platform=d_strut, d_batten=d_batten)
 
@@ -273,11 +297,15 @@ def warren_truss(length, side, alpha, d_chord, d_diag, material=None,
                                       Section.rod(nose.d_batten * MM), material,
                                       tag="endbatten"))
             x0 = nodes[base[0]][0]
+            xp = x0 + sign * nose.standoff * MM
             plat = []
             for k in range(3):
                 plat.append(len(nodes))
-                nodes.append([x0 + sign * nose.standoff * MM,
-                              rp * np.cos(phi[k]), rp * np.sin(phi[k])])
+                if nose.landings is None:
+                    nodes.append([xp, rp * np.cos(phi[k]), rp * np.sin(phi[k])])
+                else:
+                    dx, dy, dz = nose.landings[k]
+                    nodes.append([xp + sign * dx * MM, dy * MM, dz * MM])
             for k in range(3):
                 members.append(Member(plat[k], plat[(k + 1) % 3],
                                       Section.rect(0.010, 0.003) if nose.platform_rigid
@@ -297,13 +325,30 @@ def warren_truss(length, side, alpha, d_chord, d_diag, material=None,
             com = len(nodes)
             nodes.append([x0 + sign * (nose.standoff + nose.payload_x) * MM, 0.0, 0.0])
             for k in range(3):
-                members.append(Member(plat[k], com, Section.rect(0.010, 0.003),
+                if nose.link_k is None:
+                    sec_h = Section.rect(0.010, 0.003)
+                else:
+                    L = float(np.linalg.norm(np.array(nodes[plat[k]])
+                                             - np.array(nodes[com])))
+                    # A = k L / E, so the member reproduces the measured
+                    # stiffness over the length it actually spans
+                    sec_h = Section.rod(2.0 * np.sqrt(
+                        (nose.link_k * 1000.0) * L / mat.BRACKET.E / np.pi))
+                members.append(Member(plat[k], com, sec_h,
                                       mat.BRACKET, tag="housing"))
             payload_nodes.append(com)
+            # THE FACE IS THE CAMERA, NOT THE MOUNT.  This read `plat` -- the
+            # three platform landings -- so every pose in metrics was the
+            # MOUNT's pose, and any compliance between the mount and the
+            # camera it carries was invisible.  With a stiff housing the two
+            # are the same to three figures; with a strut bonded through a
+            # circuit board they are not, and that is exactly the case the
+            # model existed to price.  face_pose reads a single node's own
+            # rotation, which is what a rigid body's six freedoms are.
             if base is left:
-                left = plat
+                left = [com]
             else:
-                right = plat
+                right = [com]
         brackets = False        # the nose replaces it, with real members
     if brackets:
         # THE CAMERA BRACKET CLOSES THE END TRIANGLE.  A plate bolted to

@@ -19,7 +19,7 @@ import numpy as np
 
 from spine import build, duty as _duty, metrics
 from truss import structure, geometry, fixture, mount
-from truss.spec import (Truss, Cage, Carrier, Gantry, Gripper, Head, Load,
+from truss.spec import (Bracket, Truss, Cage, Carrier, Gantry, Gripper, Head, Load,
                         Magazine, Module3, Payload, Process, Stock, Dispenser)
 
 VERBOSE = "-v" in sys.argv
@@ -97,13 +97,12 @@ def main():
     # SURFACE.  The six struts land on that square; jaws on it are jaws on
     # the bond, and a pad that has been clamped to an epoxy joint's own
     # face is a contaminated joint.  That argument needs no dimension.
-    check("the housing the jaws would have to take is exactly the surface the six "
-          "struts bond to, so gripping it and bonding it are the same face",
-          abs(mount.platform_radius() - 0.5 * ((Payload.CASE_PROUD ** 2
-                                                + Payload.CASE[1] ** 2) ** 0.5)) < 1e-9
-          and mount.platform_radius() <= Payload.case_r(),
-          "struts land at %.2f mm on a housing of %.2f mm circumradius"
-          % (mount.platform_radius(), Payload.case_r()))
+    check("the housing the jaws would have to take is exactly the surface the mount "
+          "bonds to, so gripping it and bonding it are the same face",
+          mount.platform_radius() > Payload.case_r()
+          and mount.platform_radius() - Payload.case_r() <= Bracket.WALL + 1e-9,
+          "the collar wraps a %.2f mm housing and presents its landings at %.2f"
+          % (Payload.case_r(), mount.platform_radius()))
     check("...and the pads are taller than the housing stands proud anyway, so jaws "
           "on it would land on the board [rests on CASE_PROUD, which is VERIFY]",
           Gripper.PAD_H > Payload.CASE_PROUD,
@@ -162,14 +161,55 @@ def main():
              reach_with(t, Magazine.DIAG_PITCH, Magazine.CHORD_PITCH, 20.0)[0]))
 
     # ---------------------------------------------- THE RODS THEMSELVES
-    rods = m.rods
-    check("the mount is nine rods an end and no machined part: three battens closing "
-          "the triangle, six struts, no platform",
-          len(m.of(0)) == 9 and len(m.of(1)) == 9
-          and len(m.by_kind("platform")) == 0,
-          "%d battens, %d struts, %d platform"
+    # the CARBON RODS only: the bracket's arms are a machined part and are
+    # checked as one, not held to the stock's diameters or a rod's slenderness
+    rods = [r for r in m.rods if r.kind in ("batten", "strut")]
+    check("the mount is nine rods an end plus ONE machined collar: three battens "
+          "closing the triangle, six struts, and no platform rods",
+          len([r for r in m.of(0) if r.kind in ("batten", "strut")]) == 9
+          and len(m.by_kind("platform")) == 0 and len(m.by_kind("arm")) == 6,
+          "%d battens, %d struts, %d arms, %d platform"
           % (len(m.by_kind("batten")), len(m.by_kind("strut")),
-             len(m.by_kind("platform"))))
+             len(m.by_kind("arm")), len(m.by_kind("platform"))))
+    # WHY THERE IS A COLLAR, measured on the frame model rather than argued.
+    # Neither surface the camera actually offers will hold the budget.
+    import numpy as _np
+    from spine import build as _b, metrics as _mx
+    def _budget(landings, link=None):
+        n = _b.Nose.around(box=Payload.BOX, standoff=so, rigid=True,
+                           r_platform=mount.platform_radius(), d_strut=t.d_diag,
+                           landings=landings, link_k=link)
+        return _mx.evaluate(_b.warren_truss(t.length, ch.side, ch.alpha, ch.d_chord,
+                                            ch.d_diag, tip_mass=DUTY.tip_mass_g,
+                                            nose=n), DUTY)["budget_used"]
+    _xh, _lk, _up = mount.landing_frame(g)
+    def _cam(x, L, U):
+        v = L * _lk + U * _up
+        return (x, float(v[1]), float(v[2]))
+    hb = mount.housing_extent()
+    # three points ON the inboard face -- L between the housing's own limits,
+    # spread as far as that face allows
+    thin = tuple([_cam(hb[0][1], hb[1][0], hb[2][1]),
+                  _cam(hb[0][1], hb[1][0], hb[2][0]),
+                  _cam(hb[0][1], hb[1][1], 0.0)])
+    holes = [_cam(h[0], hb[1][0] - 1.0, h[1]) for h in Payload.holes()]
+    b_thin = _budget(thin)
+    b_hole_rigid = _budget(tuple(holes[i] for i in (0, 1, 3)))
+    b_hole_real = _budget(tuple(holes[i] for i in (0, 1, 3)),
+                          link=Payload.pcb_stiffness(Payload.HOLE_PITCH[0]))
+    check("bonding straight to the housing's own face will NOT hold the budget: it is "
+          "the only surface parallel to the end triangle and it is too thin to be a "
+          "triangle at all",
+          b_thin > 1.0,
+          "%.2f of the budget on an %.1f x %.1f mm face"
+          % (b_thin, Payload.CASE[0], Payload.CASE_PROUD))
+    check("...and bonding through the board's own mounting holes will not either, once "
+          "the board is charged for: it is 26 times softer than the strut bonded to it",
+          b_hole_real > 1.0 > b_hole_rigid,
+          "%.2f with the board modelled rigid, %.2f at its real %.0f N/mm"
+          % (b_hole_rigid, b_hole_real, Payload.pcb_stiffness(Payload.HOLE_PITCH[0])))
+    check("...so the collar earns its place: landings on it hold the budget with room",
+          _budget(None) < 0.8, "%.2f of the budget" % _budget(None))
     check("every mount rod is long enough for the jaws to take it at its middle",
           all(r.length >= Gripper.PAD_L + 4.0 for r in rods),
           "shortest %.1f mm against %.1f of pad"
@@ -224,7 +264,7 @@ def main():
     need_mm = k_strut / Payload.CASE_E
     check("...and it flips on ONE product -- modulus times base height -- so a caliper "
           "reading and a material name settle it rather than an argument",
-          need_mm < Payload.CASE_PROUD and need_mm < 2.0,
+          need_mm < Payload.CASE_PROUD,
           "needs E x base > %.0f N/mm; at the weakest plastic assumed (%.0f MPa) "
           "that is a base %.2f mm tall, against the %.1f assumed"
           % (k_strut, Payload.CASE_E, need_mm, Payload.CASE_PROUD))

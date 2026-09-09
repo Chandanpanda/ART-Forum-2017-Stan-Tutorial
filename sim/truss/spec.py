@@ -1140,10 +1140,21 @@ class Module2(CameraModule):
                                         # struts are still the compliance]
     # NOT ON THE DRAWING: it is a top view and has no side.  The module is
     # 9 mm overall on the vendor table and the board is about 1, so the
-    # holder AND its barrel stand about 8 proud; the SQUARE's own height is
-    # less than that and nothing here says by how much.
-    CASE_PROUD  = 5.0                   # mm [VERIFY: measure one.  check_mount
-                                        # sweeps 3..8 and reports what moves]
+    # holder AND its barrel stand about 8 proud -- and a photograph of the
+    # part shows that most of that is the ROUND BARREL standing on a low
+    # square base.  The base is what the struts bond to, and its own height
+    # is a minority of the eight.
+    #
+    # check_mount sweeps it 1.5..8 mm.  The structure barely notices -- 2%
+    # of the yaw budget across the whole range, and the standoff and the
+    # field clearance do not move at all -- so this is not a number the
+    # design turns on.  ONE conclusion does turn on it: whether the plastic
+    # housing or the struts are the compliance, which is decided by
+    # CASE_E * CASE_PROUD against the strut's axial stiffness.  That makes
+    # it a caliper reading and a material identification, not a guess to
+    # live with.
+    CASE_PROUD  = 3.0                   # mm [VERIFY: measure the SQUARE BASE,
+                                        # not the barrel]
     LENS_D      = 5.5                   # mm [VERIFY: no barrel on the drawing]
     LENS_UP     = 2.477                 # mm above the board's centre, measured
     PCB_T       = 1.0                   # mm [VERIFY]

@@ -17,6 +17,7 @@ from math import tan, radians
 
 import numpy as np
 
+from spine import build, duty as _duty, metrics
 from truss import structure, geometry, fixture, mount
 from truss.spec import (Truss, Cage, Carrier, Gantry, Gripper, Head, Load,
                         Magazine, Module3, Payload, Process, Stock, Dispenser)
@@ -52,6 +53,7 @@ def reach_with(t, diag_pitch, chord_pitch, end_free):
 
 def main():
     from spine.chosen import OPTIMAL_1M as ch
+    DUTY = _duty.QUADROTOR
     t = Truss(**ch.as_truss_kwargs())
     g = geometry.TrussGeometry(t)
     so = mount.fov_standoff(g, d_strut=t.d_diag)
@@ -203,10 +205,10 @@ def main():
              Load.tip_mass() / 1000.0 * Load.G * Load.LATERAL_G))
     # THE HOUSING IS PLASTIC ON THIS MODULE, which is the difference from the
     # metal can the mount was first drawn against.  It only matters if it is
-    # the soft part, and it is not: a stubby block in the weakest plastic it
-    # could be is still several times the strut's axial stiffness.
-    # a block CASE[0] long, of section CASE[0] x CASE_PROUD, between two
-    # opposite landings -- against one strut in series with it
+    # the soft part.  Modelled as a block CASE[0] long of section
+    # CASE[0] x CASE_PROUD between two opposite landings, so its stiffness
+    # is E x CASE_PROUD and nothing else -- one modulus times one height,
+    # against the strut's own EA/L.
     k_case = (Payload.CASE_E * Payload.CASE[0] * Payload.CASE_PROUD
               / Payload.CASE[0])
     k_strut = Stock.E * np.pi * (t.d_diag / 2.0) ** 2 / min(r.length for r in rods)
@@ -215,15 +217,41 @@ def main():
           Payload.CASE_PLASTIC and k_case > k_strut,
           "%.0f N/mm of housing against %.0f of strut, %.1fx"
           % (k_case, k_strut, k_case / k_strut))
-    # ...AND HOW WRONG CASE_E WOULD HAVE TO BE.  This is the useful form of
-    # the check: not a margin somebody chose, but the modulus at which the
-    # conclusion flips, so it can be compared against what plastics are.
-    e_crit = Payload.CASE_E * k_strut / k_case
-    check("...and it would take a housing softer than any engineering thermoplastic "
-          "to change that, which is the whole of what CASE_E has to be right about",
-          e_crit < 2.0e3,
-          "the strut takes over below %.0f MPa; CASE_E is set at %.0f, itself the "
-          "weakest an unfilled housing could be" % (e_crit, Payload.CASE_E))
+    # ...AND WHAT WOULD HAVE TO BE TRUE TO CHANGE IT.  Not a margin somebody
+    # chose: the product of the two flagged numbers at which the conclusion
+    # flips, so a caliper and a material name settle it.  A 3 GPa unfilled
+    # housing needs a base 1.87 mm tall; a glass-filled one needs 0.56.
+    need_mm = k_strut / Payload.CASE_E
+    check("...and it flips on ONE product -- modulus times base height -- so a caliper "
+          "reading and a material name settle it rather than an argument",
+          need_mm < Payload.CASE_PROUD and need_mm < 2.0,
+          "needs E x base > %.0f N/mm; at the weakest plastic assumed (%.0f MPa) "
+          "that is a base %.2f mm tall, against the %.1f assumed"
+          % (k_strut, Payload.CASE_E, need_mm, Payload.CASE_PROUD))
+    # ...AND THE STRUCTURE DOES NOT TURN ON IT AT ALL, which is worth
+    # asserting because CASE_PROUD is the one dimension the drawing does not
+    # give.  Swept over everything it could plausibly be, the budget moves
+    # 2% and the standoff and the field clearance do not move.
+    prow, base_proud = [], Payload.CASE_PROUD
+    try:
+        for proud in (1.5, 3.0, 5.0, 8.0):
+            Payload.CASE_PROUD = proud
+            n = build.Nose.around(**mount.nose_spec(g, d_strut=t.d_diag))
+            prow.append((proud,
+                         metrics.evaluate(build.warren_truss(
+                             t.length, ch.side, ch.alpha, ch.d_chord, ch.d_diag,
+                             tip_mass=DUTY.tip_mass_g, nose=n), DUTY)["budget_used"],
+                         mount.fov_standoff(g, d_strut=t.d_diag)))
+    finally:
+        Payload.CASE_PROUD = base_proud
+    spread = max(b for _, b, _ in prow) / min(b for _, b, _ in prow) - 1.0
+    check("the STRUCTURE does not turn on the one dimension the drawing does not "
+          "give: the base height moves the yaw budget by 2% over everything it "
+          "could plausibly be, and moves the standoff not at all",
+          spread < 0.05 and max(so_ for _, _, so_ in prow)
+          - min(so_ for _, _, so_ in prow) < 1e-9,
+          "%s ; standoff %.2f throughout"
+          % (", ".join("%.1f mm->%.4f" % (a, b) for a, b, _ in prow), prow[0][2]))
     check("...and is stiffer than the strut it holds, so the bond is not the compliance",
           mount.fillet_stiffness(t.d_diag)[0]
           > Stock.E * np.pi * (t.d_diag / 2.0) ** 2 / min(r.length for r in rods),
@@ -236,7 +264,7 @@ def main():
 
     # ---------------------------------------------- AND NOTHING IN SHOT
     check("with the mount built, nothing of the truss or of the mount is inside the "
-          "camera's 66 x 41 degree field",
+          "camera's %.1f x %.1f degree field" % Payload.FOV,
           mount.fov_clear(m) > 0.0, "%.2f mm to spare" % mount.fov_clear(m))
     check("...which took a solved standoff: the mechanical clearance alone leaves the "
           "truss in the picture",

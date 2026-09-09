@@ -446,6 +446,10 @@ Flagged honestly rather than assumed solved:
 
 10. **The ring's run-out is a raceway property nothing has built yet.** `Ring.RUN_OUT` = 0.08 mm is what `check_drive` measures with three pinions and a C-channel, and the spec charges it against both the ring's bore (which leaves the metre truss 0.12 mm) and its swept radius. It is a *calibration*, in the sense of §CLAUDE.md: a constant with a suite that re-measures it. A real raceway with a real bearing surface may do better or worse, and the metre truss's bore margin is thin enough that it matters which.
 
+11. ~~**The ring's bore binds the product's accuracy.**~~ **No longer true, and item 9 above is kept only as a record of how it read before the camera was weighed.** With a 4 g head the budget is met at an 85 mm section with +0.37 mm of bore to spare. What binds now is `MEMBER_F_MIN` — see §7.2.
+
+12. **The flat flex is an unmodelled load path into the camera.** A photograph of the part shows what no drawing does: a wide, stiff ribbon leaving the board's edge, and the board is the thing whose pose the whole structure exists to hold. A taut cable pulls; a cable clamped to the airframe pulls with every manoeuvre and every degree of temperature. Nothing in `sim/spine` carries it — the head is a point mass and an inertia — and `Payload.HEAD_EXTRA` charges its *mass* but not its *stiffness*. The mitigation is standard and cheap (a service loop, with the strain relief anchored to the truss's own end batten rather than to the camera or to the airframe), but it is a requirement on the harness that nobody has written down, and it belongs with the joint pull-out test in §8 rather than in the model.
+
 ### 7.1 What the drive review changed, and what it cost
 
 Recorded because the mistake generalises. The head's drive was reviewed

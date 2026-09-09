@@ -296,12 +296,23 @@ axis height to a hundredth of a millimetre — they are mechanically
 interchangeable, which is why the mount did not have to be redrawn.
 
 Two things the drawing does not give, both flagged in `Module2`: it is a top
-view, so there is no height for the housing (the module is 9 mm overall on
-the vendor table and the board about 1, so the holder and barrel together
-stand about 8 proud and the square's own height is less), and there is no
-barrel circle on it. The optics are cross-checked instead: the published
-62.2 × 48.8° field and the measured 3.68 × 2.76 mm image area agree on one
-focal length to a third of a percent.
+view, so there is no height for the housing, and there is no barrel circle on
+it. The optics are cross-checked instead — the published 62.2 × 48.8° field
+and the measured 3.68 × 2.76 mm image area agree on one focal length to a
+third of a percent.
+
+**And a photograph settles what the top view cannot.** The lens assembly is a
+*low square base with a tall round barrel* standing on it, so the base — the
+part the six struts bond to — is a minority of the module's ~8 mm of
+stand-off. `check_mount` sweeps that height over everything it could
+plausibly be and finds the structure does not turn on it: 2% of the yaw
+budget across 1.5–8 mm, and the standoff and the field clearance do not move
+at all. **One** conclusion does turn on it, and it is now a caliper reading
+rather than an argument: whether the plastic housing or the struts are the
+compliance is decided by `CASE_E × CASE_PROUD` against the strut's 5.6 kN/mm,
+so at the weakest plastic a housing could be, the base has to stand 1.87 mm
+tall. The photograph says it comfortably does; a caliper and a material name
+would say it for certain.
 
 ## The camera mount
 
@@ -368,7 +379,7 @@ model says so rather than the cell finding out.
 
 ## The suites
 
-446 checks in thirteen suites, about 12 minutes for the full tier.
+447 checks in thirteen suites, about 12 minutes for the full tier.
 
 | suite | tier | what it would have caught |
 |---|---|---|

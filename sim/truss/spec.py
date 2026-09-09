@@ -874,6 +874,107 @@ class Cutter:
     WIRE_OFF    = 4.0          # from the exit guide, along the strand
 
 
+class Payload:
+    """The camera head the spine carries, as a bought part.
+
+    EVERY NUMBER HERE IS [VERIFY] against the Raspberry Pi Camera Module 3's
+    mechanical drawing, and none of them may be re-derived anywhere else:
+    the mount's platform radius comes OUT of the housing's section
+    (mount.solve), so a wrong number here moves the structure silently.
+    Placeholders until the drawing arrives.
+
+    THE FRAME.  x runs along the spine (the stereo baseline), y is the
+    VIEWING direction, z is up.  So `BOX` is (along the baseline, thickness
+    toward the scene, height) and the lens looks along +y.  The housing
+    straddles the spine's axis in y and z, so its centre of mass sits ON the
+    axis and its optical axis crosses it -- which is not tidiness: an
+    off-axis mass turns a manoeuvre into camera yaw, the one error nothing
+    downstream recovers.
+    """
+    # MEASURED OFF THE DRAWING, RP-008153-DS-1 (Camera Module 3, standard).
+    # Read from the PDF's own geometry rather than its dimension labels: the
+    # four hole circles and the lens barrel scale at 2.8348 pt/mm on all
+    # three of the diameters it calls out, and the hole pitch comes back
+    # 21.00 x 12.50 exactly.
+    BOX         = (25.0, 11.3, 23.862)  # mm: along the baseline / toward the
+                                        # scene / up.  Landscape, because
+                                        # stereo wants the long axis across
+                                        # the baseline.
+    HOLE_D      = 2.2                   # mm, four of them
+    HOLE_PAD    = 4.75                  # mm, the keep-out around each
+    HOLE_PITCH  = (21.0, 12.5)          # mm, along the baseline / up
+    LENS_D      = 5.75                  # mm, the barrel
+    FOV         = (66.0, 41.0)          # deg, horizontal / vertical
+    # THE METAL ENCLOSURE, and it is the only rigid thing on the module: a
+    # square block carrying the lens, standing proud of the board, centred
+    # on the optical axis.  Everything else is a 1.12 mm FR4 carrier.
+    CASE        = (10.8, 10.8)          # mm square, centred on the lens
+    CASE_PROUD  = 3.875                 # mm it stands off the board
+    PCB_T       = 1.12                  # mm
+    PCB_E       = 20.0e3                # N/mm^2 [VERIFY: typical FR4]
+    # The lens is centred across the board but NOT down it: it sits 2.45 mm
+    # above the board's centre, which is level with the upper pair of holes.
+    LENS_UP     = 2.45                  # mm above the board's centre
+    # ...so the hole pattern's own centre is BELOW the board's, and the
+    # lower row is 2.0 mm off the bottom edge.
+    HOLES_UP    = -3.70                 # mm, hole-pattern centre vs the board's
+
+    @classmethod
+    def holes(cls):
+        """The four mounting-hole centres, (along the baseline, up) from the
+        BOARD's centre, mm."""
+        hx, hz = cls.HOLE_PITCH[0] / 2.0, cls.HOLE_PITCH[1] / 2.0
+        return tuple((sx * hx, cls.HOLES_UP + sz * hz)
+                     for sx in (-1.0, 1.0) for sz in (-1.0, 1.0))
+    # what a bonded joint may be asked to carry, for the fillet arithmetic
+    MASS        = 4.0                  # g [VERIFY: not on the drawing; the
+                                       # published figure for the bare
+                                       # module.  A case adds its own.]
+    BOND_MU     = 10.0                 # MPa allowable shear in a filleted joint
+    FILLET_R    = 3.0                  # mm, the fillet the dispenser can lay
+
+    @classmethod
+    def case_r(cls):
+        """Circumradius of the metal enclosure, mm -- the largest lever arm
+        a mount bonded to the RIGID part can have."""
+        return 0.5 * sqrt(cls.CASE[0] ** 2 + cls.CASE[1] ** 2)
+
+    @classmethod
+    def hole_r(cls):
+        """...and the lever arm a mount through the four PCB holes gets,
+        which is twice as big and goes through FR4 to get there."""
+        return 0.5 * sqrt(cls.HOLE_PITCH[0] ** 2 + cls.HOLE_PITCH[1] ** 2)
+
+    @classmethod
+    def pcb_stiffness(cls, span_mm):
+        """N/mm of the board itself over a span, for comparing with a strut.
+        The board is what a hole-mounted strut has to work through, and it
+        is not obviously the stiff part."""
+        I = cls.BOX[0] * cls.PCB_T ** 3 / 12.0
+        return 48.0 * cls.PCB_E * I / span_mm ** 3
+
+    @classmethod
+    def half_diagonal(cls):
+        """Half the diagonal of the housing's section across the spine --
+        the circle the mount's platform triangle has to clear."""
+        return 0.5 * sqrt(cls.BOX[1] ** 2 + cls.BOX[2] ** 2)
+
+    @classmethod
+    def com_on_axis(cls):
+        """True when the module is mounted so its mass straddles the spine's
+        axis and makes no moment under a manoeuvre.
+
+        THE OPTICAL AXIS IS NOT THE MODULE'S CENTRE.  The lens sits LENS_UP
+        above the board's centre, so a module centred on the spine's axis
+        does not look along it, and a module whose lens is on the axis has
+        its mass LENS_UP off it.  The mount takes the second: the mass
+        offset is 2.45 mm and makes a moment, where a 2.45 mm aiming error
+        is 43000 microdegrees of pointing and would have to be calibrated
+        out.  Both are true of the part, not of the design.
+        """
+        return abs(cls.LENS_UP) < cls.BOX[2] / 2.0
+
+
 class Vision:
     """A camera on the carriage looking straight down past the ring.
 

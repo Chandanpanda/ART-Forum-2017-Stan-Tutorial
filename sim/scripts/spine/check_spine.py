@@ -184,6 +184,50 @@ def main():
           yaw_of(big) < yaw_of(closed) * 0.6,
           "%.3e at 130 mm against %.3e at 92" % (yaw_of(big), yaw_of(closed)))
 
+    # ------------------------------------------------ THE CAMERA MOUNT
+    # The mount is part of the design, not an accessory: modelled as the
+    # massless rigid `bracket` it was placeheld as, it charges no mass and no
+    # compliance AND puts the camera's mass on the chord ends 66 mm off the
+    # axis.  These are the three claims the nose rests on.
+    nose = build.Nose.around()
+    def yaw_acc(n, tip=D.tip_mass_g, side=115, alpha=40, dc=3.0, dd=1.5):
+        m = build.warren_truss(1000, side, alpha, dc, dd, tip_mass=tip, nose=n)
+        f = m.accel_load([0, 1, 0], D.manoeuvre_g * D.g)
+        return np.degrees(metrics.relative_pose(m, m.solve(f)).yaw) * 1e6
+    ref = metrics.evaluate(build.warren_truss(1000, 115, 40, 3.0, 1.5,
+                                              tip_mass=D.tip_mass_g), D)
+    got = metrics.evaluate(build.warren_truss(1000, 115, 40, 3.0, 1.5,
+                                              tip_mass=D.tip_mass_g, nose=nose), D)
+    check("a six-strut nose with the camera's mass in the platform's plane is TRUER "
+          "than the massless rigid bracket it replaces -- the placeholder hung that "
+          "mass on the chord ends, off the axis",
+          got["budget_used"] < ref["budget_used"],
+          "%.2f of the budget against %.2f, %.3f m against %.3f at 100 m"
+          % (got["budget_used"], ref["budget_used"], got["dz_static_m"], ref["dz_static_m"]))
+    off = build.Nose.around()
+    off = build.Nose(standoff=off.standoff, r_platform=off.r_platform,
+                     payload_x=off.payload_box[0] / 2.0, payload_box=off.payload_box,
+                     d_strut=off.d_strut, d_platform=off.d_platform,
+                     d_batten=off.d_batten)
+    bad = metrics.evaluate(build.warren_truss(1000, 115, 40, 3.0, 1.5,
+                                              tip_mass=D.tip_mass_g, nose=off), D)
+    check("...and bonding the camera END-ON instead, so its mass sits half a housing "
+          "outboard of the platform, is what the whole mount problem is",
+          bad["budget_used"] > 2.0 * got["budget_used"],
+          "%.2f of the budget against %.2f" % (bad["budget_used"], got["budget_used"]))
+    # THE NULL.  A dip in yaw at a stocked strut diameter that is a sign
+    # change, not an optimum.  Asserted so nobody reads it as one.
+    lo = yaw_acc(build.Nose.around(d_strut=1.0))
+    hi = yaw_acc(build.Nose.around(d_strut=1.2))
+    check("the strut diameter has a NULL, not an optimum: the manoeuvre yaw changes "
+          "SIGN across it, so the dip a sweep shows at a stocked 1.0 mm is a "
+          "cancellation and must not be designed to",
+          lo * hi < 0.0, "%+.0f udeg at 1.0 mm, %+.0f at 1.2" % (lo, hi))
+    flip = yaw_acc(build.Nose.around(d_strut=1.0), tip=15.0)
+    check("...and it moves with the guesses it depends on: a 15 g camera instead of "
+          "50 flips the sign back", flip * lo < 0.0,
+          "%+.0f udeg at 50 g, %+.0f at 15 g" % (lo, flip))
+
     # ------------------------------------------ WHAT THE CELL CAN BUILD
     # THE SWEEP MUST KNOW, and the check is here because it cost a wrong
     # answer: without the bore, sweep_spine named 120/45/3.0/1.5 as the

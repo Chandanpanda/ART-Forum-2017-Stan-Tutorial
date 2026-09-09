@@ -31,12 +31,18 @@ class Candidate:
     web:   str = "warren"
     d_out: float = 43.0        # tube only
     wall:  float = 1.0
+    # THE CAMERA MOUNT IS PART OF THE DESIGN, not an accessory bolted on
+    # after.  Left out, the sweep charges the mount no mass and no
+    # compliance and lands the camera's mass on the chord ends 66 mm off
+    # the axis -- which is not conservative, it is a different structure.
+    nose:  object = None
 
     def model(self, length, duty, material=None):
         if self.kind == "truss":
             return build.warren_truss(length, self.side, self.alpha, self.d_chord,
                                       self.d_diag, material=material or mat.CARBON_UD,
-                                      tip_mass=duty.tip_mass_g, web=self.web)
+                                      tip_mass=duty.tip_mass_g, web=self.web,
+                                      nose=self.nose)
         return build.tube(length, self.d_out, self.wall,
                           material=material or mat.CARBON_WRAP, tip_mass=duty.tip_mass_g)
 
@@ -48,14 +54,16 @@ class Candidate:
         return "tube %.0fx%.1f" % (self.d_out, self.wall)
 
 
-def truss_grid(sides, alphas, chords=STOCK_MM, diags=STOCK_MM, webs=("warren",)):
+def truss_grid(sides, alphas, chords=STOCK_MM, diags=STOCK_MM, webs=("warren",),
+               nose=None):
     """Every truss the shop could cut, with the diagonal never fatter than
     the chord it lies on."""
     out = []
     for s, a, dc, dd, w in itertools.product(sides, alphas, chords, diags, webs):
         if dd > dc:
             continue
-        out.append(Candidate("truss", side=s, alpha=a, d_chord=dc, d_diag=dd, web=w))
+        out.append(Candidate("truss", side=s, alpha=a, d_chord=dc, d_diag=dd, web=w,
+                             nose=nose))
     return out
 
 

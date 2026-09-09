@@ -573,6 +573,23 @@ def pose_for(axis, tol=1e-9):
     return theta % 360.0, psi
 
 
+def poses_for(axis, tol=1e-9):
+    """BOTH (cage theta, gripper yaw) pairs that lay a rod along `axis`.
+
+    The mapping is two-to-one: rot_x(theta+180) flips both transverse
+    components, so a yaw of -psi puts the rod back on the same cage-frame
+    line.  Which of the two to use is not a geometric question -- it is
+    whether the gantry can REACH the rod once the cage has turned, and the
+    three end battens came out 4.7 mm below the z axis's own floor at the
+    first solution.  The caller picks; this offers.
+    """
+    p = pose_for(axis, tol)
+    if p is None:
+        return ()
+    th, psi = p
+    return ((th, psi), ((th + 180.0) % 360.0, -psi))
+
+
 def axis_from(theta_deg, yaw_deg):
     """The inverse of pose_for, for the check to close the loop on."""
     p = radians(yaw_deg)
@@ -591,6 +608,20 @@ def fillet_stiffness(d_rod, payload=Payload, e_epoxy=3.0e3):
     r = payload.FILLET_R
     area = pi * (r ** 2 - (d_rod / 2.0) ** 2)
     return e_epoxy * area / r, area
+
+
+def fillet_mass_mg(d_rod, payload=Payload):
+    """Resin in one fillet, mg.
+
+    A concave fillet of radius R run all the way round a rod of diameter d
+    against a flat: the section between the two surfaces and the fillet's
+    arc is R^2(1 - pi/4), and it is swept round the rod's perimeter.  Not a
+    dose somebody chose -- it is the joint the dispenser has to make."""
+    from .spec import Dispenser
+    R = payload.FILLET_R
+    area = R * R * (1.0 - pi / 4.0)
+    vol = area * pi * (d_rod + R)          # mm^3, swept round the rod
+    return vol / 1000.0 * Dispenser.RESIN_RHO * 1000.0
 
 
 def fillet_strength(d_rod, payload=Payload):

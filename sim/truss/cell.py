@@ -65,9 +65,16 @@ class CellSim(hal.AxesHAL, hal.RingHAL, hal.CageHAL, hal.GripperHAL,
         self.b_cage, self.b_gripw, self.b_gz = gid(B, "cage"), gid(B, "gripw"), gid(B, "gz")
         self.s_grip, self.s_nozzle = gid(S, "grip_pt"), gid(S, "nozzle_tip")
         self.s_centre = gid(S, "ring_centre")
-        self.b_rod = {r.index: gid(B, "rod%d" % r.index) for r in geom.rods}
-        self.eq_keep = {r.index: gid(E, "keep%d" % r.index) for r in geom.rods}
-        self.eq_hold = {r.index: gid(E, "hold%d" % r.index) for r in geom.rods}
+        self.b_rod = {r.index: gid(B, "rod%d" % r.index) for r in geom.all_rods}
+        self.eq_keep = {r.index: gid(E, "keep%d" % r.index) for r in geom.all_rods}
+        self.eq_hold = {r.index: gid(E, "hold%d" % r.index) for r in geom.all_rods}
+        # the nest's detent, on the parts that have one
+        self.eq_rack = {}
+        for r in geom.all_rods:
+            k = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_EQUALITY,
+                                  "rack%d" % r.index)
+            if k >= 0:
+                self.eq_rack[r.index] = k
         self.b_drop = [i for i in range(64)
                        if gid(B, "drop%d" % i) >= 0]
         self.eq_stick = [gid(E, "stick%d" % i) for i in self.b_drop]
@@ -91,7 +98,7 @@ class CellSim(hal.AxesHAL, hal.RingHAL, hal.CageHAL, hal.GripperHAL,
         self._cage_target = 0.0
         self._cage_cmd = 0.0
         # rods the scene built already kept take the kept masks
-        for r in geom.rods:
+        for r in geom.all_rods:
             if self.d.eq_active[self.eq_keep[r.index]]:
                 self._rod_masks(r.index, True)
         self._closing = False
@@ -215,6 +222,13 @@ class CellSim(hal.AxesHAL, hal.RingHAL, hal.CageHAL, hal.GripperHAL,
         self.d.ctrl[self.a_cage] = np.radians(self._cage_cmd)
 
     # ---------------------------------------------------------- gripper
+    def free_from_rack(self, rod_index):
+        """Let a detented part out of its nest -- what closing the jaws on
+        it does."""
+        k = self.eq_rack.get(rod_index)
+        if k is not None:
+            self.d.eq_active[k] = 0
+
     def close(self):
         self.d.ctrl[self.a_f] = -2.0 * mm(Gripper.JAW_OPEN / 2.0 - 0.3)
         self._closing = True
@@ -240,7 +254,7 @@ class CellSim(hal.AxesHAL, hal.RingHAL, hal.CageHAL, hal.GripperHAL,
         opening = Gripper.JAW_OPEN / 2.0 - gap
         g = self.d.site_xpos[self.s_grip] * 1000.0
         best, best_d = None, 1e9
-        for r in self.geom.rods:
+        for r in self.geom.all_rods:
             p0, p1 = self.rod_pose(r.index)
             u = (p1 - p0) / np.linalg.norm(p1 - p0)
             v = g - p0

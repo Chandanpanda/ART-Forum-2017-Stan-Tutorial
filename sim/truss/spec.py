@@ -111,9 +111,37 @@ class Carrier:
         return max(Stock.DIAMETERS)
 
     @classmethod
-    def boss_l(cls):
-        """Long enough for the pads to take it with clearance either side."""
-        return Gripper.PAD_L + cls.GRIP_CLEAR
+    def boss_l(cls, payload=None):
+        """How long the boss has to be, mm.
+
+        TWO RULES, and the second is the one that bites.  The pads have to
+        take it with clearance either side -- and the HEAD has to be able to
+        come down over it.  A camera module is not a rod: it is a 25 x 24 mm
+        board with a collar on it, standing in the rack perpendicular to the
+        boss, so it reaches 15 mm above the grip point and 14 mm to one side
+        of it.  The ring's raceway comes down to within 14.3 mm of the grip
+        point at that offset, and the collar's own top is 14.9 above it --
+        so at a boss the pads alone would size, the head lands on the plate
+        before the jaws reach the boss.  Measured, in the assembly run, as
+        `rod35_p` against `race17`.
+
+        The boss therefore reaches until the whole carrier is outside the
+        head's static envelope: nothing of it within race_r_out() of the
+        ring's centre when the gripper is down on the boss.
+        """
+        p = Payload if payload is None else payload
+        pads = Gripper.PAD_L + cls.GRIP_CLEAR
+        # the ring's centre sits this far above the grip point
+        H = Head.GRIP_STROKE - Head.TIP_PARK
+        R = race_r_out() + Process.SEAT_CLEAR
+        # the carrier's nearest corner to the ring's axis, as a function of
+        # how far the module's face is from the grip point
+        half_z = max(p.BOX[2] / 2.0, Bracket.plate_half(p)[1])
+        # the carrier's nearest corner to the ring's axis is its top edge at
+        # the module's near face; push that face out until it clears
+        gap = abs(H - half_z)
+        need = 2.0 * sqrt(R * R - gap * gap) if gap < R else 0.0
+        return max(pads, need)
 
     @classmethod
     def span(cls, payload=None):
@@ -1228,6 +1256,45 @@ class Magazine:
     CLEAR       = 40.0         # chord rack from the cage's swept radius
     END_CLEAR   = 10.0         # diagonal racks from the cage's end plates
 
+
+    @staticmethod
+    def blocks(length, pad_l=None, clear=1.0):
+        """(offset from the slot's middle, block length) for each V-block
+        under a racked rod, mm.
+
+        THE PADS TAKE EVERY ROD AT ITS MIDDLE, so no block may be within
+        half a pad of it -- and no block may hang off the rod's end.  For a
+        long rod those two rules never meet and the layout is the old one:
+        BLOCK_L of block, BLOCK_IN in from each end.  For a SHORT rod they
+        do meet, and the blocks have to shrink into what is left between
+        the pads and the ends.
+
+        The mount's rods are where this started to matter.  A 42 mm strut
+        on the long-rod layout gets its blocks 6 mm from the middle, which
+        is under the pads; a 22 mm one gets them past each other.  Racked
+        that way they fell on the floor and the jaws closed on nothing --
+        measured, in the assembly run.  Below the length at which nothing
+        is left between the pads and the ends a rod CANNOT be racked, and
+        this returns no blocks rather than a shorter one: that is a finding
+        about the part, not a number to shave.
+        """
+        pad_l = Gripper.PAD_L if pad_l is None else pad_l
+        inner = pad_l / 2.0 + clear
+        outer = length / 2.0
+        # The long layout is only safe while its own block still clears the
+        # pads: BLOCK_IN in from the end, BLOCK_L long, and the pads take
+        # half a pad plus a clearance either side of the middle.  A 42 mm
+        # strut is over the naive threshold and still lands its blocks
+        # 0.1 mm from the middle -- measured, as a stalled gripper stroke.
+        if length >= 2.0 * (Magazine.BLOCK_IN + Magazine.BLOCK_L / 2.0
+                            + pad_l / 2.0 + clear):
+            return [(-(outer - Magazine.BLOCK_IN), Magazine.BLOCK_L),
+                    (+(outer - Magazine.BLOCK_IN), Magazine.BLOCK_L)]
+        bl = min(Magazine.BLOCK_L, outer - inner)
+        if bl < 2.0:
+            return []
+        off = outer - bl / 2.0
+        return [(-off, bl), (+off, bl)]
 
 class Dispenser:
     """Syringe on its own short Z, stepper plunger (brief 4.6).  One

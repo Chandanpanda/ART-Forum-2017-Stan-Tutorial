@@ -165,30 +165,32 @@ class Collapse:
         return Cage.NOTCH_DEPTH + Cage.CRADLE_T
 
     def rail_r(self, kind, k):
-        """Centreline radius of a rail, mm.  Placed so the features cut into
-        its top face land exactly where the fixture already puts them -- a
-        rail is a way of CARRYING the fixture, not a new fixture."""
-        if kind == "chord":
-            rs = [float(np.linalg.norm(p.apex[1:])) for p in self.f.pins
-                  if p.chord == k]
-        else:
-            rs = [float(np.linalg.norm(c.apex[1:])) for c in self.f.cradles]
-        return min(rs) - self.rail_h() / 2.0
+        """Centreline radius of a chord rail, mm.
 
-    def feature_top(self, kind, k):
-        """The furthest anything on that rail reaches when erect, mm."""
-        if kind == "chord":
-            return max(float(np.linalg.norm(p.apex[1:])) + Cage.NOTCH_DEPTH
-                       for p in self.f.pins if p.chord == k)
+        The pins it carries stay exactly where the fixture already puts them
+        -- a rail is a way of CARRYING the fixture, not a new fixture -- so
+        what this sets is how far below them the bar runs, and that is the
+        GRIPPER's number: the pads reach `PAD_UNDER` past a rod's own axis
+        to take it, and a rail whose top face is inside that reach is a rail
+        the jaws close on."""
+        rs = [float(np.linalg.norm(self.g.chord_point(k, p.x)[1:]))
+              for p in self.f.pins if p.chord == k]
+        from .spec import Gripper
+        return (min(rs) - Gripper.PAD_UNDER - Process.SEAT_CLEAR
+                - self.rail_h() / 2.0)
+
+    def feature_top(self, k):
+        """The furthest anything on chord rail k reaches when erect, mm."""
+        return max(float(np.linalg.norm(p.apex[1:])) + Cage.NOTCH_DEPTH
+                   for p in self.f.pins if p.chord == k)
+
+    def cradle_top(self):
         return max(float(np.linalg.norm(c.apex[1:])) + self.f.cradle_r()
                    for c in self.f.cradles)
 
-    def segments(self, kind, k):
-        """(x0, x1) of every stretch of rail there is room for."""
-        if kind == "chord":
-            return tuple(self.f.free_spans(k))
-        xs = [float(c.apex[0]) for c in self.f.cradles]
-        return ((min(xs) - self.rail_h(), max(xs) + self.rail_h()),)
+    def segments(self, k):
+        """(x0, x1) of every stretch of chord rail there is room for."""
+        return tuple(self.f.free_spans(k))
 
     def arm_pitch(self):
         """How far apart a parallelogram's arms stand, mm.
@@ -207,15 +209,29 @@ class Collapse:
 
     @cached_property
     def rails(self):
-        """(kind, shaft, azimuth, radius, (x0, x1)) for every rail piece."""
+        """(kind, shaft, azimuth, radius, (x0, x1)) for every chord rail."""
         out = []
         for sh, (kind, k, phi) in enumerate(self.shafts):
-            for seg in self.segments(kind, k):
+            if kind != "chord":
+                continue
+            for seg in self.segments(k):
                 out.append((kind, sh, phi, self.rail_r(kind, k), seg))
         return tuple(out)
 
     @cached_property
     def arms(self):
+        """Every arm: a chord rail's parallelogram legs, and one leg per
+        cradle.
+
+        THE CRADLES GET ARMS OF THEIR OWN, and that is forced too.  A face
+        rail would have to run under the diagonals it carries -- and a
+        diagonal DIPS to the face plane's own radius between its ends,
+        20 mm where its cradles sit at 36.  There is no bar that is both
+        under the cradle and clear of the rod: check_load found it as a
+        seated diagonal that could no longer be picked out of its own
+        cradles.  So each cradle swings on its own leg off the face shaft,
+        and the shaft is what makes them one lock instead of fifty-four.
+        """
         out = []
         for kind, sh, phi, r, (x0, x1) in self.rails:
             up = radial(phi)
@@ -224,7 +240,31 @@ class Collapse:
                 base = np.array([x, 0.0, 0.0]) + up * self.shaft_r()
                 out.append(Arm(sh, float(x), base,
                                np.array([x, 0.0, 0.0]) + up * r, up))
+        faces = [(sh, phi) for sh, (kind, k, phi) in enumerate(self.shafts)
+                 if kind == "face"]
+        for c in self.f.cradles:
+            tip = np.asarray(c.apex, float) - np.asarray(c.up, float) * self.stem_len()
+            phi_c = np.degrees(np.arctan2(float(tip[2]), float(tip[1]))) % 360.0
+            sh, _phi = min(faces, key=lambda f: abs(((f[1] - phi_c) + 180.0)
+                                                    % 360.0 - 180.0))
+            up = np.array([0.0, float(tip[1]), float(tip[2])])
+            up = up / np.linalg.norm(up)
+            base = np.array([float(tip[0]), 0.0, 0.0]) + up * self.shaft_r()
+            out.append(Arm(sh, float(tip[0]), base, tip, up))
         return tuple(out)
+
+    def stem_len(self):
+        """How far below a cradle's V floor its arm stops, mm.
+
+        The arm is a link, not a wire, and the jaws come down onto the rod
+        the cradle holds: the pads reach `PAD_UNDER` past the rod's own axis
+        and the axis sits `drop` above the V's floor.  An arm that reached
+        the floor itself is an arm the gripper closes on -- which is how a
+        seated diagonal stopped being pickable."""
+        from .spec import Gripper
+        drop = (self.t.d_diag / 2.0) / sin(radians(Cage.CRADLE_ANGLE / 2.0))
+        return (drop + Gripper.PAD_UNDER + Process.SEAT_CLEAR
+                + Cage.LINK_T / 2.0)
 
     def arms_of(self, sh):
         return tuple(a for a in self.arms if a.shaft == sh)
@@ -318,13 +358,20 @@ class Collapse:
     def folded_radius(self, psi):
         """The widest radius anything on the mandrel reaches at swing psi.
 
-        Every rail translates, so each feature keeps its own offset from the
-        rail it rides and the whole set moves in together."""
+        A chord rail translates -- its pins keep their offset from it and
+        the whole set moves in together; a cradle swings on its own leg and
+        its own block goes with it."""
         worst = self.shaft_r()
         for kind, sh, phi, r, _seg in self.rails:
             L = r - self.shaft_r()
-            top = self.feature_top(kind, self.shafts[sh][1])
+            top = self.feature_top(self.shafts[sh][1])
             worst = max(worst, self.shaft_r() + L * cos(psi) + (top - r))
+        for c in self.f.cradles:
+            tip = np.asarray(c.apex, float) - np.asarray(c.up, float) * self.stem_len()
+            r = float(np.linalg.norm(tip[1:]))
+            L = r - self.shaft_r()
+            over = (float(np.linalg.norm(c.apex[1:])) + self.f.cradle_r()) - r
+            worst = max(worst, self.shaft_r() + L * cos(psi) + over)
         return worst
 
     def fold_angle(self, margin=None):

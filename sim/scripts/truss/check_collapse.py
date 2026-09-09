@@ -14,13 +14,13 @@ ever passes trivially, the rest of the suite is measuring nothing.
 """
 import os
 import sys
-from math import degrees, radians, sqrt
+from math import degrees, radians, sin, sqrt
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 import numpy as np
 
 from truss import geometry, fixture, collapse
-from truss.spec import Truss, Cage, Process, Stock, Load
+from truss.spec import Truss, Cage, Process, Stock, Load, Gripper
 from spine.chosen import OPTIMAL_1M, OPTIMAL_300
 
 RESULTS = []
@@ -75,6 +75,8 @@ def main():
 
         # ---------------------------------------------- THE PARALLELOGRAM
         for sh, (kind, kk, phi) in enumerate(c.shafts):
+            if kind != "chord":
+                continue
             arms = c.arms_of(sh)
             L = [a.length for a in arms]
             ups = np.array([a.up for a in arms])
@@ -89,23 +91,30 @@ def main():
             check(tag + "chord %d's rail runs only where the ring does not: one piece "
                   "per free interval between joints, so the head passes through the "
                   "gaps" % k,
-                  tuple(c.segments("chord", k)) == tuple(free)
+                  tuple(c.segments(k)) == tuple(free)
                   and all(not any(j.x - f.joint_exclusion() < bb
                                   and aa < j.x + f.joint_exclusion()
                                   for j in g.joints_on(k)) for aa, bb in free),
                   "%d pieces, %.0f..%.0f mm long, %d joints cleared"
                   % (len(free), min(bb - aa for aa, bb in free),
                      max(bb - aa for aa, bb in free), len(g.joints_on(k))))
-        nface = len([1 for kind, *_ in c.rails if kind == "face"])
-        check(tag + "...and the face rails, sixty degrees from any chord where the "
-              "head never goes, run whole",
-              nface == t.n_chords, "%d face rails for %d faces" % (nface, t.n_chords))
-        check(tag + "every pin is on a chord rail and every cradle on a face rail -- "
-              "nothing is left behind on an arm of its own",
-              all(any(aa <= p.x <= bb for aa, bb in c.segments("chord", p.chord))
-                  for p in f.pins)
-              and all(any(aa <= float(cr.apex[0]) <= bb
-                          for aa, bb in c.segments("face", 0)) for cr in f.cradles),
+        check(tag + "there is NO face rail: a diagonal dips to the face plane's own "
+              "radius between its ends, so no bar is both under a cradle and clear "
+              "of the rod it holds -- the cradles swing on legs of their own",
+              not any(kind == "face" for kind, *_ in c.rails)
+              and len([a for a in c.arms
+                       if c.shafts[a.shaft][0] == "face"]) == len(f.cradles),
+              "%d cradles, %d legs on the face shafts"
+              % (len(f.cradles), len([a for a in c.arms
+                                      if c.shafts[a.shaft][0] == "face"])))
+        check(tag + "...and a cradle's leg stops short of its own V floor, so the "
+              "jaws can still take the rod out of it",
+              c.stem_len() > (t.d_diag / 2.0) / sin(radians(Cage.CRADLE_ANGLE / 2.0))
+              + Gripper.PAD_UNDER,
+              "%.2f mm of stem" % c.stem_len())
+        check(tag + "every pin is on a chord rail -- nothing is left behind",
+              all(any(aa <= p.x <= bb for aa, bb in c.segments(p.chord))
+                  for p in f.pins),
               "%d pins, %d cradles" % (len(f.pins), len(f.cradles)))
         check(tag + "SIX locks, not one per rail piece: the arms at one azimuth are "
               "keyed to a shaft on the spine's surface, which is the one radius the "

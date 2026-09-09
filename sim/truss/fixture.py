@@ -294,6 +294,36 @@ class Fixture:
             x = t.length + edge + i * Magazine.DIAG_PITCH
             out.append(Slot(r.index, np.array([x, -half, z]),
                             np.array([x, half, z]), np.array([0, 0, 1.0])))
+        # THE MOUNT'S OWN RACK, if a camera is being built onto this truss.
+        # Beyond the diagonal racks at each end, on the same pitch and the
+        # same height, laid along y like a diagonal -- the gripper's yaw is
+        # what turns a mount rod to the angle it is laid at, and a rod that
+        # starts parallel to y is the case the cell has already qualified.
+        # The rods are stubby (26 to 60 mm), so the rack is short.
+        mr = list(self.g.mount_rods)
+        if mr:
+            from .spec import Payload
+            n_end = max(1, len(near) - n0)
+            for end in (0, 1):
+                group = [r for r in mr if r.chord == end and r.kind != "mcam"]
+                cams = [r for r in mr if r.chord == end and r.kind == "mcam"]
+                sign = -1.0 if end == 0 else 1.0
+                x = sign * edge + (t.length if end else 0.0)
+                x += sign * (n_end + 1) * Magazine.DIAG_PITCH
+                for r in group:
+                    hl = r.length / 2.0
+                    out.append(Slot(r.index, np.array([x, -hl, z]),
+                                    np.array([x, hl, z]), np.array([0, 0, 1.0])))
+                    x += sign * Magazine.DIAG_PITCH
+                # THE CAMERA'S NEST IS AS WIDE AS THE MODULE, not as a rod.
+                # On the rods' own pitch its nest overlaps its neighbour's
+                # blocks and the sim throws it across the cell -- measured.
+                for r in cams:
+                    x += sign * (Payload.BOX[0] / 2.0 + Magazine.CLEAR)
+                    hl = r.length / 2.0
+                    out.append(Slot(r.index, np.array([x, -hl, z]),
+                                    np.array([x, hl, z]), np.array([0, 0, 1.0])))
+                    x += sign * (Payload.BOX[0] / 2.0 + Magazine.CLEAR)
         return out
 
     def x_range(self):

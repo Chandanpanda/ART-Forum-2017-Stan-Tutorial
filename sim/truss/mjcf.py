@@ -23,7 +23,7 @@ from math import pi, cos, sin, radians, degrees, atan2, sqrt
 
 import numpy as np
 
-from .spec import (mm, Truss, Ring, Gantry, Head, Gripper, Cage, Magazine,
+from .spec import (mm, Truss, Ring, Gantry, Head, Gripper, Cage, Magazine, Stock,
                    Dispenser, Vision, ring_r_in, ring_r_out, rail_r_out)
 from .geometry import radial
 from . import band as _band
@@ -241,7 +241,45 @@ def cage_body(geom, fixture, mount=None):
 def rod_body(geom, rod, p0, p1):
     """A free rod at world endpoints p0, p1 (its centreline)."""
     t = geom.t
-    if rod.kind == "chord":
+    if rod.kind == "mcam":
+        # THE CAMERA AND ITS COLLAR, as one part on a carrier boss.  Drawn
+        # where the boss is, so the loader picks it up exactly where the
+        # jaws will be: everything else about the module hangs off that.
+        from .spec import Payload, Bracket, Carrier
+        c = (p0 + p1) / 2.0
+        look = -(p1 - p0) / float(np.linalg.norm(p1 - p0))
+        xh = np.array([1.0, 0.0, 0.0])
+        up = np.cross(look, xh)
+        if np.linalg.norm(up) < 1e-9:
+            up = np.array([0.0, 0.0, 1.0])
+        up = up / np.linalg.norm(up)
+        base = p0 + look * (Payload.BOX[1] / 2.0)      # the module's centre
+        gs = [cylinder("rod%d_g" % rod.index, p0 - c, p1 - c, rod.r,
+                       C_ALU, ROD, ROD | CAGE | HEAD_B | DROP,
+                       mass=Carrier.MASS, extra=' class="rod"'),
+              box("rod%d_b" % rod.index, base - c,
+                  (Payload.BOX[0] / 2.0, Payload.BOX[1] / 2.0, Payload.BOX[2] / 2.0),
+                  xh, look, C_CAM, ROD, ROD | CAGE | HEAD_B | DROP,
+                  mass=Payload.MASS),
+              box("rod%d_p" % rod.index,
+                  base - c + look * (0.5 * sum(Bracket.seat_l())),
+                  (Bracket.plate_half(None, 2.0 * rod.r * 0.0 + 1.5)[0],
+                   Bracket.SHEET / 2.0,
+                   Bracket.plate_half(None, 1.5)[1]),
+                  xh, look, C_ALU, ROD, ROD | CAGE | HEAD_B | DROP,
+                  mass=Bracket.mass())]
+        return ('<body name="rod%d" pos="%s"><freejoint name="rod%d_f"/>%s</body>'
+                % (rod.index, _v(c), rod.index, "".join(gs)))
+    if rod.kind.startswith("m"):
+        # A MOUNT ROD.  Its mass is its own: the truss's per-rod averages
+        # are for chords and diagonals, and a 30 mm strut charged as one of
+        # twenty-four diagonals weighs three times what it is.
+        L = float(np.linalg.norm(p1 - p0))
+        g = cylinder("rod%d_g" % rod.index, p0 - (p0 + p1) / 2.0, p1 - (p0 + p1) / 2.0,
+                     rod.r, C_ROD, ROD, ROD | CAGE | HEAD_B | DROP,
+                     mass=Stock.rho_lin(2.0 * rod.r) * L / 1000.0,
+                     extra=' class="rod"')
+    elif rod.kind == "chord":
         g = capsule("rod%d_g" % rod.index, p0 - (p0 + p1) / 2.0, p1 - (p0 + p1) / 2.0,
                     rod.r, C_ROD, ROD, ROD | CAGE | HEAD_B | DROP,
                     mass=t.mass_chords / t.n_chords, cls=' class="rod"')
@@ -256,7 +294,7 @@ def rod_body(geom, rod, p0, p1):
 
 def rods_in_racks(geom, fixture):
     out = []
-    for rod in geom.rods:
+    for rod in geom.all_rods:
         s = fixture.slot_of(rod.index)
         out.append(rod_body(geom, rod, s.p0, s.p1))
     return out
@@ -264,8 +302,8 @@ def rods_in_racks(geom, fixture):
 
 def rods_in_fixture(geom):
     out = []
-    for rod in geom.rods:
-        p0, p1 = (rod.p0, rod.p1) if rod.kind == "chord" else geom.diag_body_ends(rod)
+    for rod in geom.all_rods:
+        p0, p1 = (rod.p0, rod.p1) if rod.kind != "diag" else geom.diag_body_ends(rod)
         out.append(rod_body(geom, rod, p0, p1))
     return out
 
@@ -330,18 +368,74 @@ def rack_geoms(geom, fixture):
     drop_c = (geom.t.d_chord / 2.0) / sin(radians(Magazine.SLOT_ANGLE / 2.0))
     drop_d = (geom.t.d_diag / 2.0) / sin(radians(Magazine.SLOT_ANGLE / 2.0))
     for s in fixture.slots:
-        rod = geom.rods[s.rod]
-        drop = drop_c if rod.kind == "chord" else drop_d
+        rod = geom.all_rods[s.rod]
+        drop = drop_c if rod.kind in ("chord", "mcam") else drop_d
         u = _unit(s.p1 - s.p0)
         mid = (s.p0 + s.p1) / 2.0
-        half = float(np.linalg.norm(s.p1 - s.p0)) / 2.0
-        for k, sign in enumerate((-1.0, 1.0)):
-            centre = mid + u * (sign * (half - Magazine.BLOCK_IN)) - s.up * drop
-            out += v_flanks("slot%d_%d" % (s.rod, k), centre, u, s.up, Magazine.BLOCK_L,
+        L = float(np.linalg.norm(s.p1 - s.p0))
+        if rod.kind == "mcam":
+            # THE CAMERA IS NOT A ROD IN ITS RECEPTACLE.  It is a module on
+            # a printed carrier, and what the rack holds is the CARRIER --
+            # a nest under the module's own body, with the boss standing
+            # free for the jaws.  Held on V-blocks under the boss alone it
+            # is a 4 g overhang on a 3 mm pin, and it rolls off.
+            from .spec import Payload, Carrier
+            look = -u
+            base = s.p0 + look * (Payload.BOX[1] / 2.0)
+            # A POCKET, NOT A SHELF.  The module is 24 mm tall on a 9 mm
+            # base; stood on a flat nest it topples the moment the sim
+            # settles and drags itself off by the boss -- measured.  Two
+            # walls a bond gap outside its faces hold it upright, which is
+            # what a printed kitting nest is.
+            # A FIT, NOT A CLEARANCE.  At a wall-thickness of slack the
+            # module slides 1.7 mm toward the boss as the sim settles, and
+            # its near face ends up 0.3 mm inside where the pads close --
+            # measured, as a stalled stroke on the board.  The nest is
+            # printed to the part, so it is the carrier's own FIT.
+            wall = 2.0
+            hy = Payload.BOX[1] / 2.0 + Carrier.FIT
+            out.append(box("nest%d" % s.rod, base - s.up * (Payload.BOX[2] / 2.0 + 4.5),
+                           (Payload.BOX[0] / 2.0 + wall, hy + wall, 4.0),
+                           np.array([1.0, 0.0, 0.0]), look, C_RACK, CAGE, ROD))
+            # The FAR wall is whole; the NEAR one is SPLIT, because the
+            # carrier's boss comes out through it and the jaws close on the
+            # boss at its middle.  A whole near wall stands 4.5 mm from the
+            # grip point and the pads land on it before the boss -- which
+            # is what "jaws closed on nothing" was.
+            # THE GAP IS THE JAWS', NOT THE BOSS'S.  At the yaw the boss is
+            # taken at, the pads straddle it along x and reach JAW_OPEN/2 +
+            # PAD_T out either side; a wall inside that is a wall the
+            # gripper's stroke stalls against.
+            # ...and the two pieces go at the module's own CORNERS, not
+            # wherever is left over: that is as far from the grip point as
+            # the nest reaches, and it is where a tab holds a board best.
+            gap = Gripper.JAW_OPEN / 2.0 + Gripper.PAD_T + 1.0
+            hw = 3.0
+            out.append(box("nestw%d_a" % s.rod,
+                           base + look * (hy + wall / 2.0)
+                           - s.up * (Payload.BOX[2] / 4.0),
+                           (Payload.BOX[0] / 2.0 + wall, wall / 2.0,
+                            Payload.BOX[2] / 4.0),
+                           np.array([1.0, 0.0, 0.0]), look, C_RACK, CAGE, ROD))
+            for sx, tag in ((+1.0, "b"), (-1.0, "c")):
+                # ...and they stop BELOW the pads' own reach: a tab whose
+                # top is level with the boss's axis brushes the pad as it
+                # closes, and a contact on the jaws is a contact the grip
+                # sensor has to argue with.
+                out.append(box("nestw%d_%s" % (s.rod, tag),
+                               base - look * (hy + wall / 2.0)
+                               - s.up * (Payload.BOX[2] / 4.0 + Gripper.PAD_H / 2.0)
+                               + np.array([sx * (Payload.BOX[0] / 2.0 + wall - hw),
+                                           0.0, 0.0]),
+                               (hw, wall / 2.0, Payload.BOX[2] / 4.0),
+                               np.array([1.0, 0.0, 0.0]), look, C_RACK, CAGE, ROD))
+        for k, (off, bl) in enumerate(Magazine.blocks(L)):
+            centre = mid + u * off - s.up * drop
+            out += v_flanks("slot%d_%d" % (s.rod, k), centre, u, s.up, bl,
                             Magazine.SLOT_DEPTH, 1.0, Magazine.SLOT_ANGLE / 2.0, C_RACK, CAGE, ROD)
             # a bed under each block so a rod that misses cannot fall through
             out.append(box("slotbed%d_%d" % (s.rod, k), centre - s.up * 2.0,
-                           (Magazine.BLOCK_L / 2.0, 4.0, 1.0), u,
+                           (bl / 2.0, 4.0, 1.0), u,
                            np.cross(u, s.up) if abs(np.cross(u, s.up) @ s.up) < 0.5
                            else np.array([0, 1.0, 0]), C_RACK, CAGE, ROD))
     return out
@@ -540,7 +634,17 @@ def scene_cell(geom, fixture, stage="empty", start=None, timestep=5e-4, n_drops=
           # a rigid coupling, not a shared tendon (with the tendon alone a
           # blocked pad let the other run past the rod)
           '    <joint name="jaws_sym" joint1="gf_l" joint2="gf_r" polycoef="0 1 0 0 0"/>']
-    for r in geom.rods:
+    for r in geom.all_rods:
+        if r.kind == "mcam" and stage == "empty":
+            # A DETENT IN THE NEST.  The carrier is a 24 mm slab on a 9 mm
+            # base with a 14 mm pin out of one side; sat loose in a pocket
+            # it walks under the gripper's own approach and ends up tilted
+            # across the grip point -- measured, twice.  A printed nest for
+            # a part like this has a snap detent, and this is it: released
+            # the instant the jaws close on the boss.
+            eq.append('    <weld name="rack%d" body1="world" body2="rod%d" '
+                      'active="true" solref="0.004 1" solimp="0.98 0.999 0.001"/>'
+                      % (r.index, r.index))
         eq.append('    <weld name="keep%d" body1="cage" body2="rod%d" active="%s" '
                   'solref="0.004 1" solimp="0.98 0.999 0.001"/>'
                   % (r.index, r.index, "true" if stage == "loaded" else "false"))

@@ -316,51 +316,151 @@ would say it for certain.
 
 ## The camera mount
 
-`mount.py` solves a nine-rod nose at each end — three end battens closing the
-triangle of chord ends, six octahedral struts — plus **one small rigid collar**
-bonded round the camera's lens housing, whose three short arms carry the
-landings the struts reach for.
+`mount.py` solves a thirteen-rod nose at each end — three end battens closing
+the triangle of chord ends, a four-rod **tic-tac-toe grid** round the camera,
+six struts from the chord ends to the grid's four crossings — plus **one
+laser-cut aluminium collar**, a frame with a closed square aperture that the
+lens housing stands through.
 
-**That collar is the part this design spent a long time claiming it did not
-need**, and the claim was only ever true of a mount whose third landing was in
-mid air. A hexapod wants three landings in a plane roughly parallel to the end
-triangle. The camera offers two candidate surfaces and the frame model refuses
-both:
+**The collar is parallel to the board, and that took a render to find.** It
+was drawn as a fin standing on edge in the plane perpendicular to the spine —
+which is where a hexapod's platform wants to be, and is the one plane a plate
+bonded to the lens housing cannot lie in. A fin through the camera's centre is
+*inside the camera*:
+
+| element | how far inside the module |
+|---|---|
+| collar 0, collar 2 | 4.50 mm — the fin's back half, buried in the PCB |
+| grid 5, grid 6 | 4.50 mm — the two long tic-tac-toe rods laid along it |
+| strut 14, strut 16 | 1.74 mm |
+
+Six of nineteen elements at one end. Every number the mount reported was for a
+part that cannot be made, and **nothing static asked**: every check about the
+mount asked whether a feature was in the right *place*, and none asked whether
+it was inside the part. `payload_clearance` asks now, in the camera's own
+frame, against the module's real solid — which is *not* one 9 mm slab. Behind
+the board's front face the module is solid over its whole outline; in front of
+it there is only the housing, and the collar goes there. Tested against a
+single slab the collar reads 2.25 mm inside a board it is *resting on*.
+
+A plate on the housing can only lie parallel to the board. It is the one
+orientation in which the aperture is a closed hole — four walls of bond,
+51.0 mm² against the fin's three-sided 21.8 — and in which nothing of the
+mount is behind the module's front face at all.
+
+**The grid sits one clearance outside the module's silhouette**, and that is
+not tidiness. The camera looks out through a *face*, so one chord lies
+directly behind it, and a strut from that chord clears the board only by
+staying outboard of it in x the whole way. Drawn 4.5 mm further in the mount
+goes back through the PCB, and `check_mount` asserts exactly that, so the rule
+cannot be quietly relaxed.
+
+**Why a collar at all**, measured on the frame model. The camera offers two
+surfaces of its own and both are refused:
 
 | where the six struts could land | fraction of the yaw budget |
 |---|---|
 | the housing's own inboard face, 8.5 × 3.0 mm | **1.08** — over |
 | the board's four M2 holes, board modelled rigid | 0.73 — the flattering model |
 | …the same, board at its real 216 N/mm | far over |
-| **a collar carrying the landings at 7.51 mm** | **0.64** |
+| **the collar, its mass and its bending both charged** | **0.82** |
 
-The housing face is the only surface parallel to the end triangle and it is
-too thin to *be* a triangle — 3.0 mm of depth against 8.5 of width. The
-mounting holes make a proper triangle and then work through FR4 over 21 mm,
-which is **26 times softer than the strut bonded to it**: that path is not a
-mount, it is a spring. So the collar bonds to the housing — the stiff part —
-and presents the landings where a hexapod can use them.
+The housing face is the only surface parallel to the end triangle and is too
+thin to *be* a triangle. The mounting holes make a proper triangle and then
+work through FR4 over 21 mm — **26 times softer than the strut bonded to it**:
+that path is not a mount, it is a spring.
 
-Three things are solved rather than chosen. The camera faces a **face** of the
-truss, not a chord (aimed along a chord it needs 28.9 mm of standoff instead
-of 14.1, and standoff is a lever arm). The **standoff** is bisected on
-`fov_clear` until nothing of the truss, the mount or the collar's arms is in a
-62.2 × 48.8° field. And every strut's direction is checked against what the
-machine has: a rod held at gripper yaw ψ with the cage at θ lands along
-`(cos ψ, sin ψ cos θ, −sin ψ sin θ)`, which covers the whole sphere, so
-`pose_for` returns the pair and no axis has to be added.
+**The collar is flat, and that is a measurement.** A 1.5 mm frame reaching
+15 mm from the aperture to a crossing is 149 N/mm out of its own plane against
+the strut's 5838 — 38× softer, the same failure the circuit board was rejected
+for — so the obvious fix is to fold its rim into a channel. With the platform
+ring carrying the band's real section and the plate's mass charged:
 
-Every rod joint is bonded, not wound: the ring cannot reach past the last
+| fold | plate | corner | yaw budget |
+|---|---|---|---|
+| 0.0 mm | 2.49 g | 149 N/mm | **0.815** |
+| 3.0 mm | 3.97 g | 2156 N/mm | 0.848 |
+| 4.9 mm | 4.91 g | 6125 N/mm | 0.869 — what the stiffness rule asks for |
+| rigid, at 3.97 g | | ∞ | 0.849 |
+
+The last row is the point: a plate assumed *infinitely stiff* at the folded
+plate's mass is no better than the folded plate, so what the fold buys was
+already worth nothing. The rule the fillet is held to — be stiffer than the
+strut you hold — is the wrong rule for a part whose mass is a tenth of the
+head's.
+
+**And the field test had a sign error.** `fov_clear` added the rod's radius
+where it should have subtracted it, so it measured the *far* side of every rod
+and let the near side into the picture: at the mechanical standoff it read
+−0.05 mm where the end batten was 1.55 mm in shot. The solved standoff moves
+14.09 → 15.59 mm.
+
+Three things are still solved rather than chosen. The camera faces a **face**
+of the truss, not a chord (aimed along a chord it needs 28.9 mm of standoff
+instead of 15.6, and standoff is a lever arm). The **standoff** is bisected on
+`fov_clear` until nothing is in a 62.2 × 48.8° field. And every rod's direction
+is checked against what the machine has: a rod held at gripper yaw ψ with the
+cage at θ lands along `(cos ψ, sin ψ cos θ, −sin ψ sin θ)`, which covers the
+whole sphere, so `pose_for` returns the pair and no axis has to be added.
+
+Every mount joint is an epoxy fillet: the ring cannot reach past the last truss
 joint and does not need to. A fillet on a 1.5 mm rod carries 141 N against a
-service load of 0.147 N, and comes out stiffer than the strut it holds — so
-the strut is the compliance and the bond is not.
+service load of 0.147 N, and comes out stiffer than the strut it holds — so the
+strut is the compliance and the bond is not.
 
-**How the landing bug survived.** The landings were placed on a ring centred
-on the *spine's* axis and asserted to lie on the housing by comparing a radius
-with a circumradius — a number against a number. The housing does not straddle
-that axis. `landing_in_camera` and `housing_extent` now put the question in
-the camera's own frame, where "is this point on the part?" has an answer, and
-`check_mount` asks it.
+## The fixture had to come out, and could not
+
+The cage was drawn as a thing to wind onto and never as a thing to get back.
+The truss closes around it:
+
+| | |
+|---|---|
+| the exit — the section's inscribed circle less the fattest rod | **21.54 mm** |
+| the pins' notch floors reach | 46.95 mm |
+| the cradles reach | 36.18 mm |
+
+96 pins and 54 cradles on the metre truss, every one of them 15 to 25 mm
+outside the only hole they could leave through. `collapse.py` is a collapsible
+mandrel, and each of its four ideas is forced by a measurement:
+
+- **Rails, not arms.** An arm 39 mm long lying down takes 36 mm of axial room,
+  and the metre truss has 1.2 m of arm for 1.0 m of spine. Arms that swing
+  together carrying a rail fold once — the rail *translates* — so the room
+  needed is one arm's. A **parallelogram** is what keeps it translating, and
+  that matters: a V-notch that rotated as it retreated would rake the rod.
+- **The chord rails are segmented.** They sit under the chords, which is
+  exactly where the ring comes down to wind. So they run only on the free
+  intervals `fixture.free_spans` already computes, and the head passes through
+  the gaps — twelve pieces per chord, not one.
+- **The face rails are not.** The cradles sit sixty degrees from any chord,
+  where the head never goes.
+- **Six shafts, six locks.** Thirty-nine rail pieces would be thirty-nine
+  locks. Every arm at one azimuth is keyed to a torsion shaft on the spine's
+  surface — the one radius the head can never reach — so one shaft turns a
+  chord's worth of rail pieces together.
+
+The lock is an **over-centre knee**, driven *harder* onto its stop by the load
+it carries; the only way out is to push the knee back across, which is a motion
+the load never applies. Its offset is bracketed, not picked: below the floor
+the stop's pin brinells or the linkage's own slop swallows the lock, above the
+ceiling a hand cannot break it. One draw rod down the spine's bore trips all
+six from outside the truss.
+
+| | 85 mm truss | 70 mm truss |
+|---|---|---|
+| fold | 80.2° | 84.5° |
+| collapsed radius | 20.04 mm | 16.71 mm |
+| axial swing | 34.9 mm | 28.1 mm |
+| over-centre offset | 1.50 mm, in [1.50, 242] | 1.50 mm, in [1.50, 175] |
+| draw stroke | 6.00 mm | 6.00 mm |
+| **withdraws with** | **3.75 mm to spare** | **3.00 mm** |
+
+`check_collapse` asserts the *trapped* state first: if the cage ever stops
+being trapped when erect, the rest of the suite is measuring nothing. The rails
+are in the approach solver's obstacle set — a structure the path planner cannot
+see is how a fixture ends up unbuildable — and every joint still has a station.
+
+Collapsing it is a manual step, outside the cycle.
 
 ### The cell could not pick up a camera, and could not be made to
 

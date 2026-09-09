@@ -38,7 +38,8 @@ def run(name, why, verbose):
         return None
     t0 = time.time()
     env = dict(os.environ)
-    env.setdefault("MUJOCO_GL", "osmesa")
+    # each suite names its own context through truss.glenv; osmesa is a
+    # Linux-only name and setting it here breaks the suites on Windows
     p = subprocess.run([sys.executable, path], capture_output=True, text=True, env=env)
     el = time.time() - t0
     tail = [l for l in (p.stdout or "").strip().splitlines() if l.strip()]

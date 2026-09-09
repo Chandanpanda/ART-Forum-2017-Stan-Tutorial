@@ -15,8 +15,9 @@ import os
 import re
 import sys
 
-os.environ.setdefault("MUJOCO_GL", "osmesa")
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+from truss.glenv import headless        # noqa: E402  (before mujoco)
+headless()
 import numpy as np
 import mujoco
 
@@ -146,6 +147,63 @@ def main():
             if float(l) not in (180.0, 360.0)]          # angle wraps are arithmetic
     check("process.py carries no coordinate-scale literals (pinned at 0)",
           len(lits) == 0, "%s" % lits[:6])
+
+    # ------------------------------------------- the GL backend, per platform
+    # MUJOCO_GL names a context whose legal values differ by operating
+    # system.  Every script here once wrote "osmesa" unconditionally, and
+    # on Windows that raises out of `import mujoco` before any of this
+    # code runs.  One module decides it now, and nothing else may.
+    import glob
+    from truss import glenv
+    assign = re.compile(r"""\[\s*["']MUJOCO_GL["']\s*\]\s*=|setdefault\(\s*["']MUJOCO_GL["']""")
+    offenders = []
+    here = os.path.abspath(__file__)
+    for f in (glob.glob(os.path.join(os.path.dirname(__file__), "*.py"))
+              + glob.glob(os.path.join(os.path.dirname(__file__), "..", "..", "truss", "*.py"))):
+        if os.path.abspath(f) == here or os.path.basename(f) == "glenv.py":
+            continue
+        for line in open(f).read().splitlines():
+            if assign.search(line):
+                offenders.append("%s: %s" % (os.path.basename(f), line.strip()[:50]))
+    check("no script names a GL backend itself; truss.glenv decides",
+          not offenders, "; ".join(offenders[:3]))
+    keep = os.environ.pop("MUJOCO_GL", None)
+    try:
+        got = {}
+        for plat in ("win32", "darwin", "linux"):
+            os.environ.pop("MUJOCO_GL", None)
+            real, sys.platform = sys.platform, plat
+            try:
+                got[plat] = glenv.headless()
+            finally:
+                sys.platform = real
+        check("...and it names one only where the name is legal: nothing off Linux",
+              got["win32"] == "" and got["darwin"] == "" and got["linux"] == "osmesa",
+              "%s" % got)
+        os.environ["MUJOCO_GL"] = "glfw"
+        check("...and never overrides what the operator set",
+              glenv.headless() == "glfw")
+    finally:
+        os.environ.pop("MUJOCO_GL", None)
+        if keep is not None:
+            os.environ["MUJOCO_GL"] = keep
+    check("a viewer is told to open a window only where one can exist",
+          glenv.windowed() in (True, False))
+    # EVERY SOURCE COMPILES WITH WARNINGS FATAL.  A Windows path written
+    # into a docstring put a `\t` in it, which is a tab today and a
+    # SyntaxError in a later Python; the file still ran, so nothing said so.
+    import warnings
+    sick = []
+    for f in (glob.glob(os.path.join(os.path.dirname(__file__), "*.py"))
+              + glob.glob(os.path.join(os.path.dirname(__file__), "..", "..", "truss", "*.py"))):
+        src = open(f).read()
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", SyntaxWarning)
+            try:
+                compile(src, f, "exec")
+            except (SyntaxWarning, SyntaxError) as e:
+                sick.append("%s: %s" % (os.path.basename(f), e))
+    check("every source compiles with syntax warnings fatal", not sick, "; ".join(sick[:3]))
 
     bad = sum(1 for _, ok, _ in RESULTS if not ok)
     for nm, ok, det in RESULTS:

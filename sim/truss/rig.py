@@ -186,7 +186,6 @@ class JointRig:
   <extension><plugin plugin="mujoco.elasticity.cable"/></extension>
   <compiler angle="degree" autolimits="true"/>
   <option timestep="%g" integrator="implicitfast" gravity="0 0 -9.81"/>
-  <size njmax="4000" nconmax="1500"/>
   <default>
     <geom condim="3" friction="0.5 0.005 0.0001" solref="0.002 1" solimp="0.99 0.999 0.001"/>
   </default>

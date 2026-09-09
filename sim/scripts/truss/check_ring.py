@@ -14,8 +14,9 @@ control winds nothing and lets go.
 import os
 import sys
 
-os.environ.setdefault("MUJOCO_GL", "osmesa")
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+from truss.glenv import headless        # noqa: E402  (before mujoco)
+headless()
 import numpy as np
 
 from truss import structure, fixture, rig, inspector

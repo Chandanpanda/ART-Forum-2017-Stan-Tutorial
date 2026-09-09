@@ -16,6 +16,11 @@ python3 sim/scripts/truss/check_all.py --slow   # + the cable rig and the render
 python3 sim/scripts/truss/demo_cell.py --gui    # watch a truss being made
 ```
 
+On Windows the interpreter is `python`, and the paths use backslashes.
+Do not set `MUJOCO_GL`: `osmesa` is a Linux-only backend name and MuJoCo
+raises on it before it loads, so `truss/glenv.py` picks one per platform
+and hands the viewer none at all.
+
 ## Three tiers
 
 | tier | what is real | what it is for |
@@ -163,7 +168,7 @@ attitude, not the thread), and the thread it consumes is the arithmetic's.
 
 ## The suites
 
-346 checks in ten suites, 776 s for the full tier.
+351 checks in ten suites, about 13 minutes for the full tier.
 
 | suite | tier | what it would have caught |
 |---|---|---|

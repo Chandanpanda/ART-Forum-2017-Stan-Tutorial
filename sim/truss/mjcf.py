@@ -114,7 +114,6 @@ def preamble(timestep):
     return """  <compiler angle="degree" autolimits="true"/>
   <option timestep="%g" integrator="implicitfast" cone="elliptic"
           impratio="3" gravity="0 0 -9.81"/>
-  <size njmax="6000" nconmax="2000"/>
   <visual>
     <!-- lit like a vision cell, flat and bright: matte black rods against
          a light fixture from every angle.  Measured: with a strong

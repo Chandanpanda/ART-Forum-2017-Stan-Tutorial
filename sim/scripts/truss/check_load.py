@@ -16,8 +16,9 @@ what a rod does when the cage turns it downward with no keeper.
 import os
 import sys
 
-os.environ.setdefault("MUJOCO_GL", "osmesa")
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+from truss.glenv import headless        # noqa: E402  (before mujoco)
+headless()
 import numpy as np
 import mujoco
 

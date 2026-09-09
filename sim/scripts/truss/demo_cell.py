@@ -8,14 +8,26 @@
 In the viewer: `[` and `]` cycle the fixed cameras (`cell`, `side`, and
 the head's own `head_cam`); press 0 / Esc for the free camera.  The wound
 bands appear as yellow sleeves as the turns are counted.
+
+On Windows the interpreter is `python`, not `python3`, and the path is
+relative to where you are: from the `sim` directory, run
+`python scripts/truss/demo_cell.py --gui` (Windows takes forward slashes).
+Do not set MUJOCO_GL -- truss/glenv.py picks one per platform, and
+`osmesa` is a name that only exists on Linux.
 """
 import argparse
 import os
 import sys
 import time
 
-os.environ.setdefault("MUJOCO_GL", "osmesa")
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+from truss import glenv                  # noqa: E402  (before mujoco)
+# A WINDOW NEEDS THE PLATFORM'S OWN CONTEXT.  --gui asks for none, so
+# MuJoCo opens wgl on Windows, cgl on macOS, glx on a Linux desktop;
+# headless we name a software one, and only where that name is legal.
+# (Forcing osmesa here made `import mujoco` raise on Windows.)
+if "--gui" not in sys.argv:
+    glenv.headless()
 import numpy as np
 import mujoco
 
@@ -84,6 +96,10 @@ def main():
             show_bands()
         return True
 
+    if args.gui and not glenv.windowed():
+        print("--gui needs a display; this session has none.  Run without it, or set "
+              "DISPLAY.")
+        args.gui = False
     if args.gui:
         from mujoco import viewer as mjviewer
         with mjviewer.launch_passive(m, d) as v:

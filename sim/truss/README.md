@@ -41,7 +41,12 @@ fit round the joint and the cage's spine must fit under the spool.  The
 brief's own 45°, 3 mm/2 mm truss comes out with f₁ = 195 Hz and its
 diagonals 1 mm short of the ring's rim; the optimiser's metre truss is
 side 92, α 40°, 3/2 mm stock, 54.9 g, 27 joints, and the 300 mm test
-piece is side 66, α 45°, 2/1 mm, 7.4 g, 12 joints, spine-bound.
+piece is side 66, α 45°, 2/1 mm, 7.4 g, 12 joints, spine-bound.  The
+brief's own 300 mm section, 40 mm across, is stiff enough several times
+over and cannot be wound at all: the ring sweeps 32 mm of radius about the
+chord it is on, leaving no room for the cage's spine or the other two
+chords.  A short truss's section has a lower bound set by the winding
+head, not by the loads.
 
 **The ring.**  Its inner radius is a closed form,
 `r_in ≥ d_c/2 + (W/2 + band/2)·tan α + d_d/(2 cos α) + clear/cos α`: the
@@ -158,10 +163,12 @@ attitude, not the thread), and the thread it consumes is the arithmetic's.
 
 ## The suites
 
+346 checks in ten suites, 776 s for the full tier.
+
 | suite | tier | what it would have caught |
 |---|---|---|
 | `check_geometry` | 0 | a spec assertion that no longer holds; a truss whose derived quantities disagree |
-| `check_structure` | 0 | the beam model against the brief; an optimiser that runs to the sweep's edge |
+| `check_structure` | 0 | the beam model against the brief; an optimiser that runs to the sweep's edge; a section the winder cannot enter |
 | `check_approach` | 0 | a station with no margin; a sampling hole a rod fell through; a retracted rod in the rim; a post loop through the fixture |
 | `check_schedule` | 0 | a rod released at the wrong angle; a yaw with the gripper in; a loop that touches |
 | `check_model` | 1 | a V whose flanks stood proud; a spool on the spine; a ring not the solver's |

@@ -76,6 +76,26 @@ def main():
     check("...by about a millimetre",
           0.5 < spec.r_in_needed(brief) - ring_r_in() < 1.5,
           "%.3f mm" % (spec.r_in_needed(brief) - ring_r_in()))
+    # THE BRIEF'S SHORT TRUSS IS THE STRUCTURE THAT CANNOT BE BUILT BY THE
+    # MACHINE IN THE SAME DOCUMENT.  40 mm of section is stiff enough
+    # several times over at 300 mm -- and the C-ring sweeps 32 mm of radius
+    # round the chord it winds, which leaves the cage no spine and the
+    # other two chords inside the head.  A section has a lower bound set by
+    # the winder, not by the loads, and only the fabrication model sees it.
+    brief_300 = Truss(length=300.0, side=40.0, alpha=45.0, d_chord=3.0, d_diag=2.0,
+                      name="brief_300")
+    m3 = structure.analyse(brief_300)
+    check("brief's 300 mm truss is far stiffer than its budget",
+          m3["slope_deg"] < Load.SLOPE_BUDGET / 4.0 and m3["f1"] > 2.0 * Load.F1_MIN,
+          "%.4f deg, %.0f Hz" % (m3["slope_deg"], m3["f1"]))
+    check("...and cannot be wound by the head the same brief specifies: the ring's sweep "
+          "wants a section the loads never would",
+          set(structure.violations(brief_300)) == {"ring rim", "ring vs spine"},
+          "fails %s; ring sweeps %.0f mm of radius into a %.0f mm circumradius"
+          % (structure.violations(brief_300), spec.ring_swept_r(), brief_300.R))
+    check("...which is why the derived 300 mm truss is the section it is",
+          structure.TRUSS_300.R > spec.ring_swept_r() and not structure.violations(structure.TRUSS_300),
+          "R %.1f against a %.1f mm sweep" % (structure.TRUSS_300.R, spec.ring_swept_r()))
 
     # -------------------------------------------------- the defaults
     for t, L in ((structure.TRUSS_1M, 1000.0), (structure.TRUSS_300, 300.0)):

@@ -168,7 +168,7 @@ attitude, not the thread), and the thread it consumes is the arithmetic's.
 
 ## The suites
 
-351 checks in ten suites, about 13 minutes for the full tier.
+374 checks in eleven suites, about 13 minutes for the full tier.
 
 | suite | tier | what it would have caught |
 |---|---|---|
@@ -177,7 +177,8 @@ attitude, not the thread), and the thread it consumes is the arithmetic's.
 | `check_approach` | 0 | a station with no margin; a sampling hole a rod fell through; a retracted rod in the rim; a post loop through the fixture |
 | `check_schedule` | 0 | a rod released at the wrong angle; a yaw with the gripper in; a loop that touches |
 | `check_model` | 1 | a V whose flanks stood proud; a spool on the spine; a ring not the solver's |
-| `check_hal` | 1 | a backend missing a verb; an axis that believes its own truth; process code that reads the simulator |
+| `check_hal` | 1 | a backend missing a verb; an axis that believes its own truth; process code that reads the simulator; a GL backend named where the name does not exist |
+| `check_view` | 1 | a demo that opens on a fixed camera, where the mouse is dead; a camera key the viewer had already bound |
 | `check_load` | 1 | a rod that seats 0.7 mm high; a capture range smaller than claimed; a rod that falls out |
 | `check_cycle` | 1 | anything above that survives to the truss: bands off-centre, drops on the floor, rods pressed out |
 | `check_ring` | 2 | a hoop model that is not what a thread does; thread mass off by a third; a band believed to retain what it does not |
@@ -202,5 +203,7 @@ mjcf.py        the cell as MJCF, generated from the specs
 cell.py        the MuJoCo backend of the HAL, with truth accessors for the checks
 process.py     the plan executed through the HAL, one control tick per yield
 vision.py      the look: a model camera and the rendered pixel path
+view.py        the viewer's camera: pan, orbit, zoom, follow, on keys the viewer leaves alone
+glenv.py       which GL backend to name, decided by the platform
 rig.py         Tier 2: the one-joint lathe with a cable thread
 ```

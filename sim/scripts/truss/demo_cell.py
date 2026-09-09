@@ -5,9 +5,16 @@
     python3 sim/scripts/truss/demo_cell.py --gui --1m      # the metre truss (slow)
     python3 sim/scripts/truss/demo_cell.py --gui --speed 2 # 2x real time
 
-In the viewer: `[` and `]` cycle the fixed cameras (`cell`, `side`, and
-the head's own `head_cam`); press 0 / Esc for the free camera.  The wound
-bands appear as yellow sleeves as the turns are counted.
+The viewer opens on the FREE camera, framed on the cell, so the mouse is
+live from the first frame: left-drag orbits, right-drag pans, scroll
+zooms.  truss/view.py adds the same keyboard camera the competition demo
+in this repository uses -- arrows pan, Home/End orbit, - and = zoom,
+1/2/3 preset views, 4 close on the head, . follow it, 0 back to the whole
+cell -- and every one of those keys also returns from a fixed camera,
+where the mouse does nothing.  `[` and `]` cycle the fixed cameras
+(`cell`, `side`, and the head's own `head_cam`).  The wound bands appear
+as yellow sleeves as the turns are counted, and the window stays open
+when the truss is finished.
 
 On Windows the interpreter is `python`, not `python3`, and the path is
 relative to where you are: from the `sim` directory, run
@@ -32,8 +39,9 @@ import numpy as np
 import mujoco
 
 from truss import (structure, geometry, fixture, mjcf, cell, approach, schedule,
-                   process, vision, inspector, band as _band)
+                   process, vision, inspector, view, band as _band)
 from truss.geometry import TrussGeometry
+from truss.spec import ring_swept_r
 
 
 def main():
@@ -79,7 +87,7 @@ def main():
             m.geom_rgba[gid][3] = min(1.0, 0.2 + stt.turns / t.turns)
 
     last_op = 0
-    t_wall = time.time()
+    t_wall = time.time()          # reset once the viewer is up, in the gui path
 
     def step():
         nonlocal last_op
@@ -96,31 +104,61 @@ def main():
             show_bands()
         return True
 
+    def report():
+        errs = {r.index: inspector.seat_error(g, r, *c.rod_pose(r.index), theta=c.cage_truth())
+                for r in g.rods}
+        rep = inspector.inspect_truss(g, ex.states, seated=errs, cycle_s=d.time)
+        print(rep)
+        print("simulated %.1f min against %.1f planned" % (d.time / 60.0, P.total / 60.0))
+
     if args.gui and not glenv.windowed():
         print("--gui needs a display; this session has none.  Run without it, or set "
               "DISPLAY.")
         args.gui = False
-    if args.gui:
-        from mujoco import viewer as mjviewer
-        with mjviewer.launch_passive(m, d) as v:
-            v.cam.type = mujoco.mjtCamera.mjCAMERA_FIXED
-            v.cam.fixedcamid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_CAMERA, "side")
-            while v.is_running():
-                if not step():
-                    break
-                v.sync()
-                if args.speed > 0:
-                    lag = d.time / args.speed - (time.time() - t_wall)
-                    if lag > 0:
-                        time.sleep(min(lag, 0.05))
-    else:
+    if not args.gui:
         while step():
             pass
-    errs = {r.index: inspector.seat_error(g, r, *c.rod_pose(r.index), theta=c.cage_truth())
-            for r in g.rods}
-    rep = inspector.inspect_truss(g, ex.states, seated=errs, cycle_s=d.time)
-    print(rep)
-    print("simulated %.1f min against %.1f planned" % (d.time / 60.0, P.total / 60.0))
+        report()
+        return
+
+    from mujoco import viewer as mjviewer
+    rig = {"cam": None}
+
+    def on_key(code):
+        # The camera keys are all non-letters (truss/view.py says why), so
+        # they cannot collide with the viewer's own visualisation flags.
+        if rig["cam"] is not None:
+            rig["cam"].key(code)
+
+    with mjviewer.launch_passive(m, d, key_callback=on_key) as v:
+        rig["cam"] = view.CameraRig(v, m, view.cell_frame(g, fx),
+                                    follow=lambda: c.ring_centre() / 1000.0,
+                                    close=view.close_frame(ring_swept_r()))
+        print(view.HELP)
+        # the clock starts when the window is up: framing the camera and
+        # compiling the first frame takes a moment, and pacing from before
+        # that makes the demo sprint to catch up
+        t_wall = time.time()
+        while v.is_running():
+            if not step():
+                break
+            rig["cam"].tick()
+            v.sync()
+            if args.speed > 0:
+                lag = d.time / args.speed - (time.time() - t_wall)
+                if lag > 0:
+                    time.sleep(min(lag, 0.05))
+        if not v.is_running():
+            return
+        report()
+        # THE WINDOW OUTLIVES THE CYCLE.  What the demo is for is the truss
+        # it made, and closing on the last op leaves nothing to look at.
+        print("\n  the truss is finished; the window is yours.  Close it to exit.")
+        while v.is_running():
+            clk.tick()
+            rig["cam"].tick()
+            v.sync()
+            time.sleep(0.02)
 
 
 if __name__ == "__main__":

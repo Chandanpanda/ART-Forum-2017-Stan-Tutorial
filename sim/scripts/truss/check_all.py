@@ -22,6 +22,7 @@ FAST = [
     ("check_schedule",  "the plan: every rod, every joint, inside the clock"),
     ("check_model",     "the built MuJoCo cell against the parameters"),
     ("check_hal",       "the HAL contract and the axes' honesty"),
+    ("check_view",      "the viewer's camera: the mouse is live, the keys return"),
     ("check_load",      "the loader: capture, seating, retention"),
     ("check_cycle",     "a truss made end to end, judged by the inspector"),
 ]

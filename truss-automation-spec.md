@@ -6,7 +6,7 @@
 >
 > `sim/truss` models this cell: the structure, the fixture, the head and
 > the process as arithmetic; the whole machine in MuJoCo; and one joint
-> wound with a physical thread. Ten check suites, 351 checks, run from
+> wound with a physical thread. Eleven check suites, 374 checks, run from
 > `python3 sim/scripts/truss/check_all.py --slow`, and
 > `sim/truss/README.md` is the design record.
 >

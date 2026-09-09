@@ -380,6 +380,8 @@ class Cage:
     THETA_RPM   = 10.0         # worm output
     THETA_TOL   = 0.05         # deg, worm index repeatability
     PIN_PITCH   = 50.0         # brief 4.4: chord straightness governs
+    PLATE_SPOKES = 12          # how many radial capsules stand for an end
+                               # plate in the approach solver's obstacle set
     PIN_T       = 3.0          # along x
     ARM_W       = 6.0
     NOTCH_ANGLE = 90.0         # included angle of the V

@@ -24,7 +24,7 @@ Three things this module decides that the brief leaves open:
 numpy only.
 """
 from dataclasses import dataclass
-from math import sin, cos, tan, radians, atan2, degrees, sqrt
+from math import pi, sin, cos, tan, radians, atan2, degrees, sqrt
 
 import numpy as np
 
@@ -306,15 +306,27 @@ class Fixture:
             rr.append(self.cradle_r())
         for q in self.posts:
             p0.append(Rm @ q.p0); p1.append(Rm @ q.p1); rr.append(Cage.POST_R)
-        # the spine down the axis, and the two end plates as fat discs
+        # the spine down the axis
         x0 = -(Cage.END_FREE + Cage.END_PLATE_T)
         x1 = self.t.length + Cage.END_FREE + Cage.END_PLATE_T
         p0.append(np.array([x0, 0.0, 0.0])); p1.append(np.array([x1, 0.0, 0.0]))
         rr.append(self.spine_r())
+        # THE END PLATES ARE DISCS, AND A CAPSULE CANNOT BE ONE.  Swept
+        # about a 3 mm segment, a capsule of the plate's radius is a BALL
+        # 120 mm across, and it refuses every station within a plate radius
+        # of the truss's end.  On the 92 mm section the first joint sits
+        # far enough out that the ball never bites and the error went
+        # unseen; on a 115 mm section it forbids both end joints and the
+        # whole truss becomes unplannable.  Spokes: radial capsules as
+        # thick as the plate, which is the shape the plate actually has.
         for xa in (x0, self.t.length + Cage.END_FREE):
-            p0.append(np.array([xa, 0.0, 0.0]))
-            p1.append(np.array([xa + Cage.END_PLATE_T, 0.0, 0.0]))
-            rr.append(self.plate_r())
+            mid = xa + Cage.END_PLATE_T / 2.0
+            for k in range(Cage.PLATE_SPOKES):
+                a = 2.0 * pi * k / Cage.PLATE_SPOKES
+                v = np.array([0.0, cos(a), sin(a)]) * self.plate_r()
+                p0.append(Rm @ np.array([mid, 0.0, 0.0]))
+                p1.append(Rm @ (np.array([mid, 0.0, 0.0]) + v))
+                rr.append(Cage.END_PLATE_T / 2.0)
         return np.array(p0), np.array(p1), np.array(rr)
 
     def spine_r(self):

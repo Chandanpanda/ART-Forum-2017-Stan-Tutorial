@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 import numpy as np
 
 from truss import structure, geometry, fixture, approach
-from truss.spec import Truss, Gantry, Process, Ring, Head
+from truss.spec import Truss, Gantry, Process, Ring, Head, Cage
 from truss.geometry import TrussGeometry, theta_chord_up, rot_x
 
 VERBOSE = "-v" in sys.argv
@@ -139,6 +139,32 @@ def main():
           "%.2f measured at the centre, %.2f across the band" % (seat_c, a.seated if a else -1))
     check("...which is exactly what the spec's closed form now charges for",
           r_in_needed(steep50) > ring_r_in(), "needs %.2f of %.1f" % (r_in_needed(steep50), ring_r_in()))
+    # ------------------------------- THE END PLATE IS A DISC, NOT A BALL
+    # A capsule swept about the plate's 3 mm thickness with the plate's
+    # radius is a ball 120 mm across.  On a 92 mm section the first joint
+    # stands clear of it and the error was invisible; on a 115 mm section
+    # it forbids both end joints and the truss cannot be planned at all.
+    deep = Truss(length=1000.0, side=115.0, alpha=40.0, d_chord=3.0, d_diag=1.5, name="deep")
+    g = TrussGeometry(deep)
+    fx = fixture.Fixture(g)
+    f0, f1, fr = fx.obstacles(0.0)
+    x0 = -(Cage.END_FREE + Cage.END_PLATE_T)
+    near = [(a, b, r) for a, b, r in zip(f0, f1, fr)
+            if abs(a[0] - (x0 + Cage.END_PLATE_T / 2.0)) < 1e-6]
+    check("the end plate is modelled by samples no thicker than the plate",
+          bool(near) and max(r for _a, _b, r in near) <= Cage.END_PLATE_T / 2.0 + 1e-9,
+          "%d spokes, thickest %.2f mm against a %.1f mm plate"
+          % (len(near), max((r for _a, _b, r in near), default=-1), Cage.END_PLATE_T))
+    check("...and it reaches the radius the plate reaches",
+          bool(near) and abs(max(np.linalg.norm(b[1:]) for _a, b, _r in near)
+                             - fx.plate_r()) < 1e-6,
+          "%.1f mm against %.1f" % (max((np.linalg.norm(b[1:]) for _a, b, _r in near),
+                                        default=-1), fx.plate_r()))
+    st = approach.plan_truss(g, fx, span=0.0)
+    check("a deep section's END joints get stations: the plate does not swallow them",
+          all(v[1] is not None for v in st.values()),
+          "chords refused: %s" % [k for k, v in st.items() if v[1] is None])
+
     # ---------------------------------------------------- refusals
     steep = Truss(length=400.0, side=60.0, alpha=55.0, d_chord=3.0, d_diag=2.0, name="steep")
     g = TrussGeometry(steep)

@@ -85,7 +85,7 @@ from math import atan2, cos, degrees, pi, radians, sin, sqrt
 
 import numpy as np
 
-from .spec import Bracket, Payload, Process, Truss
+from .spec import Bracket, Load, Payload, Process, Stock, Truss
 from .geometry import chord_phi, radial, rot_x
 
 # the three chords of a face, as geometry.FACES has them
@@ -95,12 +95,38 @@ _PHI = None
 @dataclass(frozen=True)
 class Strut:
     """One rod of the mount, in the cage frame (mm)."""
-    kind:  str            # "batten" | "strut" | "platform"
+    kind:  str            # "collar" | "grid" | "batten" | "strut"
     index: int
     p0:    np.ndarray     # at the chord end / platform corner
     p1:    np.ndarray
-    r:     float
+    r:     float          # rod radius, or half the sheet for a collar band
     end:   int            # 0 for the x=0 end, 1 for the far end
+    w:     float = None   # half-WIDTH, for the flat things.  A collar band
+                          # is a strip of sheet and its two dimensions are
+                          # not the same; a rod's are.
+    normal: object = None # the sheet's normal, for a collar band
+
+    @property
+    def half_w(self):
+        return self.r if self.w is None else self.w
+
+    def pad_along(self, unit):
+        """Half-thickness of this element measured along `unit`, mm.
+
+        A rod is the same in every direction across its axis; a strip of
+        sheet is NOT -- it is half a millimetre through and four wide, and
+        padding it by the wide one in every direction reads the collar as
+        1.5 mm inside a board it is resting on.  The pad has to know which
+        way it is being asked about."""
+        u = np.asarray(unit, float)
+        a = self.axis
+        u = u - float(u @ a) * a                # across the element only
+        if self.w is None or self.normal is None:
+            return self.r * float(np.linalg.norm(u))
+        n = np.asarray(self.normal, float)
+        n = n / np.linalg.norm(n)
+        e = np.cross(a, n)
+        return abs(float(u @ n)) * self.r + abs(float(u @ e)) * self.w
 
     @property
     def axis(self):
@@ -133,22 +159,20 @@ class Mount:
 
 
 # ------------------------------------------------------------- the solver
-def platform_radius(payload=Payload):
-    """Where the six struts land, as a radius from the spine's axis.
+def platform_radius(payload=Payload, d_strut=1.5):
+    """Radius of the four crossings from the spine's axis, mm.
 
     THIS USED TO BE THE HOUSING'S OWN CIRCUMRADIUS, on the belief that the
     struts bonded straight to it.  They cannot: a ring of landings centred
     on the spine's axis only lies on the housing if the housing straddles
-    that axis, and it does not -- it is a shallow block on the FRONT of the
-    module.  Two of the three landings came out on it and the third came out
-    off the back of the board, in mid air, for as long as this existed.  The
-    check that was meant to catch it compared a radius with a circumradius
-    and never asked whether a point was inside the solid.
+    that axis, and it does not.  Then it was a plate's circumradius, and
+    that plate was a fin standing on edge through the middle of the camera.
 
-    So the landings are on a BRACKET now, a collar round the housing, and
-    this is the radius its arms present them at.
+    It is now read off the grid, which is placed where the STRUTS can reach
+    it -- one clearance outside the module's silhouette on every side.
     """
-    return Bracket.landing_r(payload)
+    gx, gu = Bracket.grid_half(payload, d_strut)
+    return sqrt(gx * gx + gu * gu)
 
 
 def housing_extent(payload=Payload):
@@ -159,6 +183,57 @@ def housing_extent(payload=Payload):
     h = payload.CASE[0] / 2.0
     return ((-h, h), (payload.BOX[1] / 2.0 - payload.CASE_PROUD,
                       payload.BOX[1] / 2.0), (-h, h))
+
+
+def payload_solid(payload=Payload):
+    """The module as the boxes it really occupies, camera frame, mm:
+    ((x lo,hi), (look lo,hi), (up lo,hi)) each.
+
+    NOT ONE SLAB.  Behind the board's front face the module is solid over
+    its whole outline; in front of it there is only the lens housing, and
+    the collar goes THERE -- it seats on the board's front face and the
+    housing stands through its aperture.  Tested against a single 9 mm box
+    the collar reads 2.25 mm inside the part, which is the check being
+    wrong; tested against this it reads as sitting on it, which is the
+    thing being built."""
+    b, h = payload.BOX, housing_extent(payload)
+    return (((-b[0] / 2.0, b[0] / 2.0), (-b[1] / 2.0, h[1][0]),
+             (-b[2] / 2.0, b[2] / 2.0)), h)
+
+
+def payload_clearance(mount, geom, end=0, payload=Payload, aperture=True):
+    """How far the WORST part of the mount is inside the module, mm.
+
+    Positive means something is in the part.  This is the check that was
+    missing when the collar was a fin: it stood 4.50 mm into the PCB, along
+    with the two grid rods laid on it, and every number the mount reported
+    was for a part that cannot be made.  It was found by looking at a
+    render.  Nothing static asked the question.
+    """
+    xh, look, up = landing_frame(geom, payload)
+    c = np.asarray(mount.payload[end][0], float)
+    ap = Bracket.aperture(payload)
+    solids = payload_solid(payload)
+    ss = np.linspace(0.0, 1.0, 81)[:, None]
+    worst, who = -1e9, None
+    for r in mount.of(end):
+        d = (r.p0 + ss * (r.p1 - r.p0)) - c
+        v = np.stack([d @ xh, d @ look, d @ up], axis=1)
+        pad = [r.pad_along(u) for u in (xh, look, up)]
+        for si, box in enumerate(solids):
+            inside = np.min(np.stack(
+                [np.minimum(v[:, i] - box[i][0], box[i][1] - v[:, i]) + pad[i]
+                 for i in range(3)]), axis=0)
+            if aperture and si == 0:
+                # through the aperture is where the housing goes, and the
+                # collar is cut to it -- not a collision
+                inside = np.where((np.abs(v[:, 0]) <= ap[0] / 2.0 + pad[0])
+                                  & (np.abs(v[:, 2]) <= ap[1] / 2.0 + pad[2]),
+                                  -1e9, inside)
+            k = int(np.argmax(inside))
+            if float(inside[k]) > worst:
+                worst, who = float(inside[k]), (r.kind, r.index, v[k])
+    return worst, who
 
 
 def landing_frame(geom, payload=Payload):
@@ -271,7 +346,7 @@ def fov_clear(mount, payload=Payload, end=None):
         # calls this a dozen times per candidate and the design sweep asks
         # for a candidate a thousand times, so the loop is an array
         pts = np.concatenate([rod.p0 + ss * (rod.p1 - rod.p0) for rod in rods])
-        rad = np.repeat([rod.r for rod in rods], ss.shape[0])
+        rad = np.repeat([max(rod.r, rod.half_w) for rod in rods], ss.shape[0])
         pts = pts - np.asarray(centre, float)
         d = pts @ f
         front = d > 0.0                          # behind the lens: never in shot
@@ -281,7 +356,13 @@ def fov_clear(mount, payload=Payload, end=None):
         # distance outside the pyramid, along each of its two fans
         ox = np.abs(pts[front] @ ax) - d * tx
         oz = np.abs(pts[front] @ up) - d * tz
-        worst = min(worst, float((np.maximum(ox, oz) + rad[front]).min()))
+        # MINUS the radius, not plus.  A rod's nearest surface is `rad`
+        # closer to the optical axis than its centreline, so adding it
+        # measured the FAR side of the rod and let the near side into the
+        # picture: at the mechanical standoff this read -0.05 mm where the
+        # end batten was 1.55 mm in shot, and `fov_standoff` was solving
+        # for the wrong surface every time it was called.
+        worst = min(worst, float((np.maximum(ox, oz) - rad[front]).min()))
     return worst
 
 
@@ -294,7 +375,6 @@ def solve(geom, payload=Payload, d_strut=1.5, clear=None, standoff_mm=None,
     which is the only way the aim's own rule can be shown to bind.
     """
     t = geom.t
-    rp = platform_radius(payload)
     so = mech_standoff(payload, clear) if standoff_mm is None else standoff_mm
     # THE SAME MAPPING THE CHORDS USE.  This was built as
     # (0, sin az, -cos az) while every chord direction comes from
@@ -304,45 +384,136 @@ def solve(geom, payload=Payload, d_strut=1.5, clear=None, standoff_mm=None,
     # against a number cannot catch a frame error; check_mount now measures
     # the built vector against the built chords.
     look = radial(look_azimuth(geom) if azimuth is None else azimuth)
+    xh = np.array([1.0, 0.0, 0.0])
+    up = np.cross(look, xh)
+    up = up / np.linalg.norm(up)
+    gx, gu = Bracket.grid_half(payload, d_strut, clear)
+    px, pu = Bracket.plate_half(payload, d_strut, clear)
+    bw = Bracket.band_w(d_strut)
+    seat = Bracket.seat_l(payload)
+    l0 = Bracket.layer_l(0, payload, d_strut)
+    l1 = Bracket.layer_l(1, payload, d_strut)
+    over = Bracket.OVERRUN
     rods, poses = [], []
     for end, x0 in ((0, 0.0), (1, t.length)):
         sign = -1.0 if end == 0 else 1.0
         base = [geom.chord_point(k, x0) for k in range(t.n_chords)]
-        # THREE LANDINGS ON THE ENCLOSURE, AND ALL OF THEM BEHIND THE LENS.
-        # Idealised onto a circle of the enclosure's radius, one landing came
-        # out on the axis 5.7 mm in FRONT of the lens and fov_clear read
-        # -19 mm -- a strut in shot.  The enclosure is a box, not a sphere:
-        # its rear-facing side is a real face and the front one carries the
-        # lens, so the landings go on the rear at `back`, where nothing of
-        # the mount can enter the field.
-        back = payload.CASE[0] / 2.0
-        plat = []
-        for k in range(t.n_chords):
-            d = radial(chord_phi(k)) * rp
-            plat.append(np.array([x0 + sign * (so - back), d[1], d[2]]))
         n = t.n_chords
-        # THE BRACKET'S ARMS, from the collar round the housing out to each
-        # landing.  Carried as rods so they are in the field-of-view test
-        # with everything else: a part that reaches out past the housing is
-        # exactly the sort of thing that ends up in shot.
-        for k in range(n):
-            d = radial(chord_phi(k))
-            root = np.array([x0 + sign * (so - back),
-                             d[1] * payload.case_r(), d[2] * payload.case_r()])
-            rods.append(Strut("arm", len(rods), root, plat[k], Bracket.ARM_W / 2.0, end))
+        xp = x0 + sign * so                     # the module's own centre
+        c = np.array([xp, 0.0, 0.0])
+
+        def at(dx, dl, du):
+            """A point in the CAMERA's frame: along the spine, along the
+            viewing direction, across.  Every part of the mount is placed
+            here and nowhere else -- the fin was built in a frame with no
+            x in it at all, which is why it could be inside the part and
+            look right."""
+            return c + dx * xh + dl * look + du * up
+
+        # ---- THE COLLAR: a frame of laser-cut sheet lying ON the board,
+        # the housing through its aperture.  Four band segments round the
+        # rectangle the grid lies on, four ribs in to the ring.  The plate's
+        # own plane is PARALLEL TO THE BOARD, which is the only plane a
+        # plate on the housing can be in; as a fin on edge it was 4.50 mm
+        # inside the PCB.
+        lc = 0.5 * (seat[0] + seat[1])
+        bx, bu = px - bw / 2.0, pu - bw / 2.0   # band centrelines
+        rx, ru = Bracket.ring_half(payload)
+        bands = [((-bx, +bu), (+bx, +bu)), ((+bx, +bu), (+bx, -bu)),
+                 ((+bx, -bu), (-bx, -bu)), ((-bx, -bu), (-bx, +bu))]
+        ribs = [((0.0, +ru), (0.0, +bu)), ((0.0, -ru), (0.0, -bu)),
+                ((+rx, 0.0), (+bx, 0.0)), ((-rx, 0.0), (-bx, 0.0))]
+        for (ax0, au0), (ax1, au1) in bands + ribs:
+            rods.append(Strut("collar", len(rods), at(ax0, lc, au0),
+                              at(ax1, lc, au1), Bracket.SHEET / 2.0, end,
+                              w=bw / 2.0, normal=look))
+
+        # ---- THE GRID: four rods on the plate's front face, two layers.
+        # Layer 0 runs across the spine, laid along the band's two long
+        # sides; layer 1 lies on layer 0 and is WOUND to it where they
+        # cross, with the same thread the truss's own joints use.  Each rod
+        # is bonded along a whole band -- a line of adhesive, not a dab --
+        # which is what the plate's outline is for.
+        grid = []
+        for su in (+1.0, -1.0):                 # layer 0, along the spine
+            grid.append((at(-gx - over, l0, su * gu), at(+gx + over, l0, su * gu)))
+        for sx in (+1.0, -1.0):                 # layer 1, across it
+            grid.append((at(sx * gx, l1, -gu - over), at(sx * gx, l1, +gu + over)))
+        for a, b in grid:
+            rods.append(Strut("grid", len(rods), a, b, d_strut / 2.0, end))
+        # the four crossings, where a strut lands on two rods at once
+        lx = 0.5 * (l0 + l1)
+        cross = [at(sx * gx, lx, su * gu) for sx in (+1.0, -1.0)
+                 for su in (+1.0, -1.0)]
+
         for k in range(n):
             rods.append(Strut("batten", len(rods), base[k], base[(k + 1) % n],
                               d_strut / 2.0, end))
+        # ---- SIX STRUTS, chord end to crossing.  Each chord feeds the two
+        # crossings NEAREST IT IN THE CAMERA'S OWN FRAME, which is what
+        # keeps them out of the board: the chord behind the camera reaches
+        # the two crossings on the truss side of the module and stays
+        # outboard of it in x the whole way, and the two chords in front
+        # reach the two crossings ahead of the module's front face without
+        # ever entering its slab.
         for k in range(n):
-            rods.append(Strut("strut", len(rods), base[k], plat[k], d_strut / 2.0, end))
-            rods.append(Strut("strut", len(rods), base[k], plat[(k + 1) % n],
-                              d_strut / 2.0, end))
-        # the camera: enclosure centred on the axis in the platform's plane,
-        # so its mass AND its optical axis are both on the spine's axis.  It
-        # looks out along the face normal of the cage's own zero angle.
-        poses.append((np.array([x0 + sign * so, 0.0, 0.0]), look,
-                      payload.LENS_D / 2.0))
-    return Mount(tuple(rods), rp, so, d_strut, tuple(poses))
+            b0 = base[k]
+            order = sorted(range(4),
+                           key=lambda i: float(np.linalg.norm(cross[i] - b0)))
+            for i in order[:2]:
+                rods.append(Strut("strut", len(rods), b0, cross[i],
+                                  d_strut / 2.0, end))
+        # the camera: the module's centre on the spine's axis, so its mass
+        # AND its optical axis are both on it.  It looks out along the face
+        # normal of the cage's own zero angle.
+        poses.append((np.array([xp, 0.0, 0.0]), look, payload.LENS_D / 2.0))
+    return Mount(tuple(rods), platform_radius(payload, d_strut), so, d_strut,
+                 tuple(poses))
+
+
+def landings_and_pairs(geom, payload=Payload, d_strut=1.5, standoff_mm=None):
+    """The four crossings and the six (chord, crossing) struts, as the
+    frame model wants them: offsets from the platform's centre, in mm.
+
+    Read back off the solved mount rather than re-derived, so the structure
+    priced is the structure drawn."""
+    so = fov_standoff(geom, payload, d_strut) if standoff_mm is None else standoff_mm
+    m = solve(geom, payload, d_strut, standoff_mm=so)
+    c = np.asarray(m.payload[0][0], float)
+    land, pairs = [], []
+    for r in m.of(0):
+        if r.kind != "strut":
+            continue
+        key = tuple(np.round(r.p1, 6))
+        if key not in [tuple(np.round(l, 6)) for l in land]:
+            land.append(np.asarray(r.p1, float))
+        li = [tuple(np.round(l, 6)) for l in land].index(key)
+        bk = min(range(geom.t.n_chords),
+                 key=lambda k: float(np.linalg.norm(
+                     geom.chord_point(k, 0.0) - np.asarray(r.p0, float))))
+        pairs.append((bk, li))
+    return (tuple(tuple(float(v) for v in (l - c)) for l in land), tuple(pairs), so)
+
+
+def strut_k(geom, payload=Payload, d_strut=1.5, standoff_mm=None):
+    """Axial stiffness of one mount strut, N/mm -- EA over its own length.
+
+    Read off the solved mount rather than assumed, because it is what
+    everything else in the mount is held against: the fillet that bonds it,
+    and the plate it lands on."""
+    m = solve(geom, payload, d_strut, standoff_mm=standoff_mm)
+    L = np.mean([r.length for r in m.of(0) if r.kind == "strut"])
+    return Stock.E * Stock.area(d_strut) / float(L)
+
+
+def flange(geom, payload=Payload, d_strut=1.5, standoff_mm=None):
+    """How far the collar's rim is folded back, mm.
+
+    Zero, and that is a measurement rather than a default: folding the rim
+    is what a 1.5 mm plate would need to be stiffer than the strut it
+    holds, and the frame model says the plate's stiffness is not what the
+    mount is short of.  See Bracket.FLANGE; check_mount re-runs it."""
+    return Bracket.FLANGE
 
 
 def nose_spec(geom, payload=Payload, d_strut=1.5, d_batten=3.0):
@@ -357,10 +528,23 @@ def nose_spec(geom, payload=Payload, d_strut=1.5, d_batten=3.0):
     Keys are spine.build.Nose.around's arguments, so it is
     `Nose.around(**nose_spec(geom))` at the far end.
     """
-    return {"box": tuple(payload.BOX),
-            "standoff": fov_standoff(geom, payload, d_strut),
-            "r_platform": platform_radius(payload),
-            "rigid": True,              # the enclosure IS the platform
+    land, pairs, so = landings_and_pairs(geom, payload, d_strut)
+    fl = flange(geom, payload, d_strut, so)
+    return {"box": tuple(payload.BOX), "standoff": so,
+            "r_platform": platform_radius(payload, d_strut),
+            "rigid": True,              # the grid rectangle, closed by the plate
+            "landings": land, "strut_pairs": pairs,
+            # WHAT THE PLATE COSTS, priced instead of assumed.  The four
+            # landings are tied to each other by the collar's own band, and
+            # a flat 1.5 mm band is 149 N/mm out of its plane against the
+            # 5838 of the strut that lands on it.  The ring carries the
+            # band's real section, so the model bends what the part bends.
+            "plat_A": Bracket.band_A(d_strut, fl),
+            "plat_I": Bracket.band_I(d_strut, fl),
+            # ...and what the plate WEIGHS, which is the other half of the
+            # same trade: the fold that makes the collar stiff is the fold
+            # that makes it heavy, and only the model can say which wins.
+            "plate_g": Bracket.mass(payload, d_strut, None, fl),
             "d_strut": d_strut, "d_batten": d_batten}
 
 
@@ -483,20 +667,37 @@ def _checks():
         ("aimed at a face, the field of view costs no standoff at all: mechanical "
          "clearance already keeps the truss out of the picture",
          abs(_FOV_SO - mech_standoff()) < 1e-9 and fov_clear(_M) > 0.0),
-        ("...and aimed at a CHORD instead it costs 11.8 mm of extra standoff, which is "
-         "lever arm the mount would carry for nothing",
-         fov_standoff(_G, azimuth=chord_phi(0)) > _FOV_SO + 10.0),
+        # AND AIMED AT A CHORD, NO STANDOFF CLEARS IT AT ALL.  Standing further
+        # off moves the truss out of the picture but not the collar: the
+        # plate travels with the camera, and its corners are at the chord
+        # azimuths.  Aim at a corner and it is in shot at any distance.
+        ("...and aimed at a CHORD instead, NO standoff clears the picture -- the collar "
+         "travels with the camera, so its corner is in shot at any distance",
+         fov_standoff(_G, azimuth=chord_phi(0)) is None),
         ("...and nothing of the truss or the mount is left in the picture",
          fov_clear(_M) > 0.0),
         ("every mount rod can be laid by the cage and the gripper together, with no axis "
          "the machine does not have",
          all(float(np.linalg.norm(axis_from(*pose_for(r.axis)) - r.axis)) < 1e-9
              for r in _M.rods)),
-        ("the landing radius is derived from the housing the collar wraps, not chosen",
-         abs(platform_radius() - (Payload.case_r() + Bracket.WALL)) < 1e-9),
-        ("...and the bracket's own arms are not in the picture either -- they are "
-         "counted in the field test with every other rod",
-         len(_M.by_kind("arm")) == 6 and fov_clear(_M) > 0.0),
+        ("the landing radius is derived from the slot, which is derived from the "
+         "housing: the plate is the smallest triangle that can hold the cut",
+         abs(platform_radius()
+             - 2.0 * (Bracket.slot()[0] / 2.0 + Bracket.WALL)) < 1e-9),
+        ("...and the collar plate itself is not in the picture either -- its three "
+         "edges are counted in the field test with every rod",
+         len(_M.by_kind("collar")) == 6 and fov_clear(_M) > 0.0),
+        ("the slot is cut from the housing and the plate from the slot, so nothing "
+         "about the collar is a chosen number",
+         abs(Bracket.slot()[0] - (Payload.CASE[1] + 2 * Bracket.BOND_GAP)) < 1e-9
+         and abs(platform_radius() - 2.0 * (Bracket.slot()[0] / 2.0
+                                            + Bracket.WALL)) < 1e-9),
+        ("...and the plate's inradius clears the slot it has to hold, which is what "
+         "sets the landing radius at all",
+         platform_radius() / 2.0 >= Bracket.slot()[0] / 2.0 + Bracket.WALL - 1e-9),
+        ("the glue line round the slot carries the head a thousand times over",
+         Bracket.bond_area() * Payload.BOND_MU
+         > 500.0 * Load.tip_mass() / 1000.0 * Load.G * Load.LATERAL_G),
         ("a filleted rod end is stiffer than the rod it holds, so the bond is not the compliance",
          fillet_stiffness(1.5)[0] > 150e3 * pi * 0.75 ** 2 / 60.0),
         ("...and carries the service load a thousand times over",

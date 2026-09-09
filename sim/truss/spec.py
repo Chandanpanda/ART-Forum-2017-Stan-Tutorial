@@ -147,44 +147,231 @@ class Carrier:
 
 
 class Bracket:
-    """The one rigid part in the mount, and why there has to be one.
+    """The collar: ONE LASER-CUT ALUMINIUM PLATE per camera, and why.
 
-    THE CAMERA HAS NO THREE-POINT SURFACE.  A hexapod needs three landings
-    in a plane roughly parallel to the truss's end triangle -- that is,
-    perpendicular to the spine.  This module offers two candidates and both
-    fail, measured on the frame model at the chosen truss:
+    THE CAMERA HAS NO THREE-POINT SURFACE OF ITS OWN.  A hexapod needs its
+    landings in a plane, spread, on something stiff.  The module offers two
+    candidates and the frame model refuses both: its lens housing is the
+    only surface in the end triangle's plane and is too thin to be a
+    triangle (1.08 of the yaw budget), and its own mounting holes make a
+    proper triangle and then work through FR4 that is twenty-six times
+    softer than the strut bonded to it.
 
-        the housing's inboard face, 8.5 x 3.0 mm      1.16 of the budget
-        the board's own M2 holes, board rigid         0.72   (flattering)
-        ...the same, board at its real 216 N/mm       3.31
-        a rigid collar carrying landings at 8 mm      0.64
+    SO: A FLAT PLATE PARALLEL TO THE BOARD, with a CLOSED SQUARE APERTURE
+    cut to the lens housing.  The plate drops over the housing and seats on
+    the board's front face; the housing is bonded on all FOUR flanks of the
+    aperture.  That orientation is the whole correction, and it was found by
+    looking at a render:
 
-    The housing face is stiff but too thin to be a triangle -- 1.5 mm of
-    depth against 4.25 of width.  The mounting holes make a proper triangle
-    and then work through FR4 over 21 mm, which is 26 times softer than the
-    strut bonded to it; that path is not a mount, it is a spring.
+        THE PLATE USED TO BE A FIN STANDING ON EDGE, in the plane
+        perpendicular to the spine -- parallel to the end triangle, which is
+        where a hexapod's platform wants to be.  A fin through the camera's
+        centre is INSIDE THE CAMERA.  It reached 4.60 mm either side of the
+        module's mid-plane and the module is only 4.50 mm thick, so its back
+        half, and the two grid rods laid along it, were buried in the PCB:
+        6 of 19 elements at one end, the deepest 4.50 mm in.  Every number
+        the mount reported was for a part that cannot exist.
 
-    So: a collar bonded round the housing -- the stiff part -- with three
-    arms presenting the landings clear of it.  It is the machined part this
-    design spent a long time claiming it did not need, and the claim was
-    only ever true of a mount whose third landing was in mid air.
+    A plate on the housing can only lie parallel to the board.  It is the
+    one orientation in which the aperture is a closed hole -- four walls of
+    bond instead of three -- and in which nothing of the mount is behind the
+    module's front face at all.
+
+    WHAT THE PLATE IS SHAPED LIKE.  Not a solid rectangle: at the size the
+    struts need it would be 3 g of aluminium per end against a 4 g camera.
+    It is a FRAME -- a band round the rectangle the four grid rods lie on,
+    four ribs in to a ring round the aperture.  The rods land on the band's
+    corners, which is where a frame is stiffest, and every rod is bonded
+    along the band rather than at a point.
+
+    NOTHING HERE IS CHOSEN.  The aperture is the housing plus a bond gap;
+    the ring is the aperture plus a wall; the band is a rod plus a wall
+    either side; the plate's outline is where the grid has to be for the
+    STRUTS to clear the module (see `grid_half`); and the mass is the cut
+    area times the sheet.
     """
-    WALL        = 1.5          # mm, the collar's wall round the housing
-    ARM_W       = 2.0          # mm [VERIFY: printed or milled]
-    MASS        = 0.8          # g [VERIFY: print one and weigh it]
+    SHEET       = 1.5          # mm, stock aluminium sheet
+    E           = 69.0e3       # N/mm^2
+    RHO         = 2.70e-3      # g/mm^3
+    BOND_GAP    = 0.10         # mm, the aperture cut oversize for adhesive
+    WALL        = 1.5          # mm of metal beside a cut edge
+    OVERRUN     = 4.0          # mm a grid rod runs past a crossing, so the
+                               # crossing has rod either side of it to wind
+                               # against rather than a rod end
 
     @classmethod
-    def landing_r(cls, payload=None):
-        """Radius at which the arms present the three landings, mm.
+    def aperture(cls, payload=None):
+        """(across the spine, across `up`) of the square hole the lens
+        housing passes through, mm.  Cut from the housing, not chosen."""
+        p = Payload if payload is None else payload
+        return (p.CASE[0] + 2.0 * cls.BOND_GAP, p.CASE[1] + 2.0 * cls.BOND_GAP)
 
-        Derived from the housing it wraps, not chosen: the collar has to
-        clear the housing's own circumradius, and beyond that the radius
-        barely matters -- swept 3 to 24 mm the budget moves 9%, where
-        ROTATING the triangle off the chords moves it 20%.  So it is taken
-        as small as the collar allows, which is also the shortest arm.
+    @classmethod
+    def bond_area(cls, payload=None):
+        """mm^2 in shear: four aperture walls against four housing flanks.
+
+        A CLOSED aperture is worth having for this alone -- the fin's open
+        slot could only touch three sides, and one of those was the housing's
+        rear face, which is where the plate met the board."""
+        p = Payload if payload is None else payload
+        return 2.0 * (p.CASE[0] + p.CASE[1]) * cls.SHEET
+
+    @classmethod
+    def seat_l(cls, payload=None):
+        """(lo, hi) of the plate along the viewing direction, mm from the
+        module's centre.  It seats on the board's FRONT FACE -- that is what
+        squares the camera to the truss -- and must finish inside the height
+        the housing stands proud, or the aperture's walls are not all in
+        contact with it."""
+        p = Payload if payload is None else payload
+        lo = p.BOX[1] / 2.0 - p.CASE_PROUD
+        return (lo, lo + cls.SHEET)
+
+    @classmethod
+    def ring_half(cls, payload=None):
+        """(half across the spine, half across `up`) of the ring of metal
+        round the aperture."""
+        a = cls.aperture(payload)
+        return (a[0] / 2.0 + cls.WALL, a[1] / 2.0 + cls.WALL)
+
+    @classmethod
+    def grid_half(cls, payload=None, d_rod=1.5, clear=None):
+        """(|x|, |up|) of the four grid rods in the camera's frame, mm --
+        and so of the four crossings the struts land on.
+
+        ONE CLEARANCE OUTSIDE THE MODULE'S OWN SILHOUETTE, on every side.
+        That is not tidiness, it is what makes the mount buildable: the
+        camera looks out through a FACE of the truss, so one chord lies
+        directly behind it, and a strut from that chord can only reach the
+        grid without passing through the board if it stays outboard of the
+        board in x the whole way.  It starts outboard (the chord ends are
+        `standoff` back, and the standoff is half the board plus a
+        clearance); it stays outboard only if the crossing it runs to is
+        outboard too.  Inboard of this the mount is drawn through the PCB.
         """
         p = Payload if payload is None else payload
-        return p.case_r() + cls.WALL
+        c = Process.SEAT_CLEAR if clear is None else clear
+        return (p.BOX[0] / 2.0 + c + d_rod / 2.0,
+                p.BOX[2] / 2.0 + c + d_rod / 2.0)
+
+    @classmethod
+    def plate_half(cls, payload=None, d_rod=1.5, clear=None):
+        """(half across the spine, half across `up`) of the plate's outline,
+        mm: the grid, plus enough metal for the rod to lie wholly on it."""
+        gx, gu = cls.grid_half(payload, d_rod, clear)
+        return (gx + d_rod / 2.0, gu + d_rod / 2.0)
+
+    # THE FLANGE, and why a flat plate will not do.  A 1.5 mm frame reaching
+    # 15 mm from the aperture to a crossing is 149 N/mm out of its own plane
+    # against a strut's 5616 -- thirty-eight times softer, which is the same
+    # failure the module's own circuit board was rejected for.  Bent BACK
+    # along the module's flanks (outboard of the board, so it fouls nothing
+    # and stays behind the lens) the same sheet becomes a channel, and the
+    # stiffness goes as the cube of the fold.  `flange_h` solves for it.
+    # AND THE TRADE SAYS DO NOT FOLD IT.  With the ring carrying the band's
+    # real section, the collar's own bending costs 0.001 of the yaw budget
+    # and every millimetre of fold costs 0.011 in mass:
+    #
+    #     fold 0.0 mm   2.49 g    149 N/mm    budget 0.815
+    #     fold 3.0 mm   3.97 g   2156 N/mm    budget 0.848
+    #     fold 4.9 mm   4.91 g   6125 N/mm    budget 0.869   <- the rule's answer
+    #     rigid, at 3.97 g                    budget 0.849
+    #
+    # The last row is the point: a plate assumed INFINITELY stiff at the
+    # folded plate's mass is no better than the folded plate, so what the
+    # fold buys is already worth nothing.  The stiffness rule the fillet
+    # uses -- be stiffer than the strut you hold -- asks for 4.9 mm here and
+    # is simply the wrong rule for a part whose mass is a tenth of the head.
+    # check_mount re-runs the trade rather than trusting this comment.
+    FLANGE      = 0.0          # mm, chosen by that trade and no other way
+    FLANGE_STEP = 0.1          # mm, `flange_h` solves to this
+
+    @classmethod
+    def flange_room(cls, payload=None):
+        """How deep the fold may be, mm: from the plate's seat back along
+        the module, no further than the module itself."""
+        p = Payload if payload is None else payload
+        return cls.seat_l(payload)[0] + p.BOX[1] / 2.0
+
+    @classmethod
+    def band_I(cls, d_rod=1.5, flange=0.0):
+        """Second moment of the band's section about the axis in the sheet,
+        mm^4 -- a strip of sheet with a fold at its outer edge."""
+        w, t, h = cls.band_w(d_rod), cls.SHEET, float(flange)
+        a1, y1 = w * t, t / 2.0
+        a2, y2 = t * h, t + h / 2.0
+        if a2 <= 0.0:
+            return w * t ** 3 / 12.0
+        yb = (a1 * y1 + a2 * y2) / (a1 + a2)
+        return (w * t ** 3 / 12.0 + a1 * (y1 - yb) ** 2
+                + t * h ** 3 / 12.0 + a2 * (y2 - yb) ** 2)
+
+    @classmethod
+    def band_A(cls, d_rod=1.5, flange=0.0):
+        """Area of the band's section, mm^2 -- the strip plus its fold."""
+        return cls.band_w(d_rod) * cls.SHEET + cls.SHEET * float(flange)
+
+    @classmethod
+    def flange_h(cls, k_strut, payload=None, d_rod=1.5, clear=None):
+        """The least fold that would keep the PLATE from being the
+        compliance, mm -- the answer the fillet's rule gives, kept so
+        check_mount can price it and show it is not worth buying."""
+        room = cls.flange_room(payload)
+        h = 0.0
+        while h < room:
+            if cls.corner_k(d_rod, payload, clear, h) >= k_strut:
+                return h
+            h += cls.FLANGE_STEP
+        return room
+
+    @classmethod
+    def band_w(cls, d_rod=1.5):
+        """Width of the frame's band, mm: a rod and a wall either side.  A
+        rod bonds along the band, so this is the width of the bond, not a
+        clearance."""
+        return d_rod + 2.0 * cls.WALL
+
+    @classmethod
+    def layer_l(cls, i, payload=None, d_rod=1.5):
+        """Centre of grid layer i along the viewing direction, mm from the
+        module's centre.  Layer 0 lies on the plate's front face; layer 1
+        lies on layer 0 and is wound to it where they cross."""
+        return cls.seat_l(payload)[1] + (i + 0.5) * d_rod
+
+    @classmethod
+    def area(cls, payload=None, d_rod=1.5, clear=None, flange=0.0):
+        """mm^2 of sheet actually cut: the band, four ribs, the ring, and
+        the fold that is bent back off the outline."""
+        ax, au = cls.plate_half(payload, d_rod, clear)
+        rx, ru = cls.ring_half(payload)
+        apx, apu = cls.aperture(payload)
+        w = cls.band_w(d_rod)
+        band = 4.0 * (ax * au - (ax - w) * (au - w))
+        ring = 4.0 * (rx * ru - apx * apu / 4.0)
+        ribs = 2.0 * w * max(0.0, (ax - w) - rx) + 2.0 * w * max(0.0, (au - w) - ru)
+        fold = 2.0 * (2.0 * ax + 2.0 * au) * float(flange)
+        return band + ring + ribs + fold
+
+    @classmethod
+    def mass(cls, payload=None, d_rod=1.5, clear=None, flange=0.0):
+        """g, computed from the cut, not guessed."""
+        return cls.area(payload, d_rod, clear, flange) * cls.SHEET * cls.RHO
+
+    @classmethod
+    def corner_k(cls, d_rod=1.5, payload=None, clear=None, flange=None):
+        """N/mm at a crossing, out of the plate's plane -- the frame's own
+        stiffness where a strut lands on it, and the link the frame model
+        carries between a landing and the camera's mass.
+
+        The corner of a rectangular frame loaded normal to its plane bends
+        the two bands meeting there; taken as two cantilevers of a half-side
+        each, which is the soft reading.  It is NOT a check that the plate
+        passes or fails -- it is the number spine prices, because a plate
+        stiff enough to ignore and one soft enough to matter differ by a
+        fold and nothing else."""
+        ax, au = cls.plate_half(payload, d_rod, clear)
+        I = cls.band_I(d_rod, 0.0 if flange is None else flange)
+        return sum(3.0 * cls.E * I / L ** 3 for L in (ax, au))
 
 
 # ============================================================ THE PRODUCT
@@ -978,6 +1165,27 @@ class Cage:
     @staticmethod
     def spine_r(R):
         return min(Cage.SPINE_R_MAX, R - ring_swept_r() - 2.0 * Process.SEAT_CLEAR)
+
+    @staticmethod
+    def nose_spine_r(payload=None):
+        """Radius the backbone must neck down to over the NOSE, mm.
+
+        The camera is mounted on the spine's own axis -- that is the whole
+        point of the mount, since a mass off the axis turns a manoeuvre into
+        camera yaw -- and the cage's backbone is on that axis too.  At full
+        size the tube runs straight THROUGH the module: 8.00 mm of steel
+        where the module's nearest face is 4.50 mm off the axis, an
+        interference of 3.50 mm that no drawing showed and the first render
+        did.  So the backbone is stepped over the last stretch at each end,
+        which is outside the truss and carries nothing but the end plate.
+
+        It lands on Cage.SPINE_R_MIN exactly, which is the cage's own stated
+        floor -- so the neck is as thin as this cage is allowed to be and no
+        thinner, and if a fatter camera ever arrives the assertion in
+        check_mount is what says so.
+        """
+        p = Payload if payload is None else payload
+        return p.BOX[1] / 2.0 - Process.SEAT_CLEAR
     # Retention.  A rod in an upward-opening V falls out when the cage
     # turns it downward; the real fixture needs a keeper (spring clip, wax
     # dab).  Modelled as a weld once a rod is seated; check_load reports
@@ -985,6 +1193,21 @@ class Cage:
     # more.
     KEEPER      = "weld"
     ARM_PITCH_MIN = 40.0
+    # --------------------------------------------------- THE MANDREL COMES OUT
+    # The cage is wound INTO a closed lattice, so it has to collapse before
+    # it can leave: three rails on parallelogram arms, one over-centre brace
+    # each, one draw rod down the spine's bore to trip all three.  See
+    # collapse.py -- these are the mechanism's facts, everything else there
+    # is computed from the truss.
+    LINK_T      = 3.0          # mm, link plate thickness
+    LINK_W      = 8.0          # mm, link plate width
+    PIVOT_D     = 3.0          # mm, clevis pin
+    PIVOT_FIT   = 0.05         # mm of running clearance in a bore
+    PIVOT_SIGMA = 90.0         # N/mm^2 allowable bearing on an ali lug
+                               # (a quarter of 6082-T6's yield, the usual
+                               # figure for a pin in a plate)
+    DRAW_D      = 6.0          # mm, the release rod down the spine's bore
+    HAND_F      = 100.0        # N a hand can put on a release lever
 
 
 class Magazine:

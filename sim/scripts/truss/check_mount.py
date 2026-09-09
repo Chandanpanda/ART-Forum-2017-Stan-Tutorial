@@ -51,6 +51,26 @@ def reach_with(t, diag_pitch, chord_pitch, end_free):
         Magazine.DIAG_PITCH, Magazine.CHORD_PITCH, Cage.END_FREE = d0, c0, e0
 
 
+def _cam_pt(m, g, dx, dl, du, end=0):
+    """A point in the camera's own frame, cage coords -- for building the
+    geometries this check exists to reject."""
+    xh, look, up = mount.landing_frame(g)
+    return np.asarray(m.payload[end][0], float) + dx * xh + dl * look + du * up
+
+
+def _rigid_budget(g, t, so, DUTY=None):
+    """The same mount with a platform that cannot bend, at the plate's real
+    mass -- the reading the mount had before the band was modelled."""
+    from spine.chosen import OPTIMAL_1M as _ch
+    DUTY = _duty.QUADROTOR if DUTY is None else DUTY
+    sp = dict(mount.nose_spec(g, d_strut=t.d_diag))
+    sp.update(plat_A=None, plat_I=None)
+    return metrics.evaluate(build.warren_truss(
+        t.length, _ch.side, _ch.alpha, _ch.d_chord, _ch.d_diag,
+        tip_mass=DUTY.tip_mass_g, nose=build.Nose.around(**sp)),
+        DUTY)["budget_used"]
+
+
 def main():
     from spine.chosen import OPTIMAL_1M as ch
     DUTY = _duty.QUADROTOR
@@ -97,12 +117,11 @@ def main():
     # SURFACE.  The six struts land on that square; jaws on it are jaws on
     # the bond, and a pad that has been clamped to an epoxy joint's own
     # face is a contaminated joint.  That argument needs no dimension.
-    check("the housing the jaws would have to take is exactly the surface the mount "
-          "bonds to, so gripping it and bonding it are the same face",
-          mount.platform_radius() > Payload.case_r()
-          and mount.platform_radius() - Payload.case_r() <= Bracket.WALL + 1e-9,
-          "the collar wraps a %.2f mm housing and presents its landings at %.2f"
-          % (Payload.case_r(), mount.platform_radius()))
+    check("the housing the jaws would have to take is exactly the surface the collar's "
+          "aperture is cut to, so gripping it and bonding it are the same face",
+          abs(Bracket.aperture()[1] - (Payload.CASE[1] + 2.0 * Bracket.BOND_GAP)) < 1e-9,
+          "an %.1f mm housing into an %.2f mm aperture -- %.2f mm of glue line all round"
+          % (Payload.CASE[1], Bracket.aperture()[1], Bracket.BOND_GAP))
     check("...and the pads are taller than the housing stands proud anyway, so jaws "
           "on it would land on the board [rests on CASE_PROUD, which is VERIFY]",
           Gripper.PAD_H > Payload.CASE_PROUD,
@@ -164,21 +183,36 @@ def main():
     # the CARBON RODS only: the bracket's arms are a machined part and are
     # checked as one, not held to the stock's diameters or a rod's slenderness
     rods = [r for r in m.rods if r.kind in ("batten", "strut")]
-    check("the mount is nine rods an end plus ONE machined collar: three battens "
-          "closing the triangle, six struts, and no platform rods",
-          len([r for r in m.of(0) if r.kind in ("batten", "strut")]) == 9
-          and len(m.by_kind("platform")) == 0 and len(m.by_kind("arm")) == 6,
-          "%d battens, %d struts, %d arms, %d platform"
-          % (len(m.by_kind("batten")), len(m.by_kind("strut")),
-             len(m.by_kind("arm")), len(m.by_kind("platform"))))
+    check("the mount is thirteen rods an end plus ONE laser-cut collar: three battens "
+          "closing the chord triangle, four in a grid round the camera, six struts",
+          len([r for r in m.of(0) if r.kind in ("batten", "grid", "strut")]) == 13
+          and len(m.by_kind("batten")) == 6 and len(m.by_kind("grid")) == 8
+          and len(m.by_kind("strut")) == 12,
+          "%d battens, %d grid, %d struts, per pair of ends"
+          % (len(m.by_kind("batten")), len(m.by_kind("grid")),
+             len(m.by_kind("strut"))))
+    # NO POINT JOINTS ANYWHERE, which is the rule the mount is built to.
+    # Every rod either lies along a whole edge of the plate (a line of
+    # adhesive) or crosses another rod (a wound joint, the one this cell has
+    # qualified).  A strut that met a grid rod between its crossings would
+    # be asking that rod to bend, and a rod asked to bend is 478 to 1900
+    # times softer than the same rod pulled.
+    cross = {tuple(np.round(r.p1, 4)) for r in m.of(0) if r.kind == "strut"}
+    grid_ends = {tuple(np.round(p, 4)) for r in m.of(0) if r.kind == "grid"
+                 for p in (r.p0, r.p1)}
+    check("every strut lands where two grid rods already cross, so the load enters a "
+          "wound joint and no rod is asked to bend between its supports",
+          len(cross) == 4 and not (cross & grid_ends),
+          "%d struts onto %d crossings, none at a rod end" % (6, len(cross)))
     # WHY THERE IS A COLLAR, measured on the frame model rather than argued.
     # Neither surface the camera actually offers will hold the budget.
     import numpy as _np
     from spine import build as _b, metrics as _mx
     def _budget(landings, link=None):
         n = _b.Nose.around(box=Payload.BOX, standoff=so, rigid=True,
-                           r_platform=mount.platform_radius(), d_strut=t.d_diag,
-                           landings=landings, link_k=link)
+                           r_platform=mount.platform_radius(Payload, t.d_diag),
+                           d_strut=t.d_diag, landings=landings, link_k=link,
+                           plate_g=Bracket.mass(Payload, t.d_diag))
         return _mx.evaluate(_b.warren_truss(t.length, ch.side, ch.alpha, ch.d_chord,
                                             ch.d_diag, tip_mass=DUTY.tip_mass_g,
                                             nose=n), DUTY)["budget_used"]
@@ -208,8 +242,14 @@ def main():
           b_hole_real > 1.0 > b_hole_rigid,
           "%.2f with the board modelled rigid, %.2f at its real %.0f N/mm"
           % (b_hole_rigid, b_hole_real, Payload.pcb_stiffness(Payload.HOLE_PITCH[0])))
-    check("...so the collar earns its place: landings on it hold the budget with room",
-          _budget(None) < 0.8, "%.2f of the budget" % _budget(None))
+    _b_collar = _mx.evaluate(_b.warren_truss(
+        t.length, ch.side, ch.alpha, ch.d_chord, ch.d_diag, tip_mass=DUTY.tip_mass_g,
+        nose=_b.Nose.around(**mount.nose_spec(g, d_strut=t.d_diag))),
+        DUTY)["budget_used"]
+    check("...so the collar earns its place: landings on it hold the budget with room, "
+          "with its own mass and its own bending both charged",
+          _b_collar < 1.0, "%.2f of the budget, %.2f g of plate an end"
+          % (_b_collar, Bracket.mass(Payload, t.d_diag)))
     check("every mount rod is long enough for the jaws to take it at its middle",
           all(r.length >= Gripper.PAD_L + 4.0 for r in rods),
           "shortest %.1f mm against %.1f of pad"
@@ -314,6 +354,93 @@ def main():
           % (mount.fov_clear(mount.solve(g, d_strut=t.d_diag,
                                          standoff_mm=mount.mech_standoff())),
              mount.mech_standoff(), mount.fov_clear(m), so))
+
+    # ------------------------------------- AND NOT INSIDE THE CAMERA
+    # THE CHECK THAT WAS MISSING.  The collar was a fin standing on edge in
+    # the plane perpendicular to the spine -- the plane a hexapod's platform
+    # wants to be in -- and a fin through the camera's centre is INSIDE THE
+    # CAMERA.  Nothing static asked; it was found by looking at a render.
+    for e in (0, 1):
+        pen, who = mount.payload_clearance(m, g, end=e)
+        check("nothing of the mount at end %d is inside the module: not the collar, "
+              "not a grid rod, not a strut" % e,
+              pen <= 1e-6,
+              "worst %+.4f mm (%s %s)" % (pen, who[0], who[1]) if who else "clear")
+    check("...and the collar SEATS on the board's front face rather than floating over "
+          "it -- that contact is what squares the camera to the truss",
+          abs(mount.payload_clearance(m, g)[0]) < 1e-6
+          and abs(Bracket.seat_l()[0]
+                  - (Payload.BOX[1] / 2.0 - Payload.CASE_PROUD)) < 1e-9,
+          "plate %.2f..%.2f mm, board's front face at %.2f"
+          % (Bracket.seat_l()[0], Bracket.seat_l()[1],
+             Payload.BOX[1] / 2.0 - Payload.CASE_PROUD))
+    check("...and finishes inside the height the housing stands proud, or the aperture "
+          "is not bonded over its whole wall",
+          Bracket.SHEET <= Payload.CASE_PROUD,
+          "%.1f mm of sheet in %.1f mm of proud housing"
+          % (Bracket.SHEET, Payload.CASE_PROUD))
+    check("the aperture is CLOSED, so the housing is bonded on four flanks -- the fin's "
+          "open slot could only reach three, and one of those was its rear face",
+          abs(Bracket.bond_area()
+              - 2.0 * (Payload.CASE[0] + Payload.CASE[1]) * Bracket.SHEET) < 1e-9,
+          "%.1f mm2 of shear against a %.3f N service load"
+          % (Bracket.bond_area(),
+             Load.tip_mass() / 1000.0 * Load.G * Load.LATERAL_G))
+    # THE FIN, kept as a geometry so the failure cannot come back quietly.
+    # It stood on edge in the plane perpendicular to the spine, its slot cut
+    # to the housing from the front: half a slot-plus-wall deep along the
+    # viewing direction, half a housing-plus-wall across.  Its top edge ran
+    # the whole depth at x = 0, through the middle of the board.
+    _fd = Payload.CASE_PROUD + Bracket.BOND_GAP + Bracket.WALL
+    _fu = Payload.CASE[1] / 2.0 + Bracket.BOND_GAP + Bracket.WALL
+    fin = [mount.Strut("collar", 0, _cam_pt(m, g, 0.0, -_fd, _fu),
+                       _cam_pt(m, g, 0.0, _fd, _fu), Bracket.SHEET / 2.0, 0)]
+    fin_m = mount.Mount(tuple(fin), m.platform_r, so, t.d_diag, m.payload)
+    check("...and the check has teeth: the fin the collar replaced reads as buried in "
+          "the PCB, which is what it was",
+          mount.payload_clearance(fin_m, g)[0] > 1.0,
+          "%.2f mm inside the part" % mount.payload_clearance(fin_m, g)[0])
+    # THE GRID'S PLACEMENT IS WHAT MAKES THE STRUTS CLEAR, not luck.
+    inb = dict(mount.nose_spec(g, d_strut=t.d_diag))
+    gx, gu = Bracket.grid_half(Payload, t.d_diag)
+    check("the grid sits one clearance outside the module's own silhouette, which is "
+          "what lets the chord BEHIND the camera reach it without crossing the board",
+          gx >= Payload.BOX[0] / 2.0 + t.d_diag / 2.0
+          and gu >= Payload.BOX[2] / 2.0 + t.d_diag / 2.0,
+          "crossings at %.2f x %.2f mm, module %.2f x %.2f"
+          % (gx, gu, Payload.BOX[0] / 2.0, Payload.BOX[2] / 2.0))
+    inside = mount.solve(g, d_strut=t.d_diag, standoff_mm=so, clear=-3.0)
+    check("...and pulled inside it the mount goes back through the board, so the rule "
+          "is load-bearing rather than decorative",
+          mount.payload_clearance(inside, g)[0] > 0.0,
+          "%.2f mm inside with the grid drawn in 4.5 mm"
+          % mount.payload_clearance(inside, g)[0])
+
+    # ------------------------------------- THE FOLD, PRICED NOT ASSUMED
+    def _fold_budget(h):
+        sp = dict(mount.nose_spec(g, d_strut=t.d_diag))
+        sp.update(plat_A=Bracket.band_A(t.d_diag, h),
+                  plat_I=Bracket.band_I(t.d_diag, h),
+                  plate_g=Bracket.mass(Payload, t.d_diag, None, h))
+        return metrics.evaluate(build.warren_truss(
+            t.length, ch.side, ch.alpha, ch.d_chord, ch.d_diag,
+            tip_mass=DUTY.tip_mass_g, nose=build.Nose.around(**sp)),
+            DUTY)["budget_used"]
+    k_str = mount.strut_k(g, Payload, t.d_diag, so)
+    h_rule = Bracket.flange_h(k_str, Payload, t.d_diag)
+    b_flat, b_fold = _fold_budget(0.0), _fold_budget(h_rule)
+    check("the collar is FLAT, and that is a measurement: folding its rim until it is "
+          "stiffer than the strut it holds -- the rule the fillet is held to -- costs "
+          "more in mass than the bending it removes was worth",
+          Bracket.FLANGE == 0.0 and b_flat < b_fold,
+          "%.3f of the budget flat at %.2f g, %.3f folded %.1f mm at %.2f g"
+          % (b_flat, Bracket.mass(Payload, t.d_diag), b_fold, h_rule,
+             Bracket.mass(Payload, t.d_diag, None, h_rule)))
+    check("...and the plate's own bending is priced rather than assumed away: a ring "
+          "that cannot bend at all, at the same mass, is no better",
+          abs(_fold_budget(0.0) - _rigid_budget(g, t, so)) < 0.05,
+          "%.3f with the band's real section, %.3f with it rigid"
+          % (_fold_budget(0.0), _rigid_budget(g, t, so)))
 
     # ---------------------------------------------- REACHABLE AT ALL
     xs = [float(p[0]) for r in rods for p in (r.p0, r.p1)]

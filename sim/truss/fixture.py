@@ -98,6 +98,13 @@ class Fixture:
         return self._magazine()
 
     @cached_property
+    def collapse(self):
+        """The collapsing mandrel this fixture rides on.  Lazy: the layout
+        is what it needs, and the layout is lazy too."""
+        from . import collapse as _c
+        return _c.Collapse(self)
+
+    @cached_property
     def nose_reach(self):
         """How far past the chord ends this truss's loaded camera carrier
         reaches -- what the cage's end freedom has to clear.
@@ -126,14 +133,15 @@ class Fixture:
         return (Head.ring_axial_half() + self.t.band / 2.0
                 + max(Cage.PIN_T, Cage.ARM_W) / 2.0 + Process.SEAT_CLEAR)
 
-    def pin_xs(self, k):
-        """Pin stations along chord k.  Every free interval between two
-        forbidden zones -- a joint's exclusion, the gripper's footprint at
-        the chord's midpoint, the chord's ends -- gets pins at both ends
-        and evenly between, never further apart than PIN_PITCH: a chord is
-        supported within the exclusion distance of every joint and nowhere
-        is a span longer than the brief's 50 mm.  Overlapping zones are
-        merged first (the metre truss has a joint on its midpoint)."""
+    def free_spans(self, k):
+        """The stretches of chord k nothing fixed may cross, merged: between
+        one joint's exclusion zone and the next, and clear of the gripper's
+        footprint at the midpoint.
+
+        Pulled out of `pin_xs` because the COLLAPSING RAILS need the same
+        intervals -- a rail that filled the gaps would sit inside the ring's
+        bore at every joint on its chord -- and two copies of this would
+        drift apart."""
         t = self.t
         excl = self.joint_exclusion()
         gexcl = Gripper.PAD_L / 2.0 + Cage.PIN_T / 2.0 + 2.0
@@ -145,16 +153,23 @@ class Fixture:
                 merged[-1] = (merged[-1][0], max(merged[-1][1], b))
             else:
                 merged.append((a, b))
-        free = []
-        lo = Cage.PIN_T
+        free, lo = [], Cage.PIN_T
         for a, b in merged:
             free.append((lo, a))
             lo = b
         free.append((lo, t.length - Cage.PIN_T))
+        return [(a, b) for a, b in free if b - a >= Cage.PIN_T]
+
+    def pin_xs(self, k):
+        """Pin stations along chord k.  Every free interval between two
+        forbidden zones -- a joint's exclusion, the gripper's footprint at
+        the chord's midpoint, the chord's ends -- gets pins at both ends
+        and evenly between, never further apart than PIN_PITCH: a chord is
+        supported within the exclusion distance of every joint and nowhere
+        is a span longer than the brief's 50 mm.  Overlapping zones are
+        merged first (the metre truss has a joint on its midpoint)."""
         xs = []
-        for a, b in free:
-            if b - a < Cage.PIN_T:
-                continue
+        for a, b in self.free_spans(k):
             n = int(np.ceil((b - a) / Cage.PIN_PITCH)) + 1
             xs.extend(np.linspace(a, b, n).tolist())
         return xs
@@ -343,6 +358,17 @@ class Fixture:
             rr.append(self.cradle_r())
         for q in self.posts:
             p0.append(Rm @ q.p0); p1.append(Rm @ q.p1); rr.append(Cage.POST_R)
+        # THE COLLAPSING MANDREL'S OWN RAILS.  They are real solids under
+        # every chord and every face, and the head has to miss them --
+        # which is why the chord ones are broken on exactly the intervals
+        # this class already keeps clear of joints.  Left out of the
+        # obstacle set they would be a structure the path planner cannot
+        # see, which is how a fixture ends up unbuildable.
+        for kind, sh, phi, r, (xa, xb) in self.collapse.rails:
+            up = radial(phi)
+            p0.append(Rm @ (np.array([xa, 0.0, 0.0]) + up * r))
+            p1.append(Rm @ (np.array([xb, 0.0, 0.0]) + up * r))
+            rr.append(max(Cage.ARM_W, self.collapse.rail_h()) / 2.0)
         # the spine down the axis
         x0 = -(self.end_free() + Cage.END_PLATE_T)
         x1 = self.t.length + self.end_free() + Cage.END_PLATE_T

@@ -183,10 +183,38 @@ class Nose:
     # the strut itself.  Modelling it rigid is how a mount through the holes
     # comes back looking better than it is.
     link_k:      float = None
+    # WHICH CHORD END FEEDS WHICH LANDING, as (chord, landing) pairs.  The
+    # octahedron's own pattern -- each chord to two consecutive landings --
+    # only exists when there are three of them.  The mount has four
+    # crossings and six struts, and which crossing a strut runs to is
+    # solved in truss.mount, not guessed here.
+    strut_pairs: tuple = None
+    # THE MOUNT'S OWN MACHINED MASS, g, carried at the payload's node.  The
+    # collar is not free: at the size the struts need it is the same order
+    # as the camera, and a mount that is not charged for its own part is
+    # the placeholder this class replaced.
+    plate_g:     float = 0.0
+    # THE PLATFORM'S OWN SECTION, mm^2 and mm^4, when the ring is a real
+    # part rather than a placeholder.  `platform_rigid` says the four
+    # landings are tied by something infinitely stiff; the mount's landings
+    # are tied by a folded aluminium band and four carbon rods, and its
+    # OUT-OF-PLANE bending is the whole compliance between a strut and the
+    # camera.  Given these, the ring carries it.
+    #
+    # THIS REPLACED AN AXIAL `link_k` FROM EACH LANDING TO THE CAMERA, and
+    # the replacement is not cosmetic: those four links all pass through
+    # the camera's own centre, so they restrain no TWIST about the optical
+    # axis at all.  The model answered with a 16 Hz mode that is a
+    # mechanism of the idealisation, not of the part -- the aperture bond
+    # holds that twist over four walls of housing.  A ring with a real
+    # section has no such freedom.
+    plat_A:      float = None
+    plat_I:      float = None
 
     @staticmethod
     def around(box=None, standoff=15.0, d_strut=1.5, d_batten=3.0, clearance=1.5,
-               rigid=False, r_platform=None, landings=None, link_k=None):
+               rigid=False, r_platform=None, landings=None, link_k=None,
+               strut_pairs=None, plate_g=0.0, plat_A=None, plat_I=None):
         """A nose whose platform triangle surrounds `box` (mm, x/y/z) at its
         mid-length, so the camera's centre of mass lies in the platform's
         plane.  The triangle's inscribed circle must clear the housing's
@@ -206,6 +234,8 @@ class Nose:
         r = 2.0 * (half_diag + clearance) if r_platform is None else float(r_platform)
         return Nose(standoff=standoff, r_platform=r,
                     platform_rigid=rigid, landings=landings, link_k=link_k,
+                    strut_pairs=strut_pairs, plate_g=plate_g,
+                    plat_A=plat_A, plat_I=plat_I,
                     payload_x=0.0, payload_box=tuple(box),
                     d_strut=d_strut, d_platform=d_strut, d_batten=d_batten)
 
@@ -299,22 +329,36 @@ def warren_truss(length, side, alpha, d_chord, d_diag, material=None,
             x0 = nodes[base[0]][0]
             xp = x0 + sign * nose.standoff * MM
             plat = []
-            for k in range(3):
+            for k in range(3 if nose.landings is None else len(nose.landings)):
                 plat.append(len(nodes))
                 if nose.landings is None:
                     nodes.append([xp, rp * np.cos(phi[k]), rp * np.sin(phi[k])])
                 else:
                     dx, dy, dz = nose.landings[k]
                     nodes.append([xp + sign * dx * MM, dy * MM, dz * MM])
-            for k in range(3):
-                members.append(Member(plat[k], plat[(k + 1) % 3],
-                                      Section.rect(0.010, 0.003) if nose.platform_rigid
-                                      else sec_p,
-                                      mat.BRACKET if nose.platform_rigid else material,
-                                      tag="platform"))
-                members.append(Member(base[k], plat[k], sec_s, material, tag="strut"))
-                members.append(Member(base[k], plat[(k + 1) % 3], sec_s, material,
-                                      tag="strut"))
+            npl = len(plat)
+            if nose.plat_A is not None and nose.plat_I is not None:
+                # The band's own area and its WEAK second moment, in both
+                # bending axes.  A rectangle would put the strong axis
+                # somewhere -- 4.5 x 1.5 is nine times stiffer edge-on than
+                # flat -- and which way a ring member ends up rolled is not
+                # something this model decides.  So it takes the soft
+                # reading in both, which is the reading that cannot flatter.
+                A = nose.plat_A * MM * MM
+                I = nose.plat_I * MM ** 4
+                sec_ring = Section("collar band", A, I, I, 2.0 * I, 2.0 * I)
+                mat_ring = mat.BRACKET
+            elif nose.platform_rigid:
+                sec_ring, mat_ring = Section.rect(0.010, 0.003), mat.BRACKET
+            else:
+                sec_ring, mat_ring = sec_p, material
+            for k in range(npl):
+                members.append(Member(plat[k], plat[(k + 1) % npl],
+                                      sec_ring, mat_ring, tag="platform"))
+            pairs = (nose.strut_pairs if nose.strut_pairs is not None
+                     else tuple((k, (k + j) % npl) for k in range(npl) for j in (0, 1)))
+            for bk, pk in pairs:
+                members.append(Member(base[bk], plat[pk], sec_s, material, tag="strut"))
             # THE CAMERA'S MASS WHERE IT ACTUALLY IS: a node at the housing's
             # centre of mass, half a housing outboard of the platform, tied to
             # the platform by the housing itself.  The housing is far stiffer
@@ -324,7 +368,10 @@ def warren_truss(length, side, alpha, d_chord, d_diag, material=None,
             # first model did not charge for.
             com = len(nodes)
             nodes.append([x0 + sign * (nose.standoff + nose.payload_x) * MM, 0.0, 0.0])
-            for k in range(3):
+            # EVERY landing, not the first three.  With a three-landing ring
+            # those were the same set; the mount has four crossings, and the
+            # fourth was reaching the camera only through the platform ring.
+            for k in range(npl):
                 if nose.link_k is None:
                     sec_h = Section.rect(0.010, 0.003)
                 else:
@@ -364,7 +411,7 @@ def warren_truss(length, side, alpha, d_chord, d_diag, material=None,
     if nose is not None:
         # on the housing's own centre of mass, not spread over the platform,
         # and WITH the box's rotational inertia -- see PointMass
-        masses = [PointMass.box(n, tip_mass * 1e-3,
+        masses = [PointMass.box(n, (tip_mass + nose.plate_g) * 1e-3,
                                 [v * MM for v in nose.payload_box])
                   for n in payload_nodes]
     else:

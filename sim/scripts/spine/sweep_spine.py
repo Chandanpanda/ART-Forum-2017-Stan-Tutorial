@@ -61,6 +61,26 @@ def sensitivity(length, duty, base):
     return rows
 
 
+def bore_margin(length):
+    """mm of ring bore a candidate leaves over -- negative means the
+    winding head cannot get round its joint.  Returns a predicate.
+
+    It scales as tan(alpha), so it is the WEB ANGLE that the head limits,
+    and the web angle is what buys accuracy: every design in the sweep that
+    holds the quadrotor budget wants 45 degrees or steeper, and none of
+    them fits a 20 mm bore.  This is the trade the product actually has.
+    """
+    from truss.spec import Truss, ring_r_in, r_in_needed, Ring
+
+    def margin(c):
+        if c.kind != "truss":
+            return float("inf")
+        t = Truss(length=length, side=c.side, alpha=c.alpha,
+                  d_chord=c.d_chord, d_diag=c.d_diag)
+        return ring_r_in() - Ring.RUN_OUT - r_in_needed(t)
+    return margin
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--length", type=float, default=1000.0)
@@ -71,6 +91,8 @@ def main():
     ap.add_argument("--f1-min", type=float, default=None,
                     help="Hz, a floor on the first mode; the brief asks 200")
     ap.add_argument("--mass-max", type=float, default=70.0, help="g")
+    ap.add_argument("--any-bore", action="store_true",
+                    help="ignore whether the winding head can enter the joint")
     a = ap.parse_args()
     duty = duty_mod.SURVEY_MAST if a.mast else duty_mod.QUADROTOR
     print("spine sweep: %.0f mm baseline, %s duty (%.1f g manoeuvre, %.0f K gradient, "
@@ -94,8 +116,14 @@ def main():
         alphas = [30, 35, 40, 45, 50, 55, 60]
     cands = sweep.truss_grid(sides, alphas) + sweep.tube_grid([20, 30, 43, 60], [0.5, 1.0, 2.0])
     t0 = time.time()
+    # WHAT THE CELL CAN BUILD is the fourth constraint, and it is supplied
+    # from here rather than imported by the spine package -- the choosing
+    # and the building stay separate, but the choosing has to know.  The
+    # ring's bore, less what its centre wanders in the raceway, against the
+    # radius the joint's diagonals need at the ring's own width.
     rows = sweep.run(cands, duty, length=a.length, section_max_mm=a.section_max,
-                     mass_max_g=a.mass_max, f1_min_hz=a.f1_min)
+                     mass_max_g=a.mass_max, f1_min_hz=a.f1_min,
+                     buildable=None if a.any_bore else bore_margin(a.length))
     ok = sweep.feasible(rows)
     print("\n--- %d candidates in %.0f s, %d inside the constraints (section <= %.0f mm, "
           "mass <= %.0f g%s) %s"
@@ -124,6 +152,20 @@ def main():
             print("  Relax %s and %s holds it at %.2f, %.1f g."
                   % (" and ".join(loose["violates"]), loose["name"],
                      loose["budget_used"], loose["mass_g"]))
+        # WHICH CONSTRAINT IS ACTUALLY BUYING THE ACCURACY
+        held = [r for r in rows if r["budget_used"] <= 1.0]
+        if held:
+            no_bore = [r for r in held if "buildable" not in r["violates"]]
+            worst = max(held, key=lambda r: -r["build_mm"])
+            print("  %d designs hold the budget; %d of them the cell can build."
+                  % (len(held), len(no_bore)))
+            if not no_bore:
+                print("  ALL of them want more ring bore than the head has -- the "
+                      "shallowest is short by %.2f mm (%s, a %.0f degree web).  The "
+                      "bore is the binding constraint on the product's accuracy."
+                      % (-max(r["build_mm"] for r in held),
+                         max(held, key=lambda r: r["build_mm"])["name"],
+                         max(held, key=lambda r: r["build_mm"])["candidate"].alpha))
         print("  Of that, %.0f%% is the manoeuvre and %.0f%% the thermal gradient."
               % (100 * inside["yaw_accel_udeg"] / inside["yaw_static_udeg"],
                  100 * inside["yaw_grad_udeg"] / inside["yaw_static_udeg"]))

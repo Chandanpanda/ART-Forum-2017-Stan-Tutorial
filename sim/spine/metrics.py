@@ -50,9 +50,10 @@ class Pose:
     pitch: float
     roll:  float
     d_baseline: float
-    d_lateral:  float
-    d_vertical: float
     baseline:   float
+    # the two that do not cost range, so a synthetic Pose may omit them
+    d_lateral:  float = 0.0
+    d_vertical: float = 0.0
 
     def range_error(self, Z):
         """Metres of range error at range Z, from yaw and from scale."""

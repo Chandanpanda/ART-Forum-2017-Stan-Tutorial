@@ -65,7 +65,7 @@ def tube_grid(d_outs, walls):
 
 
 def run(candidates, duty, length=1000.0, mass_max_g=None, section_max_mm=None,
-        f1_min_hz=None):
+        f1_min_hz=None, buildable=None):
     """Evaluate every candidate; returns rows sorted by range error.
 
     CONSTRAINTS ARE APPLIED, NOT ASSUMED AWAY.  Range error falls
@@ -75,6 +75,18 @@ def run(candidates, duty, length=1000.0, mass_max_g=None, section_max_mm=None,
     (the section has to fit the airframe) and the modes (a deep section on
     thin diagonals is statically excellent and dynamically soft).  Every
     row keeps a `violates` list so a rejected design can still be read.
+
+    AND WHETHER THE MACHINE CAN MAKE IT.  `buildable` is an optional
+    predicate on a Candidate returning a margin in mm -- positive is
+    buildable -- and it is the fourth constraint.  It is passed IN rather
+    than imported, so this package stays independent of any one cell: the
+    caller supplies its own machine's rule.  It is not optional in
+    practice.  Without it this sweep named 120/45/3.0/1.5 as the lightest
+    design holding the accuracy budget, and every design holding that
+    budget wants a web of 45 degrees or steeper, which the winding head's
+    bore cannot enter -- 28 designs met the budget and NONE of them could
+    be made.  A sweep that does not know what the shop can build is a
+    sweep that answers a different question.
     """
     rows = []
     for c in candidates:
@@ -91,6 +103,9 @@ def run(candidates, duty, length=1000.0, mass_max_g=None, section_max_mm=None,
             bad.append("mass")
         if f1_min_hz and r["f1_hz"] < f1_min_hz:
             bad.append("f1")
+        r["build_mm"] = float(buildable(c)) if buildable is not None else float("inf")
+        if r["build_mm"] < 0.0:
+            bad.append("buildable")
         r["violates"] = bad
         r["feasible"] = not bad
         rows.append(r)

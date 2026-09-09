@@ -29,10 +29,47 @@ WHAT IT COSTS, and neither is free:
     it costs the cameras is in the transmissibility column, not in its
     frequency, and there it is no worse than the design it replaces.
 
-WHAT IT DOES NOT COST: the winding head.  The ring's bore is sized by the
-diagonal ANGLE, not by the section, so at 40 degrees this fits the head
-already designed.  A 45 degree web would have been slightly truer and
-needed 0.7 mm more bore.
+---------------------------------------------------------------------------
+RE-RUN, after the winding head's own review, with the cell's BORE added to
+the sweep as a fourth constraint (sweep_spine.bore_margin).  Every number
+above still holds.  Two things changed around it, and the second is the
+one to read:
+
+  * THIS DESIGN NOW MISSES f1 BY 1 Hz.  199 against the brief's 200.  That
+    is 0.5%, against a modulus that is a typical value and moves f1 by 10%
+    per 20% of itself, so it is not a real distinction -- but it is why
+    sweep_spine no longer names this design, and it should not be quietly
+    rounded away.  The E measurement is what settles it.
+  * THE RING'S BORE IS NOW THE BINDING CONSTRAINT ON THE PRODUCT'S
+    ACCURACY, and nothing in the tree said so before.  The bore a joint
+    needs scales as tan(alpha), so the head limits the WEB ANGLE -- and the
+    web angle is what buys accuracy.  Swept over sides 80..180 and webs
+    35..55 degrees:
+
+        all four constraints (mass, f1, budget, bore)     0 designs
+        give up the BORE (open the ring 1.5 mm)          28 designs
+        give up f1 (soft-mount harder)                  124 designs
+        give up the budget                                0 designs
+        give up mass                                      0 designs
+
+    So the bore is the cheapest thing to give, by a wide margin, and it is
+    the only one that gives a design meeting everything else:
+
+        warren 120/45/3.0/1.5   45.7 g   budget 0.88   0.77 m at 100 m
+                                f1 200 Hz, and 0.76 mm short of bore
+
+    Ring.ID is 20.0 mm.  ID 21.5 buys that design: 6% truer than this one,
+    0.2 g heavier, and f1 met rather than missed.  What it costs is a
+    re-check of the head -- EXIT_R sits at 11.0 and would have 0.25 mm of
+    clearance over a 10.75 mm bore, which is too little, so the exit guide
+    moves too.  THAT IS A DECISION, NOT A DERIVATION, and it is not made
+    here: it trades the machine's head against the product's accuracy, and
+    both are someone's to weigh.
+
+WHAT IT DOES NOT COST: the winding head, as built.  At 40 degrees this
+design fits the bore with +0.45 mm to spare (measured, with Ring.RUN_OUT
+charged against it).  A 45 degree web is truer and does not fit -- which
+is the whole finding above.
 """
 from dataclasses import dataclass
 

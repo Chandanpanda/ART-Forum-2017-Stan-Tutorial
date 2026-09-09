@@ -14,7 +14,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 import numpy as np
 
-from spine import build, duty, metrics, material as mat
+from spine import build, duty, metrics, material as mat, sweep
 from spine.model import Model, Member, Section, PointMass
 
 VERBOSE = "-v" in sys.argv
@@ -183,6 +183,41 @@ def main():
     check("a deeper section yaws less, as the second moment says it must",
           yaw_of(big) < yaw_of(closed) * 0.6,
           "%.3e at 130 mm against %.3e at 92" % (yaw_of(big), yaw_of(closed)))
+
+    # ------------------------------------------ WHAT THE CELL CAN BUILD
+    # THE SWEEP MUST KNOW, and the check is here because it cost a wrong
+    # answer: without the bore, sweep_spine named 120/45/3.0/1.5 as the
+    # lightest design holding the accuracy budget, and every design holding
+    # that budget wants a 45-degree web or steeper, which the head's 20 mm
+    # bore cannot enter.  28 designs met the budget and none could be made.
+    import importlib.util
+    _p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sweep_spine.py")
+    _sp = importlib.util.spec_from_file_location("sweep_spine", _p)
+    _ss = importlib.util.module_from_spec(_sp)
+    _sp.loader.exec_module(_ss)
+    bore = _ss.bore_margin(1000.0)
+    cands = sweep.truss_grid([92, 115, 120], [35, 40, 45, 50])
+    rows = sweep.run(cands, D, 1000.0, buildable=bore)
+    check("the sweep carries a buildability margin for every candidate",
+          all("build_mm" in r for r in rows) and any(r["build_mm"] < 0 for r in rows)
+          and any(r["build_mm"] > 0 for r in rows),
+          "%d of %d candidates the cell cannot build"
+          % (sum(1 for r in rows if r["build_mm"] < 0), len(rows)))
+    check("...and it refuses them: a design the head cannot enter is not feasible",
+          all("buildable" in r["violates"] for r in rows if r["build_mm"] < 0))
+    shallow = [r for r in rows if r["candidate"].alpha <= 40 and r["candidate"].d_diag <= 1.5]
+    steep = [r for r in rows if r["candidate"].alpha >= 50]
+    check("the bore limits the WEB ANGLE, not the section -- which is why it costs "
+          "accuracy, since the web angle is what buys it",
+          max(r["build_mm"] for r in shallow) > 0 > max(r["build_mm"] for r in steep),
+          "shallowest web has %+.2f mm, steepest %+.2f"
+          % (max(r["build_mm"] for r in shallow), max(r["build_mm"] for r in steep)))
+    from truss.spec import Ring
+    chosen_row = [r for r in rows if "115/40/3.0/1.5" in r["name"]]
+    check("...and the design chosen.py records does fit the head as built",
+          bool(chosen_row) and chosen_row[0]["build_mm"] > 0,
+          "%+.3f mm of a %.1f mm bore, with %.2f of run-out charged"
+          % (chosen_row[0]["build_mm"] if chosen_row else -9.9, Ring.ID, Ring.RUN_OUT))
 
     bad = sum(1 for _, ok, _ in RESULTS if not ok)
     for nm, ok, det in RESULTS:

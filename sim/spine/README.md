@@ -81,6 +81,36 @@ the brief's own 100 mm envelope, no design in the sweep holds the 0.005°
 budget at 3 g, in any stock, in either web; the best is 1.19. At 115 mm it
 holds at 0.94. **That is the trade to put to whoever owns the airframe.**
 
+**...and, once the cell's bore is a constraint, web-limited.** The bore a
+joint needs scales as `tan α`, so the winding head limits the **web angle**
+— and the web angle is what buys accuracy. Adding that constraint
+(`sweep_spine.bore_margin`, supplied to `sweep.run`; the package stays
+independent of any one cell) changes the answer, and the check that the
+sweep carries it is in `check_spine`:
+
+| relax nothing | 0 designs |
+|---|---|
+| relax the **bore** — open the ring 1.5 mm | **28 designs** |
+| relax f1 — soft-mount harder | 124 designs |
+| relax the budget | 0 designs |
+| relax mass | 0 designs |
+
+Swept over sides 80–180 mm and webs 35–55°, **not one design meets mass,
+f1, the budget and the bore together.** Every design that holds the budget
+wants a 45° web or steeper; none of those fits a 20 mm bore. Without the
+constraint the sweep named `120/45/3.0/1.5` — 28 designs met the budget and
+**none of them could be made**, which is a sweep answering a different
+question.
+
+So the bore is the cheapest constraint to give, and the only one that gives
+a design meeting everything else: `warren 120/45/3.0/1.5`, 45.7 g, 0.88 of
+the budget, 0.77 m at 100 m, f1 200 Hz — and 0.76 mm short of bore.
+`Ring.ID` 20.0 → 21.5 buys it. What that costs is a re-check of the head:
+`EXIT_R` sits at 11.0 and would have 0.25 mm over a 10.75 mm bore, which is
+too little, so the exit guide moves too. **That is a decision, not a
+derivation** — it trades the machine's head against the product's accuracy
+— and `chosen.py` records it rather than making it.
+
 **Measure E first.** A 20% error in the axial modulus moves the yaw budget
 by 19%; the shear modulus, which is the least certain number in
 `material.py`, moves it by nothing at all, because no load case that
@@ -94,6 +124,12 @@ cell was first built around it is 16% lighter, 34% truer, inside the yaw
 budget rather than 42% over it, and 24 joints instead of 27, so the cell
 builds it in 21.6 minutes instead of 24.1. It costs a 115 mm section
 instead of 92. `sim/scripts/truss/demo_optimal.py` builds it.
+
+Two caveats the re-run added, both recorded in `chosen.py`: it now misses
+the brief's 200 Hz first mode by **1 Hz** — 0.5 %, against a modulus that
+is a typical value and moves f1 by 10 % per 20 % of itself, so measuring E
+is what settles it; and it fits the head as built with **+0.45 mm** of bore
+to spare, which is why it is the choice and a 45° web is not.
 
 ## What this model does not do
 

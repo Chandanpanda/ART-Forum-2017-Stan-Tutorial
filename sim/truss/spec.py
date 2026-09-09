@@ -979,14 +979,8 @@ class Cutter:
     WIRE_OFF    = 4.0          # from the exit guide, along the strand
 
 
-class Payload:
-    """The camera head the spine carries, as a bought part.
-
-    EVERY NUMBER HERE IS [VERIFY] against the Raspberry Pi Camera Module 3's
-    mechanical drawing, and none of them may be re-derived anywhere else:
-    the mount's platform radius comes OUT of the housing's section
-    (mount.solve), so a wrong number here moves the structure silently.
-    Placeholders until the drawing arrives.
+class CameraModule:
+    """What every camera module in this project has in common.
 
     THE FRAME.  x runs along the spine (the stereo baseline), y is the
     VIEWING direction, z is up.  So `BOX` is (along the baseline, thickness
@@ -995,34 +989,12 @@ class Payload:
     axis and its optical axis crosses it -- which is not tidiness: an
     off-axis mass turns a manoeuvre into camera yaw, the one error nothing
     downstream recovers.
+
+    NOTHING HERE IS A NUMBER.  The numbers are in the subclasses, one per
+    part, each read off that part's own drawing; this is the arithmetic
+    that turns them into the units the design budget is written in, so that
+    two modules can be compared rather than argued about.
     """
-    # MEASURED OFF THE DRAWING, RP-008153-DS-1 (Camera Module 3, standard).
-    # Read from the PDF's own geometry rather than its dimension labels: the
-    # four hole circles and the lens barrel scale at 2.8348 pt/mm on all
-    # three of the diameters it calls out, and the hole pitch comes back
-    # 21.00 x 12.50 exactly.
-    BOX         = (25.0, 11.3, 23.862)  # mm: along the baseline / toward the
-                                        # scene / up.  Landscape, because
-                                        # stereo wants the long axis across
-                                        # the baseline.
-    HOLE_D      = 2.2                   # mm, four of them
-    HOLE_PAD    = 4.75                  # mm, the keep-out around each
-    HOLE_PITCH  = (21.0, 12.5)          # mm, along the baseline / up
-    LENS_D      = 5.75                  # mm, the barrel
-    FOV         = (66.0, 41.0)          # deg, horizontal / vertical
-    # THE METAL ENCLOSURE, and it is the only rigid thing on the module: a
-    # square block carrying the lens, standing proud of the board, centred
-    # on the optical axis.  Everything else is a 1.12 mm FR4 carrier.
-    CASE        = (10.8, 10.8)          # mm square, centred on the lens
-    CASE_PROUD  = 3.875                 # mm it stands off the board
-    PCB_T       = 1.12                  # mm
-    PCB_E       = 20.0e3                # N/mm^2 [VERIFY: typical FR4]
-    # The lens is centred across the board but NOT down it: it sits 2.45 mm
-    # above the board's centre, which is level with the upper pair of holes.
-    LENS_UP     = 2.45                  # mm above the board's centre
-    # ...so the hole pattern's own centre is BELOW the board's, and the
-    # lower row is 2.0 mm off the bottom edge.
-    HOLES_UP    = -3.70                 # mm, hole-pattern centre vs the board's
 
     @classmethod
     def holes(cls):
@@ -1031,56 +1003,37 @@ class Payload:
         hx, hz = cls.HOLE_PITCH[0] / 2.0, cls.HOLE_PITCH[1] / 2.0
         return tuple((sx * hx, cls.HOLES_UP + sz * hz)
                      for sx in (-1.0, 1.0) for sz in (-1.0, 1.0))
-    # WHAT IT WEIGHS is not on the mechanical drawing.  It is on the
-    # vendor's module comparison table, which lists Module 3 at 4 g where
-    # Modules 1 and 2 are 3 g -- and the two drawings differ by exactly the
-    # 2.5 mm of extra depth the motorised focus needs, so the two masses
-    # agree with the two envelopes and neither is a guess.
-    MASS        = 4.0                  # g, the module (vendor table)
-    # This one IS a guess.  The flat flex terminates at the head, and its
-    # connector plus whatever strain relief the product ends up with hangs
-    # off the same bond.  Kept apart from MASS so the guess cannot hide
-    # inside the fact.  It does NOT include the mount: the mount's rods are
-    # members, and a model that carries them here too counts them twice.
-    HEAD_EXTRA  = 1.0                  # g [VERIFY: weigh a terminated head]
-    # The same table gives an envelope to the millimetre, from a different
-    # document than the drawing.  Two independent readings of one box is
-    # the only cross-check this part has, and CHECKS takes it.
-    ENVELOPE    = (25.0, 11.5, 24.0)   # mm, vendor table, BOX's axes
-    BOND_MU     = 10.0                 # MPa allowable shear in a filleted joint
-    FILLET_R    = 3.0                  # mm, the fillet the dispenser can lay
-
-    # ---------- FROM THE SENSOR ASSEMBLY DATASHEET, RP-009992-DS-1 (TNBA1392)
-    # A SECOND, INDEPENDENT DRAWING of the same part.  It confirms the
-    # mechanical one -- 10.8 +-0.15 square, 3.875 +-0.15 body height, a
-    # 5.75 barrel -- and then says the thing the mechanical drawing does
-    # not, which is that THE LENS MOVES.
-    SENSOR       = "IMX708-AAJH5-C"
-    BFL          = 4.74                # mm, back focal length
-    PIXEL        = 1.4e-3              # mm
-    F_NO         = 1.79                # +-5%
-    FOV_DIAG     = 75.0                # deg +-3, the lens's own spec
-    IMAGE_CIRCLE = 8.4                 # mm
-    # THE AUTOFOCUS.  An open-loop voice coil, and every one of these is
-    # a lens position that moves without the truss moving at all:
-    AF_STROKE    = (0.310, -0.050)     # mm, minimum travel
-    AF_POSTURAL  = 0.050               # mm, lens shift with ORIENTATION at
-                                       # a fixed drive current
-    AF_HYST      = 0.008               # mm
-    AF_TILT      = 8.0 / 60.0          # deg, lens axis against the sensor
-                                       # plane, over the stroke
 
     @classmethod
     def f_px(cls):
         """The calibrated focal length, in pixels."""
-        return cls.BFL / cls.PIXEL
+        return cls.FOCAL / cls.PIXEL
+
+    @classmethod
+    def fov_from_sensor(cls):
+        """The field the MEASURED image area and the focal length imply,
+        degrees (h, v) -- the cross-check on the published field."""
+        return tuple(2.0 * degrees(atan(a / 2.0 / cls.FOCAL))
+                     for a in cls.IMAGE_AREA)
 
     @classmethod
     def fov_diagonal(cls):
-        """The diagonal field the published H and V imply, degrees -- the
-        cross-check against the lens's own 75 +- 3."""
+        """The diagonal field the published H and V imply, degrees."""
         h, v = (radians(a / 2.0) for a in cls.FOV)
         return 2.0 * degrees(atan(sqrt(tan(h) ** 2 + tan(v) ** 2)))
+
+    @classmethod
+    def pixel_angle(cls):
+        """radians one pixel subtends -- the thing that actually sets depth
+        precision, and the one number a bigger sensor does not buy you."""
+        return cls.PIXEL / cls.FOCAL
+
+    @classmethod
+    def range_error_match(cls, range_m, baseline_mm=1000.0, sigma_px=0.1):
+        """m of range error from matching to sigma_px pixels: the STOCHASTIC
+        floor.  dZ = Z^2 dtheta / B with dtheta one pixel's angle."""
+        return (range_m ** 2 * sigma_px * cls.pixel_angle()
+                / (baseline_mm / 1000.0))
 
     @classmethod
     def range_error_axial(cls, dv_mm, range_m):
@@ -1093,7 +1046,7 @@ class Payload:
         because both focal lengths enter the same way.  An INTRINSIC, and
         the truss cannot help with it.
         """
-        return range_m * dv_mm / cls.BFL
+        return range_m * dv_mm / cls.FOCAL
 
     @classmethod
     def range_error_yaw(cls, yaw_deg, range_m, baseline_mm=1000.0):
@@ -1104,8 +1057,8 @@ class Payload:
 
     @classmethod
     def case_r(cls):
-        """Circumradius of the metal enclosure, mm -- the largest lever arm
-        a mount bonded to the RIGID part can have."""
+        """Circumradius of the lens housing, mm -- the largest lever arm a
+        mount bonded to it can have."""
         return 0.5 * sqrt(cls.CASE[0] ** 2 + cls.CASE[1] ** 2)
 
     @classmethod
@@ -1137,11 +1090,143 @@ class Payload:
         above the board's centre, so a module centred on the spine's axis
         does not look along it, and a module whose lens is on the axis has
         its mass LENS_UP off it.  The mount takes the second: the mass
-        offset is 2.45 mm and makes a moment, where a 2.45 mm aiming error
-        is 43000 microdegrees of pointing and would have to be calibrated
-        out.  Both are true of the part, not of the design.
+        offset is a couple of millimetres and makes a moment, where the same
+        offset as an aiming error is tens of thousands of microdegrees of
+        pointing and would have to be calibrated out.  Both are true of the
+        part, not of the design.
         """
         return abs(cls.LENS_UP) < cls.BOX[2] / 2.0
+
+
+class Module2(CameraModule):
+    """Raspberry Pi Camera Module 2 -- THE PART THE PRODUCT USES.
+
+    CHOSEN FOR WHAT IT DOES NOT HAVE.  Module 3 has a motorised lens, and
+    Module3 below records what that costs: an open-loop voice coil whose
+    postural difference alone is 1.06% of the image distance and therefore
+    1.06% of every range reported.  Module 2's lens is set by hand on a
+    thread and then it stays where it is put.  The price is a shorter focal
+    length on bigger pixels -- 0.367 mrad a pixel against 0.295 -- so the
+    stochastic floor is a quarter worse, and that is a quarter of a much
+    smaller number than the one it removes.  check_geometry does the sum.
+
+    MEASURED OFF THE DRAWING, RP-008149-DS-1 (RPI-CAM-V2_1, 12/11/2015).
+    Read from the PDF's own geometry rather than its dimension labels: the
+    board outline, the four hole arcs and the housing square all scale at
+    35.525 user units per millimetre, and against that the board comes back
+    24.996 x 23.871 and the housing 8.500 x 8.500.
+    """
+    BOX         = (25.0, 9.0, 23.862)   # mm: along the baseline / toward the
+                                        # scene / up.  The 25 and the 23.862
+                                        # are the drawing's; the 9.0 is the
+                                        # vendor table's overall thickness
+                                        # and is the only source for it.
+    CORNER_R    = 2.0                   # mm, the board's four corners
+    HOLE_D      = 2.2                   # mm, labelled; 2.168 measured
+    HOLE_PAD    = 4.75                  # mm, the keep-out around each
+    HOLE_PITCH  = (21.00, 12.526)       # mm, measured off the hole arcs
+    HOLES_UP    = -3.680                # mm, hole-pattern centre vs the board's
+    # THE LENS HOUSING, and it is PLASTIC -- which is the difference that
+    # matters against Module 3's metal can.  A square holder carrying a
+    # threaded barrel, centred across the board and 2.477 mm above its
+    # centre.  It is what the six struts bond to.
+    CASE        = (8.5, 8.5)            # mm square, measured
+    CASE_PLASTIC = True
+    CASE_E      = 3.0e3                 # N/mm^2 [VERIFY: taken as an UNFILLED
+                                        # thermoplastic, which is the weakest
+                                        # thing the housing could be; a filled
+                                        # one is three to five times this.
+                                        # check_mount uses it to show the
+                                        # struts are still the compliance]
+    # NOT ON THE DRAWING: it is a top view and has no side.  The module is
+    # 9 mm overall on the vendor table and the board is about 1, so the
+    # holder AND its barrel stand about 8 proud; the SQUARE's own height is
+    # less than that and nothing here says by how much.
+    CASE_PROUD  = 5.0                   # mm [VERIFY: measure one.  check_mount
+                                        # sweeps 3..8 and reports what moves]
+    LENS_D      = 5.5                   # mm [VERIFY: no barrel on the drawing]
+    LENS_UP     = 2.477                 # mm above the board's centre, measured
+    PCB_T       = 1.0                   # mm [VERIFY]
+    PCB_E       = 20.0e3                # N/mm^2 [VERIFY: typical FR4]
+
+    # ---- optics.  The image area is the vendor's; the field is the
+    # vendor's; and they agree on one focal length to a third of a percent,
+    # which is the only cross-check these numbers have.
+    SENSOR      = "IMX219"
+    IMAGE_AREA  = (3.68, 2.76)          # mm, 4.6 diagonal
+    PIXEL       = 1.12e-3               # mm
+    FOCAL       = 3.04                  # mm
+    F_NO        = 2.0
+    FOV         = (62.2, 48.8)          # deg, horizontal / vertical
+    FIXED_FOCUS = True                  # set on a thread, then locked
+
+    MASS        = 3.0                   # g, vendor table
+    HEAD_EXTRA  = 1.0                   # g [VERIFY: weigh a terminated head]
+    ENVELOPE    = (25.0, 9.0, 24.0)     # mm, vendor table, BOX's axes
+    BOND_MU     = 10.0                  # MPa allowable shear in a filleted joint
+    FILLET_R    = 3.0                   # mm, the fillet the dispenser can lay
+
+
+class Module3(CameraModule):
+    """Raspberry Pi Camera Module 3 -- REJECTED, and this is the record why.
+
+    The whole product argument is that a rigid spine removes the need to
+    re-estimate the cameras' relative pose in flight.  That argument is
+    about EXTRINSICS.  This module focuses with an open-loop voice coil,
+    and its own sensor-assembly datasheet gives the coil's tolerances:
+
+        postural difference  +-50 um   1.06% of the image distance
+        hysteresis             8 um    0.17%
+        dynamic tilt           8'      several pixels of principal point
+
+    An axial lens shift is a focal-length error, and a fractional error in
+    f is the same fractional error in Z -- it does not cancel between the
+    cameras.  At 100 m the postural term alone is more than the entire
+    inter-camera budget the truss exists to hold, from inside one camera,
+    with nothing bent.  Kept here rather than deleted because the next
+    person to look at a specification sheet will see 11.9 megapixels
+    against 8 and want to know what it cost.
+    """
+    BOX         = (25.0, 11.3, 23.862)
+    CORNER_R    = 2.0
+    HOLE_D      = 2.2
+    HOLE_PAD    = 4.75
+    HOLE_PITCH  = (21.0, 12.5)
+    HOLES_UP    = -3.70
+    CASE        = (10.8, 10.8)          # a METAL can, and load-bearing
+    CASE_PLASTIC = False
+    CASE_E      = 70.0e3                # N/mm^2 [VERIFY: taken as aluminium]
+    CASE_PROUD  = 3.875
+    LENS_D      = 5.75
+    LENS_UP     = 2.45
+    PCB_T       = 1.12
+    PCB_E       = 20.0e3
+
+    SENSOR      = "IMX708-AAJH5-C"
+    IMAGE_AREA  = (6.45, 3.63)
+    PIXEL       = 1.4e-3
+    FOCAL       = 4.74                  # back focal length
+    F_NO        = 1.79
+    FOV         = (66.0, 41.0)
+    FOV_DIAG_SPEC = 75.0                # deg +-3, the lens's own spec
+    IMAGE_CIRCLE = 8.4
+    FIXED_FOCUS = False
+    AF_STROKE   = (0.310, -0.050)       # mm, minimum travel
+    AF_POSTURAL = 0.050                 # mm, lens shift with ORIENTATION at
+                                        # a fixed drive current
+    AF_HYST     = 0.008                 # mm
+    AF_TILT     = 8.0 / 60.0            # deg, lens axis vs the sensor plane
+
+    MASS        = 4.0
+    HEAD_EXTRA  = 1.0
+    ENVELOPE    = (25.0, 11.5, 24.0)
+    BOND_MU     = 10.0
+    FILLET_R    = 3.0
+
+
+# THE PART THE PRODUCT USES.  Everything downstream says `Payload`, so the
+# choice is made here, once, and the rejected alternative stays readable.
+Payload = Module2
 
 
 class Vision:
@@ -1487,33 +1572,48 @@ CHECKS = [
     ("the box read off the drawing agrees with the vendor's published envelope "
      "to a millimetre on every axis",
      all(abs(a - b) <= 1.0 for a, b in zip(Payload.BOX, Payload.ENVELOPE))),
-    ("...and the table's 4 g is Module 3's, not Module 2's: the extra mass "
-     "comes with the extra depth the motorised focus needs",
-     Payload.ENVELOPE[1] > 9.0 + 2.0 and abs(Payload.MASS - 4.0) < 1e-9),
+    ("...and the vendor's two masses agree with the vendor's two envelopes: the "
+     "gram between the modules comes with the 2.5 mm of depth a motorised lens "
+     "needs, so neither number is a guess",
+     abs((Module3.MASS - Module2.MASS) - 1.0) < 1e-9
+     and abs((Module3.ENVELOPE[1] - Module2.ENVELOPE[1]) - 2.5) < 1e-9),
     ("a camera head is the module and its termination, and the guess is the "
      "smaller half",
      Payload.HEAD_EXTRA < Payload.MASS
      and abs(Load.tip_mass() - (Payload.MASS + Payload.HEAD_EXTRA)) < 1e-9),
     # The field of view is used to solve the mount's standoff, so it is
-    # worth knowing it is the right field.  The published horizontal and
-    # vertical come from one document and the lens's diagonal from another.
-    ("the published 66 x 41 degree field agrees with the lens's own 75 +- 3 "
-     "degree diagonal",
-     abs(Payload.fov_diagonal() - Payload.FOV_DIAG) <= 3.0),
-    # ---- AND THE FINDING THE SECOND DATASHEET BROUGHT ----------------
+    # worth knowing it is the right field.  The published field and the
+    # measured sensor area are independent, and they agree on one focal
+    # length -- which is the only cross-check these optics have.
+    ("the published 62.2 x 48.8 degree field and the measured 3.68 x 2.76 mm "
+     "image area agree on one focal length",
+     all(abs(a - b) < 0.5 for a, b in zip(Payload.fov_from_sensor(), Payload.FOV))),
+    # ---- WHY THIS MODULE AND NOT THE OTHER ONE ----------------------
     # The whole product argument is that a rigid spine removes the need to
     # re-estimate the cameras' relative pose in flight.  That argument is
-    # about EXTRINSICS.  The module this rig is built around focuses with
-    # an open-loop voice coil, and its own datasheet says the lens moves
-    # 50 um with ORIENTATION at a fixed drive current -- which is 1.06% of
-    # the image distance, and therefore 1.06% of every range it reports.
-    # At 100 m that is more error than the entire inter-camera budget the
-    # truss is designed to hold, from inside one camera, with nothing bent.
-    ("the module's own autofocus moves the range answer further than the whole "
-     "truss budget does, so locking focus is a product requirement",
-     Payload.range_error_axial(Payload.AF_POSTURAL, 100.0)
-     > Payload.range_error_yaw(Load.SLOPE_BUDGET, 100.0, 1000.0)),
+    # about EXTRINSICS.  Module 3 focuses with an open-loop voice coil, and
+    # its own datasheet says the lens moves 50 um with ORIENTATION at a
+    # fixed drive current -- 1.06% of the image distance, and therefore
+    # 1.06% of every range it reports.  At 100 m that is more error than
+    # the entire inter-camera budget the truss exists to hold, from inside
+    # one camera, with nothing bent.
+    ("the rejected module's autofocus alone moves the range answer further than "
+     "the whole truss budget does",
+     Module3.range_error_axial(Module3.AF_POSTURAL, 100.0)
+     > Module3.range_error_yaw(Load.SLOPE_BUDGET, 100.0, 1000.0)),
     ("...and the tilt it adds while the lens is actually moving is worse again: "
      "a millimetre of lever on 8 arcmin is a pixel and a half of principal point",
-     Payload.AF_TILT * pi / 180.0 * 1.0 / Payload.PIXEL > 1.0),
+     Module3.AF_TILT * pi / 180.0 * 1.0 / Module3.PIXEL > 1.0),
+    # ...AND WHAT THE SWAP COSTS, which is not nothing: a shorter focal
+    # length on bigger pixels is a coarser angle per pixel, and the
+    # stochastic depth floor is proportional to it.
+    ("the chosen module's fixed lens costs angular resolution -- it is a quarter "
+     "coarser per pixel than the one it replaces",
+     1.20 < Payload.pixel_angle() / Module3.pixel_angle() < 1.30),
+    ("...and that price is a quarter of a much smaller number: the matching floor "
+     "it gives up is under a tenth of the drift it removes",
+     Payload.range_error_match(100.0) - Module3.range_error_match(100.0)
+     < 0.10 * Module3.range_error_axial(Module3.AF_POSTURAL, 100.0)),
+    ("...so the chosen module has no lens actuator at all, which is the point",
+     Payload.FIXED_FOCUS and not Module3.FIXED_FOCUS),
 ]

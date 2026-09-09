@@ -249,37 +249,59 @@ drag a clamped rod out of its seat (0.119 mm during a wind against 0.118
 mm from the same rotation with no thread at all — gravity at the new
 attitude, not the thread), and the thread it consumes is the arithmetic's.
 
-## The payload, and the number that moved everything
+## The payload, and the two numbers that moved everything
 
 The truss is a stereo camera's spine, so the camera is a spec, not an
-accessory. Two vendor drawings describe it, and reading both is what caught
-the mistakes.
+accessory. Three vendor drawings describe two candidate modules, and reading
+all three is what caught the mistakes.
 
-**`RP-008153-DS-1`, the mechanical drawing.** The box, the four M2 holes at
-21.00 × 12.50, the ⌀5.75 barrel, and the metal enclosure — 10.8 mm square,
-3.875 proud, rigid and load-bearing, centred on the lens. `Payload` carries
-all of it, read off the drawing's own geometry rather than its dimension
-labels.
-
-**The mass was never on either drawing, and it was carried at 50 g.** The
-vendor's comparison table weighs a Camera Module 3 at **4 g**. Everything
+**The mass was never on any of them, and it was carried at 50 g.** The
+vendor's comparison table weighs a Camera Module 2 at **3 g**. Everything
 downstream of a tip mass an order of magnitude too large was answering a
-different question: the section, the binding constraint, and the choice of
+different question: the section, the binding constraint and the choice of
 web all moved when it was corrected. What the spine package found is in
-`sim/spine/README.md`; what it cost the *cell* is that the design it builds
-is now `85/40/3.0/1.5` rather than `115/40/3.0/1.5`, and the latter was
-never buildable — 0.16 mm short of the ring's bore.
+`sim/spine/README.md`.
 
-**`RP-009992-DS-1`, the sensor assembly.** It confirms the enclosure to the
-tolerance, and the published 66 × 41° field implies a 73.7° diagonal against
-the lens's own 75 ± 3°, so two independent documents agree. Then it says the
-thing neither the brief nor the mechanical drawing does: **the lens moves.**
-The module focuses with an open-loop voice coil whose postural difference is
-±50 µm at a fixed drive current — 1.06% of the image distance, and therefore
-1.06% of every range it reports. At 100 m that is **1.05 m**, against the
-0.87 m that is the *entire* inter-camera budget the truss exists to hold.
-It is an intrinsic; no rigidity touches it. **Focus has to be locked**, and
-`check_geometry` asserts the comparison so the argument cannot be lost.
+**And Module 3's lens moves.** Its sensor-assembly datasheet
+(`RP-009992-DS-1`) gives an open-loop voice coil whose postural difference
+is ±50 µm at a fixed drive current — 1.06% of the image distance, and so
+1.06% of every range reported. At 100 m that is 1.06 m against the 0.84 m
+that is the *entire* inter-camera budget the truss exists to hold. It is an
+intrinsic; no rigidity touches it, and holding the drive current does not
+remove it, because the postural term is what the coil does at a fixed
+current.
+
+**So the product uses Camera Module 2, which has no lens actuator at all.**
+`Module2` and `Module3` both live in `spec.py`, the rejected part kept
+beside the chosen one, and `check_geometry` asserts the trade rather than
+the conclusion: Module 2's shorter focal length on bigger pixels costs
+0.07 m of stochastic floor at 100 m to remove 1.06 m of drift.
+
+**`RP-008149-DS-1`, Module 2's mechanical drawing**, read from the PDF's own
+geometry rather than its dimension labels — everything scales at 35.525
+units/mm, and against that:
+
+| | measured | labelled |
+|---|---|---|
+| board | 24.996 × 23.871 mm | 25 × 23.862 |
+| corners | 4 × 2.0 mm radius | 2.0 |
+| holes | 4 × ⌀2.168 mm | 2.2 |
+| hole pitch | 21.00 × 12.526 mm | 12.5 |
+| hole pattern centre | 3.680 mm below the board's | — |
+| lens housing | 8.500 × 8.500 mm square | 8.5 |
+| optical axis | 2.477 mm above the board's centre | 9.462 to the top edge |
+
+Module 2 and Module 3 share a board outline, a hole pattern and an optical
+axis height to a hundredth of a millimetre — they are mechanically
+interchangeable, which is why the mount did not have to be redrawn.
+
+Two things the drawing does not give, both flagged in `Module2`: it is a top
+view, so there is no height for the housing (the module is 9 mm overall on
+the vendor table and the board about 1, so the holder and barrel together
+stand about 8 proud and the square's own height is less), and there is no
+barrel circle on it. The optics are cross-checked instead: the published
+62.2 × 48.8° field and the measured 3.68 × 2.76 mm image area agree on one
+focal length to a third of a percent.
 
 ## The camera mount
 
@@ -346,7 +368,7 @@ model says so rather than the cell finding out.
 
 ## The suites
 
-438 checks in thirteen suites, about 12 minutes for the full tier.
+446 checks in thirteen suites, about 12 minutes for the full tier.
 
 | suite | tier | what it would have caught |
 |---|---|---|

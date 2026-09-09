@@ -523,21 +523,19 @@ been silently wrong:
 
 ### 7.3 The camera's own datasheet, part two: the lens moves
 
-`RP-009992-DS-1` (the TNBA1392 sensor assembly) confirms every mechanical
-number the first drawing gave — 10.8 ±0.15 square, 3.875 ±0.15 body height,
-a ⌀5.75 barrel — and the published 66 × 41° field implies a 73.7° diagonal
-against the lens's own 75 ±3°, so two independent documents agree. Then it
-says the thing neither the brief nor the mechanical drawing does.
+`RP-009992-DS-1` (the Module 3 sensor assembly) confirms every mechanical
+number that module's drawing gives — 10.8 ±0.15 square, 3.875 ±0.15 body
+height, a ⌀5.75 barrel. Then it says the thing neither the brief nor the
+mechanical drawing does.
 
-**The module focuses with an open-loop voice coil, and its tolerances are
+**Module 3 focuses with an open-loop voice coil, and its tolerances are
 larger than the whole structural budget.** In the units §2.2 writes the
-budget in — range error at 100 m on a 1 m baseline, sensor BFL 4.74 mm,
-1.4 µm pixels:
+budget in — range error at 100 m on a 1 m baseline:
 
 | term | what it is | at 100 m |
 |---|---|---|
-| **the entire inter-camera budget** | 0.005° relative yaw | **0.87 m** |
-| AF postural difference ±50 µm | lens shift with **orientation**, at fixed drive | **1.05 m** |
+| **the entire inter-camera budget** | 0.005° relative yaw | **0.84 m** |
+| AF postural difference ±50 µm | lens shift with **orientation**, at fixed drive | **1.06 m** |
 | AF hysteresis 8 µm | | 0.17 m |
 | AF dynamic tilt 8′ | lens axis against the sensor, over the stroke | 1.7 px of principal point per mm of lever — **5–14 m** |
 
@@ -548,16 +546,32 @@ it does **not** cancel between the two cameras: both focal lengths enter the
 same way. This is an *intrinsic*, and no amount of structural rigidity
 touches it.
 
-**So focus must be locked** — against the infinity stop for preference, or
-by using a fixed-focus module — and that is a product requirement, not a
-configuration choice. With focus locked, what remains is the postural term
-and the hysteresis. With focus free, the module by itself is an order of
-magnitude worse than everything the truss buys.
+**So the product uses Camera Module 2, which has no lens actuator at all.**
+Its focus is set on a thread and then stays where it is put. That is the
+decision this section exists to record, and it is a swap of parts rather
+than a mitigation: locking a voice coil by holding its drive current does
+not remove the postural term, because the postural term *is* what the coil
+does at a fixed current.
+
+**What the swap costs, and it is not nothing.** Module 2 has a shorter focal
+length on bigger pixels — 3.04 mm and 1.12 µm against 4.74 and 1.4 — so a
+pixel subtends 0.368 mrad instead of 0.295. Depth precision is proportional
+to that, so the stochastic floor goes from 0.28 m to 0.35 m at 100 m. Seven
+centimetres given up to remove a metre and six: a fifteen-to-one trade, and
+`check_geometry` asserts the arithmetic rather than the conclusion.
+
+Module 2 also brings a **plastic** lens housing where Module 3 had a
+load-bearing metal can, which is the surface the six mount struts bond to.
+It is not the soft part — a stubby block in the weakest plastic it could be
+is 2.7× the axial stiffness of the 1.5 mm struts it carries — and
+`check_mount` asserts the modulus at which that would flip (1.1 GPa, below
+any engineering thermoplastic) rather than a margin somebody chose.
 
 Recorded here because it is the same failure as §7.1 and §7.2 one layer
 further out: a number nobody had looked up, quietly setting the answer.
-`Payload` now carries these as facts and `check_geometry` asserts the
-comparison, so the argument cannot be lost again.
+`Module2` and `Module3` both live in `spec.py` — the rejected part kept
+beside the chosen one, because the next person to compare 11.9 megapixels
+against 8 will want to know what it cost.
 
 ---
 

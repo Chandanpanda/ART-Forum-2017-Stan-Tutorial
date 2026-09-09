@@ -61,7 +61,7 @@ and an "open" truss with a nose on it reads identically to a closed one.
 **Once the ends are closed, the single-diagonal web beats an X.** 403 Hz at
 74.9 g for the X-braced version against 290 Hz at 54.4 g for the specified
 one — and the X is *worse* on the angular budget, 0.64 against 0.58. With a
-4 g camera the truss carries mostly itself (54 g of structure against 10 g
+3 g camera the truss carries mostly itself (54 g of structure against 8 g
 of cameras), so 20 g of extra carbon is 20 g of extra manoeuvre load. It
 buys frequency nobody asked for and pays for it in accuracy.
 
@@ -83,9 +83,15 @@ Aluminium is hopeless for the same reason.
 
 Every finding below used to read differently, and one unmeasured number is
 why: the camera head was carried at **50 g**, a placeholder inherited from
-the brief. A Camera Module 3 weighs **4 g** on the vendor's own comparison
-table. Ten times too much tip mass had been setting the tip force, the
-Rayleigh mass, the first mode and therefore the whole answer.
+the brief. A Camera Module 2 weighs **3 g** on the vendor's own comparison
+table. More than ten times too much tip mass had been setting the tip force,
+the Rayleigh mass, the first mode and therefore the whole answer.
+
+(The part changed too, and for a separate reason: Module 3's motorised lens
+moves ±50 µm with orientation, which is 1.06% of its image distance and so
+1.06% of every range it reports — larger, from inside one camera, than the
+whole inter-camera budget the truss holds. Module 2 has no lens actuator.
+`sim/truss/README.md` has the trade.)
 
 With the real head, on a sweep of 1470 candidates over sections 60–160 mm
 and webs 30–60° with the mount modelled and every rule applied:
@@ -173,7 +179,7 @@ back, and the sweep charges each candidate its own.
 **The massless rigid placeholder it replaces is not a bound in either
 direction.** It charges nothing for the mount's own mass and compliance
 (optimistic), and it hangs the payload on the chord ends 66 mm off the axis
-(pessimistic). Between a 50 g head and a 5 g one the net error changes
+(pessimistic). Between a 50 g head and a 4 g one the net error changes
 *sign*. No margin on a placeholder could have covered both, which is the
 argument for solving the mount rather than allowing for it.
 

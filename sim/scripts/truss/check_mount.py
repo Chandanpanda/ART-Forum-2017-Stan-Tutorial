@@ -19,7 +19,7 @@ import numpy as np
 
 from truss import structure, geometry, fixture, mount
 from truss.spec import (Truss, Cage, Carrier, Gantry, Gripper, Head, Load,
-                        Magazine, Payload, Process, Stock, Dispenser)
+                        Magazine, Module3, Payload, Process, Stock, Dispenser)
 
 VERBOSE = "-v" in sys.argv
 RESULTS = []
@@ -60,28 +60,53 @@ def main():
 
     # ---------------------------------------------- THE GRIPPER CANNOT
     thin, case = Carrier.span()
-    check("the gripper cannot hold the camera: nothing on the module is inside its "
-          "jaws except the lens barrel, and that is the one part a machine must "
-          "not touch",
-          Gripper.JAW_OPEN < case and Gripper.JAW_OPEN < thin
-          and Payload.LENS_D < Gripper.JAW_OPEN,
-          "jaws %.1f mm; module %.1f thin way, enclosure %.1f square, barrel %.2f"
-          % (Gripper.JAW_OPEN, thin, case, Payload.LENS_D))
-    # ...AND OPENING THEM IS NOT THE FIX.  The magazine's pitch is bounded
-    # below by the jaw opening, the diagonal racks pitch along x, and the
-    # gantry is already nearly full.  This is the check that decided there
-    # would be a carrier.
-    jaw_ok = case + 1.0                      # just enough to take the enclosure
+    x_now, y_now = fx.x_reach(), fx.y_reach()
+    check("the gripper cannot hold the camera as it stands: its jaws open 8 mm and "
+          "the lens housing is 8.5 mm square",
+          Gripper.JAW_OPEN < case and Gripper.JAW_OPEN < thin,
+          "jaws %.1f mm; module %.1f through, housing %.1f square"
+          % (Gripper.JAW_OPEN, thin, case))
+    # OPENING THEM IS FREE ON THIS MODULE, and that is worth knowing rather
+    # than assuming: the magazine's pitch is bounded below by the jaw
+    # opening, so on the module this project started with -- 10.8 mm square
+    # -- wider jaws pushed the racks past the gantry's X travel and there
+    # was no fix at all.  Module 2's housing is 2.3 mm smaller and the
+    # bound lands under the pitch the racks already have.
+    jaw_ok = case + 1.0
     dp = max(Magazine.DIAG_PITCH, pitch_bound(jaw_ok))
     cp = max(Magazine.CHORD_PITCH, pitch_bound(jaw_ok) + 1.0)
     x_wide, _y = reach_with(t, dp, cp, Cage.END_FREE)
-    x_now, y_now = fx.x_reach(), fx.y_reach()
-    check("...and opening them is not the fix: jaws wide enough for the enclosure "
-          "push the racks past the gantry's X travel, so the machine would need a "
-          "longer axis to be able to pick up a camera",
-          x_now <= Gantry.X_TRAVEL < x_wide,
-          "%.0f mm of %.0f as built; %.0f with %.1f mm jaws (pitch %.0f/%.0f)"
-          % (x_now, Gantry.X_TRAVEL, x_wide, jaw_ok, dp, cp))
+    check("...and on THIS module, opening them would cost nothing: the pitch a %.1f mm "
+          "jaw forces is under the pitch the racks already have"
+          % jaw_ok,
+          pitch_bound(jaw_ok) <= Magazine.DIAG_PITCH and abs(x_wide - x_now) < 1e-6,
+          "%.2f mm needed against %.1f; X unchanged at %.0f"
+          % (pitch_bound(jaw_ok), Magazine.DIAG_PITCH, x_now))
+    jaw_v3 = Module3.CASE[0] + 1.0
+    x_v3, _ = reach_with(t, max(Magazine.DIAG_PITCH, pitch_bound(jaw_v3)),
+                         max(Magazine.CHORD_PITCH, pitch_bound(jaw_v3) + 1.0),
+                         Cage.END_FREE)
+    check("...which it would NOT have on the module this started with: a 10.8 mm "
+          "housing needs jaws that push the racks past the gantry's X travel",
+          x_v3 > Gantry.X_TRAVEL >= x_now,
+          "%.0f mm of %.0f with %.1f mm jaws, against %.0f as built"
+          % (x_v3, Gantry.X_TRAVEL, jaw_v3, x_now))
+    # ...SO WHY A CARRIER AT ALL.  Because the housing is the BONDING
+    # SURFACE.  The six struts land on that square; jaws on it are jaws on
+    # the bond, and a pad that has been clamped to an epoxy joint's own
+    # face is a contaminated joint.  That argument needs no dimension.
+    check("the housing the jaws would have to take is exactly the surface the six "
+          "struts bond to, so gripping it and bonding it are the same face",
+          abs(mount.platform_radius() - 0.5 * ((Payload.CASE_PROUD ** 2
+                                                + Payload.CASE[1] ** 2) ** 0.5)) < 1e-9
+          and mount.platform_radius() <= Payload.case_r(),
+          "struts land at %.2f mm on a housing of %.2f mm circumradius"
+          % (mount.platform_radius(), Payload.case_r()))
+    check("...and the pads are taller than the housing stands proud anyway, so jaws "
+          "on it would land on the board [rests on CASE_PROUD, which is VERIFY]",
+          Gripper.PAD_H > Payload.CASE_PROUD,
+          "%.1f mm of pad against %.1f mm of housing"
+          % (Gripper.PAD_H, Payload.CASE_PROUD))
 
     # ---------------------------------------------- SO THERE IS A CARRIER
     check("the carrier's boss is a stock rod diameter, so every clearance, capture "
@@ -176,6 +201,29 @@ def main():
           "%.0f N against %.3f N"
           % (mount.fillet_strength(t.d_diag),
              Load.tip_mass() / 1000.0 * Load.G * Load.LATERAL_G))
+    # THE HOUSING IS PLASTIC ON THIS MODULE, which is the difference from the
+    # metal can the mount was first drawn against.  It only matters if it is
+    # the soft part, and it is not: a stubby block in the weakest plastic it
+    # could be is still several times the strut's axial stiffness.
+    # a block CASE[0] long, of section CASE[0] x CASE_PROUD, between two
+    # opposite landings -- against one strut in series with it
+    k_case = (Payload.CASE_E * Payload.CASE[0] * Payload.CASE_PROUD
+              / Payload.CASE[0])
+    k_strut = Stock.E * np.pi * (t.d_diag / 2.0) ** 2 / min(r.length for r in rods)
+    check("the housing is PLASTIC on this module, and it is still not the soft part: "
+          "the strut is the compliance",
+          Payload.CASE_PLASTIC and k_case > k_strut,
+          "%.0f N/mm of housing against %.0f of strut, %.1fx"
+          % (k_case, k_strut, k_case / k_strut))
+    # ...AND HOW WRONG CASE_E WOULD HAVE TO BE.  This is the useful form of
+    # the check: not a margin somebody chose, but the modulus at which the
+    # conclusion flips, so it can be compared against what plastics are.
+    e_crit = Payload.CASE_E * k_strut / k_case
+    check("...and it would take a housing softer than any engineering thermoplastic "
+          "to change that, which is the whole of what CASE_E has to be right about",
+          e_crit < 2.0e3,
+          "the strut takes over below %.0f MPa; CASE_E is set at %.0f, itself the "
+          "weakest an unfilled housing could be" % (e_crit, Payload.CASE_E))
     check("...and is stiffer than the strut it holds, so the bond is not the compliance",
           mount.fillet_stiffness(t.d_diag)[0]
           > Stock.E * np.pi * (t.d_diag / 2.0) ** 2 / min(r.length for r in rods),

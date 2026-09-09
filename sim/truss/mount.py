@@ -12,13 +12,16 @@ WHAT IT IS.  Nine rods per end and no plate, no bracket, no machined part:
     6 STRUTS, octahedral: each chord end feeds two platform points, so no
       joint has to carry a moment.
 
-THE PLATFORM IS THE CAMERA'S OWN METAL ENCLOSURE.  A Camera Module 3 carries
-a rigid, load-bearing block round its lens -- 10.8 mm square, 3.875 proud --
-and it holds most of the module's mass; the 1.12 mm board behind it is a
-carrier and needs no securing of its own.  So the struts bond straight to
-that block and there are no platform rods at all, which is worth more than
-the three rods it saves: with nothing of the mount reaching round the front,
-nothing can end up in the lens's 66 x 41 degree field (`fov_clear`).
+THE PLATFORM IS THE CAMERA'S OWN LENS HOUSING.  A Camera Module 2 carries a
+square holder round its lens -- 8.5 mm square, measured off RP-008149-DS-1 --
+which is PLASTIC rather than the metal can the module this was first drawn
+against had.  That turns out not to matter: check_mount measures the housing
+against the struts and it is still several times their stiffness in the
+weakest plastic it could be, so the strut is the compliance and the payload
+is not.  So the struts bond straight to that holder and there are no platform
+rods at all, which is worth more than the three rods it saves: with nothing
+of the mount reaching round the front, nothing can end up in the lens's
+62.2 x 48.8 degree field (`fov_clear`).
 
 WHERE THE CAMERA'S MASS GOES, and it is the whole design.  The enclosure is
 centred on the lens, so bonding to it puts BOTH the mass and the optical
@@ -122,10 +125,9 @@ def platform_radius(payload=Payload):
     """Where the six struts land, as a radius from the spine's axis.
 
     The enclosure IS the platform, so this is its circumradius ACROSS the
-    spine -- the block is 10.8 mm square in plan but only CASE_PROUD thick
+    spine -- the holder is CASE square in plan but only CASE_PROUD thick
     toward the scene, and it is the thin direction the struts have to work
-    with.  Not chosen, and not the footprint's 7.64: change the module and
-    it moves.
+    with.  Not chosen: change the module and it moves.
     """
     return 0.5 * sqrt(payload.CASE_PROUD ** 2 + payload.CASE[1] ** 2)
 

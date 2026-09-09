@@ -52,8 +52,25 @@ def main():
     open_ends, closed = truss(brackets=False), truss(brackets=True)
     f_open = open_ends.modes(1)[0][0]
     f_closed = closed.modes(1)[0][0]
-    check("a lattice with open end triangles is far softer than the beam it is idealised as",
-          f_closed / f_open > 3.0, "%.0f Hz open, %.0f Hz closed" % (f_open, f_closed))
+    check("a lattice with open end triangles is far softer than the beam it is "
+          "idealised as",
+          f_closed / f_open > 2.0, "%.0f Hz open, %.0f Hz closed, %.2fx"
+          % (f_open, f_closed, f_closed / f_open))
+    # ...AND IT IS THE TIP MASS THAT RIDES THE MECHANISM, which is why the
+    # ratio is not a constant: 2.3x at 2 g, 2.8 at 4, 3.9 at 10, 5.6 at the
+    # brief's 50.  Asserted as the mechanism rather than as a number,
+    # because the number moved when the camera did.
+    def open_ratio(tip):
+        o = build.warren_truss(1000, 92, 40, 3, 2, tip_mass=tip, brackets=False)
+        c = build.warren_truss(1000, 92, 40, 3, 2, tip_mass=tip, brackets=True)
+        return c.modes(1)[0][0] / o.modes(1)[0][0]
+    check("...and what rides that mechanism is the TIP MASS, so a heavier head is "
+          "punished harder for an open end -- the penalty is not a property of the "
+          "lattice alone",
+          open_ratio(2.0) < open_ratio(D.tip_mass_g) < open_ratio(10.0) < open_ratio(50.0),
+          "%.2fx at 2 g, %.2f at %.0f, %.2f at 10, %.2f at 50"
+          % (open_ratio(2.0), open_ratio(D.tip_mass_g), D.tip_mass_g,
+             open_ratio(10.0), open_ratio(50.0)))
     strap = truss(brackets=False)
     sec = Section.rect(0.006, 0.001)
     for ring in (strap.faces["left"], strap.faces["right"]):

@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 @dataclass(frozen=True)
 class Duty:
     name:        str = "quadrotor"
-    tip_mass_g:  float = 5.0       # one camera head: a 4 g module plus a
+    tip_mass_g:  float = 4.0       # one camera head: a 3 g module plus a
                                    # 1 g allowance for the flex's
                                    # termination.  It was 50 g -- a
                                    # placeholder, and the number every

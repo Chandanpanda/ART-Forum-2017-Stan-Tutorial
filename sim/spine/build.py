@@ -87,10 +87,10 @@ class Nose:
     lateral manoeuvre.  That is what `payload_x` measures, and it is the
     single most expensive number in the mount.
 
-    The answer is to bond to the module's own metal enclosure at its
-    mid-length instead, so the mass sits IN the platform's plane and on the
-    spine's axis, and `payload_x` is zero.  Which face touches what is then
-    a bonding question for the cell, not a structural one.
+    The answer is to bond to the module's own lens housing at its mid-length
+    instead, so the mass sits IN the platform's plane and on the spine's
+    axis, and `payload_x` is zero.  Which face touches what is then a bonding
+    question for the cell, not a structural one.
 
     AND `payload_x` DECIDES EVERYTHING.  It is how far the camera's centre of
     mass sits outboard of the platform's plane, and it is the whole mount
@@ -112,12 +112,13 @@ class Nose:
     the mount is modelled, not allowed for.
 
     r_platform IS THE PAYLOAD'S, NOT A CHOICE.  The struts land on the
-    module's own metal enclosure, which is rigid and load-bearing, so
-    r_platform is that block's circumradius across the spine (5.74 mm for a
-    Camera Module 3) and `platform_rigid` is true: there are no platform
-    rods at all, and so nothing of the mount can reach round in front of the
-    lens.  Three carbon rods surrounding the whole module at 29 mm instead
-    read 0.71 against the enclosure's 0.67 and cost six more rods.
+    module's own lens housing, so r_platform is that block's circumradius
+    across the spine (4.93 mm for a Camera Module 2's 8.5 mm square) and
+    `platform_rigid` is true: there are no platform rods at all, and so
+    nothing of the mount can reach round in front of the lens.  Three carbon
+    rods surrounding the whole module instead cost six more rods and read
+    worse.  The housing is plastic on this module and it is still not the
+    soft part -- check_mount measures it against the struts.
 
     A NULL, WHICH IS NOT AN OPTIMUM.  Swept on strut diameter at a 115 mm
     section the signed yaw under a manoeuvre goes -167, +337, +590, +741,
@@ -137,8 +138,8 @@ class Nose:
     """
     standoff:    float = 15.0
     r_platform:  float = 24.0
-    # THE PLATFORM MAY BE THE PAYLOAD'S OWN ENCLOSURE.  A Camera Module 3
-    # carries a rigid, load-bearing metal block round its lens; when the
+    # THE PLATFORM MAY BE THE PAYLOAD'S OWN HOUSING.  A camera module
+    # carries a stiff square holder round its lens; when the
     # struts bond to that, the three platform rods are not needed at all --
     # which also means nothing of the mount can end up in front of the lens.
     # The lever arm is then the enclosure's, and small; that is second order
@@ -153,7 +154,9 @@ class Nose:
     # moment of a 1.5 mm rod.  So this diameter is swept separately.
     d_batten:    float = 3.0
     payload_x:   float = 0.0       # the camera's CoM, outboard of the platform
-    payload_box: tuple = (25.0, 11.5, 24.0)   # mm, along x / y / z [VERIFY]
+    payload_box: tuple = (25.0, 9.0, 23.862)  # mm, along x / y / z.  A
+                                              # FALLBACK: the caller passes
+                                              # the real part (mount.nose_spec)
     d_strut:     float = 1.5
     d_platform:  float = 1.5
 
@@ -167,12 +170,14 @@ class Nose:
         is half its circumradius.
 
         `r_platform` overrides that when the struts land on something the
-        payload already has -- the module's own metal enclosure -- rather
+        payload already has -- the module's own lens housing -- rather
         than on three rods laid round it.  The caller passes the radius of
         whatever is being bonded to (with `rigid`, since it is then not a
         rod triangle); THIS package does not know what a Camera Module is.
         """
-        box = (25.0, 11.3, 23.862) if box is None else box   # RP-008153-DS-1
+        # a fallback only -- sim/truss hands the real part over in
+        # mount.nose_spec, and this package knows nothing about cameras
+        box = (25.0, 9.0, 23.862) if box is None else box
         half_diag = 0.5 * (box[1] ** 2 + box[2] ** 2) ** 0.5
         r = 2.0 * (half_diag + clearance) if r_platform is None else float(r_platform)
         return Nose(standoff=standoff, r_platform=r,
@@ -284,8 +289,9 @@ def warren_truss(length, side, alpha, d_chord, d_diag, material=None,
                                       tag="strut"))
             # THE CAMERA'S MASS WHERE IT ACTUALLY IS: a node at the housing's
             # centre of mass, half a housing outboard of the platform, tied to
-            # the platform by the housing itself.  A metal box is far stiffer
-            # than these struts, so it is three stiff massless members -- but
+            # the platform by the housing itself.  The housing is far stiffer
+            # than these struts -- measured, even in plastic -- so it is three
+            # stiff massless members; but
             # it is NOT on the platform, and that offset is a moment arm the
             # first model did not charge for.
             com = len(nodes)

@@ -29,7 +29,7 @@ from math import pi, sin, cos, tan, radians, atan2, degrees, sqrt
 
 import numpy as np
 
-from .spec import (Cage, Magazine, Head, Gripper, Process,
+from .spec import (Cage, Carrier, Magazine, Head, Gripper, Process,
                    notch_mouth)
 from .geometry import (TrussGeometry, FACES, radial, chord_phi, rot_x,
                        theta_chord_up, theta_face_up)
@@ -96,6 +96,24 @@ class Fixture:
     @cached_property
     def slots(self):
         return self._magazine()
+
+    @cached_property
+    def nose_reach(self):
+        """How far past the chord ends this truss's loaded camera carrier
+        reaches -- what the cage's end freedom has to clear.
+
+        Solved from the section, because the standoff is: 21.4 mm at an
+        85 mm triangle, 35.7 at 140.  `end_free` is the CAGE's answer to
+        the worst of these across everything the cell builds; this is the
+        one truss's, and check_mount holds the first against the second.
+        """
+        from . import mount
+        return Carrier.reach(mount.fov_standoff(self.g, d_strut=self.t.d_diag))
+
+    def end_free(self):
+        """Axial room between the chord ends and the end plate, mm.  A
+        machine fact: the cage is built once (spec.Cage.END_FREE)."""
+        return Cage.END_FREE
 
     # ------------------------------------------------------------- pins
     def joint_exclusion(self):
@@ -250,7 +268,7 @@ class Fixture:
         # one rack at each end, so a diagonal comes from the nearer one and
         # the mean fetch is a quarter of the truss, not half
         half = t.L_cut / 2.0
-        edge = Cage.END_FREE + Cage.END_PLATE_T + Magazine.END_CLEAR
+        edge = self.end_free() + Cage.END_PLATE_T + Magazine.END_CLEAR
         near = sorted(self.g.diags, key=lambda r: r.mid[0])
         n0 = len(near) // 2
         for i, r in enumerate(near[:n0]):
@@ -326,8 +344,8 @@ class Fixture:
         for q in self.posts:
             p0.append(Rm @ q.p0); p1.append(Rm @ q.p1); rr.append(Cage.POST_R)
         # the spine down the axis
-        x0 = -(Cage.END_FREE + Cage.END_PLATE_T)
-        x1 = self.t.length + Cage.END_FREE + Cage.END_PLATE_T
+        x0 = -(self.end_free() + Cage.END_PLATE_T)
+        x1 = self.t.length + self.end_free() + Cage.END_PLATE_T
         p0.append(np.array([x0, 0.0, 0.0])); p1.append(np.array([x1, 0.0, 0.0]))
         rr.append(self.spine_r())
         # THE END PLATES ARE DISCS, AND A CAPSULE CANNOT BE ONE.  Swept
@@ -338,7 +356,7 @@ class Fixture:
         # unseen; on a 115 mm section it forbids both end joints and the
         # whole truss becomes unplannable.  Spokes: radial capsules as
         # thick as the plate, which is the shape the plate actually has.
-        for xa in (x0, self.t.length + Cage.END_FREE):
+        for xa in (x0, self.t.length + self.end_free()):
             mid = xa + Cage.END_PLATE_T / 2.0
             for k in range(Cage.PLATE_SPOKES):
                 a = 2.0 * pi * k / Cage.PLATE_SPOKES

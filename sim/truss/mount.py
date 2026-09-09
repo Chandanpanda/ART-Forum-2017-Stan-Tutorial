@@ -191,6 +191,8 @@ def fov_clear(mount, payload=Payload, end=None):
     at all, and the check has room to spare rather than a verdict.
     """
     hx, hz = (radians(a / 2.0) for a in payload.FOV)
+    tx, tz = np.tan(hx), np.tan(hz)
+    ss = np.linspace(0.0, 1.0, 21)[:, None]
     worst = float("inf")
     for e, (centre, look, _r) in enumerate(mount.payload):
         if end is not None and e != end:
@@ -200,16 +202,24 @@ def fov_clear(mount, payload=Payload, end=None):
         f = f / np.linalg.norm(f)
         ax = np.array([1.0, 0.0, 0.0])
         up = np.cross(f, ax)
-        for rod in mount.of(e):
-            for s in np.linspace(0.0, 1.0, 21):
-                p = rod.p0 + s * (rod.p1 - rod.p0) - np.asarray(centre, float)
-                d = float(p @ f)
-                if d <= 0.0:
-                    continue                     # behind the lens: never in shot
-                # distance outside the pyramid, along each of its two fans
-                ox = abs(float(p @ ax)) - d * np.tan(hx)
-                oz = abs(float(p @ up)) - d * np.tan(hz)
-                worst = min(worst, max(ox, oz) + rod.r)
+        rods = mount.of(e)
+        if not rods:
+            continue
+        # every sample of every rod at once: the bisect in fov_standoff
+        # calls this a dozen times per candidate and the design sweep asks
+        # for a candidate a thousand times, so the loop is an array
+        pts = np.concatenate([rod.p0 + ss * (rod.p1 - rod.p0) for rod in rods])
+        rad = np.repeat([rod.r for rod in rods], ss.shape[0])
+        pts = pts - np.asarray(centre, float)
+        d = pts @ f
+        front = d > 0.0                          # behind the lens: never in shot
+        if not front.any():
+            continue
+        d = d[front]
+        # distance outside the pyramid, along each of its two fans
+        ox = np.abs(pts[front] @ ax) - d * tx
+        oz = np.abs(pts[front] @ up) - d * tz
+        worst = min(worst, float((np.maximum(ox, oz) + rad[front]).min()))
     return worst
 
 
@@ -321,43 +331,61 @@ def fillet_strength(d_rod, payload=Payload):
     return payload.BOND_MU * pi * d_rod * payload.FILLET_R
 
 
-def _g():
-    from . import structure
-    from .geometry import TrussGeometry
-    return TrussGeometry(structure.TRUSS_1M)
+# LAZY, AND THAT IS NOT TIDINESS.  The checks below want a real truss, and
+# the only one to hand is structure's -- which solves a design grid, which
+# builds fixtures, which now ask THIS module how far the camera reaches.
+# Evaluated at import that is a cycle; evaluated when somebody reads CHECKS
+# it is not, and nothing that merely wants to solve a mount pays for a
+# design sweep it never asked for.
+_CACHE = {}
 
 
-_G = _g()
-_FOV_SO = fov_standoff(_G)
-_M = solve(_G, standoff_mm=_FOV_SO)
+def _built():
+    if not _CACHE:
+        from . import structure
+        from .geometry import TrussGeometry
+        g = TrussGeometry(structure.TRUSS_1M)
+        so = fov_standoff(g)
+        _CACHE.update(g=g, so=so, m=solve(g, standoff_mm=so))
+    return _CACHE
 
-CHECKS = [
-    ("the camera faces a FACE of the truss, not a chord: a chord aimed at sits 12 "
-     "degrees off the optical axis and no useful standoff clears it",
-     min(abs(((look_azimuth(_G) - chord_phi(k)) + 180.0) % 360.0 - 180.0)
-         for k in range(3)) > 30.0),
-    ("the struts land on the enclosure, the only rigid, load-bearing part of the "
-     "module -- the board behind it is a carrier",
-     platform_radius() <= Payload.case_r() + 1e-9),
-    ("...so the camera's mass lies in the platform's plane, which is the whole design",
-     Payload.com_on_axis()),
-    ("...and the enclosure is centred on the lens, so its mass and the optical axis "
-     "are both on the spine's axis at once", True),
-    ("the standoff is solved for the LENS, not for the board: the camera has to stop "
-     "photographing the truss, and that needs more room than clearing it does",
-     _FOV_SO > mech_standoff() and fov_clear(_M) > 0.0),
-    ("...and nothing of the truss or the mount is left in the picture",
-     fov_clear(_M) > 0.0),
-    ("every mount rod can be laid by the cage and the gripper together, with no axis "
-     "the machine does not have",
-     all(float(np.linalg.norm(axis_from(*pose_for(r.axis)) - r.axis)) < 1e-9
-         for r in _M.rods)),
-    ("the platform radius is the enclosure's ACROSS the spine, which is its thin way",
-     abs(platform_radius()
-         - 0.5 * sqrt(Payload.CASE_PROUD ** 2 + Payload.CASE[1] ** 2)) < 1e-9),
-    ("a filleted rod end is stiffer than the rod it holds, so the bond is not the compliance",
-     fillet_stiffness(1.5)[0] > 150e3 * pi * 0.75 ** 2 / 60.0),
-    ("...and carries the service load a thousand times over",
-     fillet_strength(1.5) > 100.0 * (Payload.MASS + Payload.HEAD_EXTRA)
-     / 1000.0 * 9.81 * 3.0),
-]
+
+def __getattr__(name):
+    if name == "CHECKS":
+        return _checks()
+    raise AttributeError("module %r has no attribute %r" % (__name__, name))
+
+
+def _checks():
+    b = _built()
+    _G, _FOV_SO, _M = b["g"], b["so"], b["m"]
+    return [
+        ("the camera faces a FACE of the truss, not a chord: a chord aimed at sits 12 "
+         "degrees off the optical axis and no useful standoff clears it",
+         min(abs(((look_azimuth(_G) - chord_phi(k)) + 180.0) % 360.0 - 180.0)
+             for k in range(3)) > 30.0),
+        ("the struts land on the enclosure, the only rigid, load-bearing part of the "
+         "module -- the board behind it is a carrier",
+         platform_radius() <= Payload.case_r() + 1e-9),
+        ("...so the camera's mass lies in the platform's plane, which is the whole design",
+         Payload.com_on_axis()),
+        ("...and the enclosure is centred on the lens, so its mass and the optical axis "
+         "are both on the spine's axis at once", True),
+        ("the standoff is solved for the LENS, not for the board: the camera has to stop "
+         "photographing the truss, and that needs more room than clearing it does",
+         _FOV_SO > mech_standoff() and fov_clear(_M) > 0.0),
+        ("...and nothing of the truss or the mount is left in the picture",
+         fov_clear(_M) > 0.0),
+        ("every mount rod can be laid by the cage and the gripper together, with no axis "
+         "the machine does not have",
+         all(float(np.linalg.norm(axis_from(*pose_for(r.axis)) - r.axis)) < 1e-9
+             for r in _M.rods)),
+        ("the platform radius is the enclosure's ACROSS the spine, which is its thin way",
+         abs(platform_radius()
+             - 0.5 * sqrt(Payload.CASE_PROUD ** 2 + Payload.CASE[1] ** 2)) < 1e-9),
+        ("a filleted rod end is stiffer than the rod it holds, so the bond is not the compliance",
+         fillet_stiffness(1.5)[0] > 150e3 * pi * 0.75 ** 2 / 60.0),
+        ("...and carries the service load a thousand times over",
+         fillet_strength(1.5) > 100.0 * (Payload.MASS + Payload.HEAD_EXTRA)
+         / 1000.0 * 9.81 * 3.0),
+    ]

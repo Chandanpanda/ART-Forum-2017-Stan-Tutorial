@@ -82,9 +82,17 @@ def main():
     # the band's sweep and the rim's corner are charged for
     # (spec.r_in_needed): the brief's own ring is a millimetre short for
     # the brief's own truss, which is why the optimiser lands at 40 degrees.
+    # ...AND SINCE THE CAMERA WENT IN THE CAGE, THE CELL CANNOT BUILD IT AT
+    # ALL.  Making room for the module past the chord ends pushed the end
+    # racks out 20 mm each, and the brief's 30 diagonals then want 1432 mm
+    # of a 1400 mm axis (1392 with the cage as first drawn).  That is a real
+    # cost of the mount and it is recorded here rather than rounded away:
+    # the chosen truss fits at 1399, and the brief's does not fit.
     check("brief's truss fails its own first-mode rule once the web's shear counts, "
-          "and is marginal at the rim's corner -- nothing else",
-          set(structure.violations(brief, load=Brief)) == {"f1", "ring rim"},
+          "is marginal at the rim's corner, and no longer fits the cell at all "
+          "now that the cage makes room for a camera -- nothing else",
+          set(structure.violations(brief, load=Brief))
+          == {"f1", "ring rim", "longer than the gantry's X travel"},
           str(structure.violations(brief, load=Brief)))
     check("...by about a millimetre",
           0.5 < spec.r_in_needed(brief) - ring_r_in() < 1.5,

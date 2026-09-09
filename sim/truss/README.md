@@ -301,18 +301,58 @@ at gripper yaw ψ with the cage at θ lands along `(cos ψ, sin ψ cos θ,
 pair and no axis has to be added.
 
 Every mount joint is bonded, not wound: the ring cannot reach past the last
-joint and does not need to. A fillet on a 1.5 mm rod carries about a
-kilonewton against a service load of 0.44 N, and comes out stiffer than the
-strut it holds — so the strut is the compliance and the bond is not.
+joint and does not need to. A fillet on a 1.5 mm rod carries 141 N against a
+service load of 0.147 N, and comes out stiffer than the strut it holds — so
+the strut is the compliance and the bond is not.
+
+### The cell could not pick up a camera, and could not be made to
+
+Two findings from asking the machine rather than the geometry, both in
+`check_mount`.
+
+**The gripper cannot hold the module.** Its jaws open 8 mm, sized for a 3 mm
+rod with clearance. The module is 11.3 mm through its thin way and its metal
+enclosure is 10.8 mm square. The only thing on it inside 8 mm is the ⌀5.75
+lens barrel, which is the one part a machine must not touch.
+
+**And opening the jaws is not the fix.** The magazine's slot pitch is bounded
+below by `JAW_OPEN/2` — a rod has to clear the pads that straddle its
+neighbour — the diagonal racks pitch along x, and the gantry is nearly full.
+Jaws wide enough for the enclosure put the racks at **1422 mm of a 1400 mm
+axis**. The machine would need a longer X axis to be able to pick up a camera.
+
+So the module is pressed into a printed **carrier** at kitting — the same
+manual step as pre-cutting the rods — and the carrier presents a boss of the
+*largest stock diameter*. To the loader it is then a chord: the jaws already
+span it, the V already captures it, the rack pitch does not move. The boss
+is **radial**, straight out of the camera's back, so it is 180° from the
+optical axis and can never be in shot, and being radial rather than axial it
+costs the cage no room at all. It grips the board's long edges, never the
+enclosure — the enclosure is what the six struts bond to.
+
+**And the camera did not fit inside the cage.** The mount goes on *in* the
+cage: its rods are laid by the same gripper and bonded by the same
+dispenser, and the cage is what presents their angles. `Cage.END_FREE` was
+20 mm; the solved standoff puts the module's outer face 33.9 mm past the
+chord ends on the chosen truss and 38.0 mm at the largest section the cell
+is specified to build. The camera landed inside the end plate. It is now
+40 mm, derived from the payload, the field of view and `SECTION_MAX` rather
+than typed — and `check_mount` re-derives it, so it cannot drift away from
+the camera it was sized for.
+
+That room is not free. The end racks move out with the end plate, and the
+chosen truss now wants **1399 mm of the gantry's 1400** — up from 1359. The
+model says so rather than the cell finding out.
 
 ## The suites
 
-415 checks in twelve suites, about 12 minutes for the full tier.
+438 checks in thirteen suites, about 12 minutes for the full tier.
 
 | suite | tier | what it would have caught |
 |---|---|---|
 | `check_geometry` | 0 | a spec assertion that no longer holds; a truss whose derived quantities disagree |
-| `check_structure` | 0 | the beam model against the brief; an optimiser that runs to the sweep's edge; a section the winder cannot enter |
+| `check_structure` | 0 | the beam model against the brief; an optimiser that runs to the sweep's edge; a section the winder cannot enter; a truss whose racks the gantry cannot reach the ends of |
+| `check_mount` | 0 | a camera the gripper cannot hold; a fix that costs more axis than the machine has; a module that lands in the end plate; a strut in shot |
 | `check_approach` | 0 | a station with no margin; a sampling hole a rod fell through; a retracted rod in the rim; a post loop through the fixture |
 | `check_schedule` | 0 | a rod released at the wrong angle; a yaw with the gripper in; a loop that touches |
 | `check_model` | 1 | a V whose flanks stood proud; a head on the spine; a ring not the solver's |

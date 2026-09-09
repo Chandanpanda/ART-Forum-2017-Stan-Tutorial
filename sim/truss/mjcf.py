@@ -146,11 +146,12 @@ def cage_body(geom, fixture):
     out = ['<body name="cage" pos="0 0 0">',
            '  <joint name="cage" type="hinge" axis="1 0 0" damping="0.05" '
            'armature="1e-5"/>']
-    x0, x1 = -(Cage.END_FREE + Cage.END_PLATE_T), t.length + Cage.END_FREE + Cage.END_PLATE_T
+    ef = fixture.end_free()
+    x0, x1 = -(ef + Cage.END_PLATE_T), t.length + ef + Cage.END_PLATE_T
     out.append("  " + cylinder("spine", (x0, 0, 0), (x1, 0, 0), fixture.spine_r(), C_CAGE,
                                CAGE, ROD | HEAD_B, mass=80.0))
     plate_r = fixture.plate_r()
-    for tag, xa in (("p0", x0), ("p1", t.length + Cage.END_FREE)):
+    for tag, xa in (("p0", x0), ("p1", t.length + ef)):
         out.append("  " + cylinder("plate_%s" % tag, (xa, 0, 0), (xa + Cage.END_PLATE_T, 0, 0),
                                    plate_r, C_CAGE, CAGE, ROD | HEAD_B, mass=40.0))
     # pins: an arm from the spine out to the notch, then the V

@@ -69,6 +69,83 @@ class Stock:
         return Stock.RHO_LIN_3 / (Stock.area(3.0) * 1e-3)
 
 
+class Carrier:
+    """The camera's kitting carrier, and why there has to be one.
+
+    THE GRIPPER CANNOT HOLD A CAMERA.  Its jaws open 8 mm -- sized for a
+    3 mm rod with clearance -- and the module is 11.3 mm through its thin
+    way, its metal enclosure 10.8 mm square.  Nothing on it is 8 mm except
+    the lens barrel, and that is the one part a machine must not touch.
+
+    AND OPENING THE JAWS IS NOT THE FIX.  The magazine's slot pitch is
+    bounded below by JAW_OPEN/2 -- a rod has to clear the pads that
+    straddle its neighbour -- and the diagonal racks pitch along x, and the
+    gantry's X travel is already 1359 mm of 1400 on the chosen truss.  Jaws
+    wide enough for the enclosure put the racks at 1409.  The machine would
+    need a longer axis to be able to pick up a camera.  Both measured, in
+    check_mount.
+
+    So the module is pressed into a printed carrier at kitting -- the same
+    manual step as pre-cutting the rods -- and the carrier presents a BOSS
+    of the largest stock diameter, coaxial with the spine.  To the loader
+    it is then a chord: the jaws already span it, the V already captures
+    it, the rack pitch does not move, and the pose is yaw zero at any cage
+    angle.  Nothing about the machine changes.
+
+    IT GRIPS THE BOARD, NOT THE ENCLOSURE.  The six struts bond to the
+    enclosure, so nothing of the carrier may be on it.  The carrier takes
+    the board's two long edges instead -- the part the mount deliberately
+    does not use, and the part the module's own designers put four holes
+    in.
+    """
+    WALL        = 1.5          # mm, printed
+    FIT         = 0.10         # mm interference on the board's edges
+    MASS        = 2.0          # g [VERIFY: print one and weigh it]
+    GRIP_CLEAR  = 4.0          # mm of boss beyond the pads, both ends
+
+    @classmethod
+    def boss_d(cls):
+        """The boss is a stock rod diameter ON PURPOSE: every clearance,
+        capture and pitch rule in the cell has already been checked for
+        it."""
+        return max(Stock.DIAMETERS)
+
+    @classmethod
+    def boss_l(cls):
+        """Long enough for the pads to take it with clearance either side."""
+        return Gripper.PAD_L + cls.GRIP_CLEAR
+
+    @classmethod
+    def span(cls, payload=None):
+        """What the jaws would have to open to if there were no carrier --
+        the module's own thin way, and its enclosure's."""
+        p = Payload if payload is None else payload
+        return (p.BOX[1], p.CASE[0])
+
+    @classmethod
+    def reach(cls, standoff_mm, payload=None):
+        """How far past the chord ends the loaded carrier reaches, mm.
+
+        THE BOSS IS RADIAL, NOT AXIAL, and that is what keeps this number
+        down to the camera's own outer face.  Pointed along the spine it
+        would add its whole length to the room the cage has to leave, and
+        the racks that sit beyond the end plate would follow it.  Pointed
+        out of the module's BACK -- 180 degrees from the optical axis, so
+        it can never be in shot -- it costs nothing axially, and the cage
+        turns it under the jaws exactly as it does a diagonal.
+        """
+        p = Payload if payload is None else payload
+        return standoff_mm + p.BOX[0] / 2.0
+
+    @staticmethod
+    def boss_axis(look):
+        """The boss's direction: straight out of the camera's back, so it
+        is as far from the field of view as a direction can be."""
+        import numpy as _np
+        v = _np.asarray(look, float)
+        return -v / _np.linalg.norm(v)
+
+
 # ============================================================ THE PRODUCT
 class Load:
     """The stereo rig's load case and budgets (brief 2.2, 2.3, 6).
@@ -820,7 +897,23 @@ class Cage:
     END_PLATE_T = 6.0
     # the plate stands clear of a ring parked at the post: post offset plus
     # the ring's axial half-extent plus clearance, asserted in CHECKS
-    END_FREE    = 20.0         # plate face beyond the chord ends
+    # PLATE FACE BEYOND THE CHORD ENDS, AND THE CAMERA IS WHAT SETS IT.
+    # This was 20 mm, which is what the winding head parked at a thread
+    # post needs (POST_OFF + ring_axial_half + SEAT_CLEAR = 14.5).  But the
+    # camera mount goes on INSIDE the cage -- its rods are laid by the same
+    # gripper and bonded by the same dispenser, and the cage is what
+    # presents their angles -- so the module has to fit in there too, and
+    # at 20 mm it lands in the end plate: the solved standoff puts a Camera
+    # Module 3's outer face 33.9 mm past the chord ends of the chosen truss
+    # and 38.0 mm past the largest section the cell is specified to build.
+    #
+    # The cage is ONE machine built once, so this is a machine fact rather
+    # than something solved per truss -- but it is a DERIVED one, and
+    # check_mount re-derives it against the payload, the field of view and
+    # SECTION_MAX, so it cannot drift away from the camera it was sized
+    # for.  It is not free: it pushes the end racks out with it, and the
+    # chosen truss then wants 1399 mm of the gantry's 1400.
+    END_FREE    = 40.0
     POST_R      = 1.5          # thread anchor post
     POST_OFF    = 8.0          # post from the chord end, axially
     CRADLE_L    = 6.0          # along the diagonal

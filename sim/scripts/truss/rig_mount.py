@@ -140,12 +140,23 @@ def main():
                      np.round(r.mid, 1), float(np.linalg.norm(mid - r.mid)),
                      hits))
 
+    # WHAT THE AXES ACTUALLY WERE WHEN EACH ROD WAS TACKED.  `plan` says
+    # the solver is right and `track` says the tool reached the commanded
+    # point -- neither can see the cage sitting a degree off its index or
+    # the yaw servo a degree off its target, and a rod is laid by all four.
+    at_lay = {}
     t0 = time.time()
     seen, near = [0], [False]
     for _ in ex.run():
         clk.tick()
         if strip is not None:
             strip.maybe(d.time, d)
+        if len(ex.timeline) > seen[0] or tr is not None:
+            pass
+        if ex.timeline and len(ex.timeline) > seen[0]:
+            _op = ex.timeline[-1][0]
+            if _op.kind == "release" and "rod" in _op.args:
+                at_lay[_op.args["rod"]] = (c.cage_truth(), c.at("w"))
         if tr is not None and len(ex.timeline) > seen[0]:
             seen[0] = len(ex.timeline)
             op = ex.timeline[-1][0]
@@ -188,6 +199,7 @@ def main():
         # the op's pose is in the WORLD at the cage angle it was laid at,
         # so bring it back the same way the part was brought back
         plan_e = trak = tilt = float("nan")
+        th_at = None
         if want is not None:
             th_at = op_theta.get(r.index)
             w_cage = (geometry.rot_x(-th_at) @ want) if th_at is not None else want
@@ -202,12 +214,16 @@ def main():
             tilt = float(np.degrees(np.arccos(
                 min(1.0, abs(float(got_u @ want_u))))))
             trak = float(np.linalg.norm(mid - w_cage))
-        rows.append((e, plan_e, trak, tilt, r, a0, a1))
-    print("  %-8s %3s %4s  %7s %7s %7s %7s" % ("kind", "ix", "end",
-                                                "plan", "track", "tilt", "built"))
-    for e, pe, tk, tl, r, a0, a1 in sorted(rows, key=lambda v: -v[0]):
-        print("  %-8s %3d %4d  %7.2f %7.2f %6.1fd %7.2f   at %s .. %s   want %s .. %s"
-              % (r.kind, r.index, r.chord, pe, tk, tl, e,
+        th_got, w_got = at_lay.get(r.index, (float("nan"), float("nan")))
+        d_th = ((th_got - (th_at if th_at is not None else 0.0)) + 180.0) % 360.0 - 180.0
+        d_w = w_got - want_yaw
+        rows.append((e, plan_e, trak, tilt, d_th, d_w, r, a0, a1))
+    print("  %-8s %3s %4s  %7s %7s %7s %7s %7s %7s"
+          % ("kind", "ix", "end", "plan", "track", "tilt", "dcage", "dyaw", "built"))
+    for e, pe, tk, tl, dth, dw, r, a0, a1 in sorted(rows, key=lambda v: -v[0]):
+        print("  %-8s %3d %4d  %7.2f %7.2f %6.1fd %6.2fd %6.2fd %7.2f"
+              "   at %s .. %s   want %s .. %s"
+              % (r.kind, r.index, r.chord, pe, tk, tl, dth, dw, e,
                  np.round(a0, 1), np.round(a1, 1),
                  np.round(r.p0, 1), np.round(r.p1, 1)))
     print("mount built within %.2f mm and %.1f degrees of its own geometry"

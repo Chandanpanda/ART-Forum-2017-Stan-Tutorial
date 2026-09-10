@@ -855,15 +855,20 @@ class Runner:
             1.5, "B stroke settle")
 
     def _yaw(self, target):
+        """Turn the jaws to `target`, ABSOLUTELY -- the axis has hard stops,
+        so there is no wrap-around to be short about.  Wrapped, a 180 degree
+        command comes out as -180 and the servo clamps; it laid four
+        battens a truss five degrees off their own line in the main cell
+        before it was found, and B's axis has the same stops."""
         start = self.c.at("w")
-        d = ((target - start) + 180.0) % 360.0 - 180.0
-        T = max(abs(d) / 200.0, 1e-6)
+        d = float(target) - start
+        T = max(abs(d) / Gripper.YAW_V, 1e-6)
         t = 0.0
         while t < T:
             self.c.goto("w", start + d * (t / T))
             t += 1.0 / self.HZ
             yield
-        self.c.goto("w", start + d)
+        self.c.goto("w", float(target))
         yield from self._until(lambda: self.c.settled("w", 0.5), 1.0, "B yaw")
 
     def run(self):

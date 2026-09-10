@@ -362,7 +362,13 @@ def mount_phase(P, hs, move, index, yaw_to, geom, fixture, cruise):
             move("mount", z=float(swing_z))
             P.add("extend", stroke_time(sw), "mount", tool="grip", mm=float(sw))
             yaw_to("mount", yaw)
-            P.add("retract", stroke_time(sw), "mount", tool="grip")
+            # ...AND IT DOES NOT COME BACK UP.  Turned below the head, the
+            # rod is at a yaw that does NOT clear the head retracted -- so
+            # retracting after the turn drags it straight back through the
+            # annulus.  Measured: `rod13_g` against `ring16`, and four
+            # struts a truss laid 6 degrees off their own line by it.  The
+            # carriage descends with the rod still hung below it and the
+            # stroke finishes the last few millimetres.
             # DOWN TO WHERE THE ROD GOES, not to a hover above it.  A truss
             # rod is released a millimetre above a V and the V takes it;
             # THE MOUNT HAS NO V's, and the keeper welds each rod where the
@@ -370,7 +376,8 @@ def mount_phase(P, hs, move, index, yaw_to, geom, fixture, cruise):
             # permanent error on every part of the nose, and it was the
             # floor under every reading in rig_mount.
             move("mount", z=grip_z(float(place[2])))
-            P.add("extend", stroke_time(Head.GRIP_STROKE), "mount", tool="grip")
+            P.add("extend", stroke_time(Head.GRIP_STROKE - sw), "mount",
+                  tool="grip")
             # TACKED, NOT DROPPED.  A truss rod is released a millimetre
             # above a V and the V takes it.  THE MOUNT HAS NO V's -- its
             # rods are laid onto the collar and onto each other -- so the

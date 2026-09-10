@@ -402,6 +402,75 @@ class Bracket:
         return sum(3.0 * cls.E * I / L ** 3 for L in (ax, au))
 
 
+class StationB:
+    """The SUB-ASSEMBLY STATION: it makes the camera's head kit.
+
+    WHY THERE ARE TWO MACHINES.  The mount's four tic-tac-toe rods are
+    wound to each other at four crossings, with the same thread the truss's
+    joints use -- that is what makes them a joint and not a dab.  The main
+    cell cannot do it: its ring is 40 mm across in a raceway 54 mm across,
+    and by the time the mount goes on, the crossings sit inside the end
+    triangle with the camera behind them.  There is no approach.
+
+    So the crossings are wound BEFORE the camera ever reaches the truss, on
+    a station whose only job is that one part.  It is a small machine
+    because the part is small: the whole kit fits in 40 mm.
+
+    WHAT IT MAKES, and it is exactly what `mount.solve` expects to find:
+    the module, the collar bonded round its lens housing, and the four grid
+    rods laid on the collar in two layers and wound at their four
+    crossings.  `stationb.Kit` derives that from the same `Bracket` numbers
+    the mount does, so the two cannot drift apart.
+
+    WHAT IT DOES NOT DO.  The finished kit is taken out of B and put into
+    A's receptacle BY HAND.  That is not a gap in the automation -- a
+    wound, bonded, cured sub-assembly carrying a camera is exactly where a
+    QC step belongs, and a person is already there to do it.
+    """
+    # where the station sits in the cell's own coordinates, mm
+    ORIGIN      = (0.0, -520.0, 0.0)
+    # its gantry: small, because the part is
+    X_TRAVEL    = 260.0
+    Y_TRAVEL    = 200.0
+    Z_TRAVEL    = 120.0
+    V_MAX       = {"x": 60.0, "y": 60.0, "z": 40.0}
+    A_MAX       = {"x": 400.0, "y": 400.0, "z": 300.0}
+    SETTLE_S    = 0.10
+    STALL_N     = {"x": 60.0, "y": 60.0, "z": 60.0}
+    # the nest that holds the module, lens UP
+    NEST_WALL   = 2.0
+    NEST_H      = 6.0
+    # the winder.  A ring again, and much smaller: what it has to pass over
+    # is a crossing of two rods, not a cluster of five.
+    RING_ID     = 14.0
+    RING_OD     = 22.0
+    RING_W      = 3.0
+    RING_GAP    = 70.0         # deg of open mouth, to admit the rod
+    RING_RPM    = 90.0
+    RING_SPINUP_S = 0.4
+    TURNS       = 14           # per crossing [VERIFY on the joint rig]
+    # the gripper: the same jaws, because the rods are the same rods
+    LIFT_CLEAR  = 3.0
+    PLACE_CLEAR = 1.0
+
+    @staticmethod
+    def ring_r_in():
+        return StationB.RING_ID / 2.0
+
+    @staticmethod
+    def ring_r_out():
+        return StationB.RING_OD / 2.0
+
+    @classmethod
+    def bore_margin(cls, d_rod):
+        """How much the winder's bore clears the crossing it wraps, mm.
+
+        The crossing is two rods at right angles, one lying on the other,
+        so what has to pass through the bore is d_rod deep and d_rod wide
+        -- a circumradius of d_rod/sqrt(2) about the contact."""
+        return cls.ring_r_in() - d_rod * sqrt(2.0) / 2.0
+
+
 # ============================================================ THE PRODUCT
 class Load:
     """The stereo rig's load case and budgets (brief 2.2, 2.3, 6).

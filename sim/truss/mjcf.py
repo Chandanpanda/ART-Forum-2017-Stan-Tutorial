@@ -602,6 +602,209 @@ def drops(n, park=(-400.0, 0.0, -200.0)):
     return out
 
 
+# ------------------------------------------------- station B, the sub-assembly
+C_NEST, C_KIT = "0.62 0.58 0.50 1", "0.80 0.82 0.85 1"
+
+
+def station_b(kit, origin=None):
+    """Station B's bodies, actuators and equalities, in the cell's frame.
+
+    A SEPARATE MACHINE IN THE SAME SCENE.  It has its own three axes, its
+    own gripper, its own winder and its own dispenser -- nothing is shared
+    with the main cell but the floor -- because the two run at the same
+    time on different parts.  Everything is prefixed `b` so no name can
+    collide with the cell's.
+
+    THE PART LIES FLAT AND THE LENS POINTS UP.  That is the one orientation
+    in which three axes reach all four crossings and all four rods without
+    the part being turned over, and it is why B needs no fixture axis.
+    """
+    from .spec import StationB, Payload, Bracket, Process
+    o = np.asarray(StationB.ORIGIN if origin is None else origin, float)
+    px, pu = kit.px, kit.pu
+    lo, hi = kit.collar_z()
+    out, eq, act = [], [], []
+
+    def at(p):
+        return o + np.asarray(p, float)
+
+    # ---- the nest: a pocket the module drops into, lens up
+    w = StationB.NEST_WALL
+    bx, by = Payload.BOX[0] / 2.0, Payload.BOX[2] / 2.0
+    out.append(box("b_nest", at((0.0, 0.0, -Payload.BOX[1] / 2.0 - StationB.NEST_H / 2.0)),
+                   (bx + w, by + w, StationB.NEST_H / 2.0),
+                   (1, 0, 0), (0, 1, 0), C_NEST, CAGE, ROD))
+    # THE WALLS STOP UNDER THE BOARD'S FRONT FACE.  The collar is bigger
+    # than the module -- 30 mm across a 25 mm board -- so a pocket as tall
+    # as the module is a pocket the collar lands ON instead of passing into.
+    # Measured off the first render of the station.
+    w_top = lo - Process.SEAT_CLEAR
+    w_lo = -Payload.BOX[1] / 2.0 - StationB.NEST_H
+    for sx, sy, tag in ((1, 0, "xa"), (-1, 0, "xb"), (0, 1, "ya"), (0, -1, "yb")):
+        c = at((sx * (bx + w / 2.0), sy * (by + w / 2.0), (w_top + w_lo) / 2.0))
+        hx = w / 2.0 if sx else bx + w
+        hy = by + w if sx else w / 2.0
+        out.append(box("b_nestw_%s" % tag, c, (hx, hy, (w_top - w_lo) / 2.0),
+                       (1, 0, 0), (0, 1, 0), C_NEST, CAGE, ROD))
+    # ---- the racks: a V-block pair under each waiting rod, and a shelf
+    # under the collar
+    for knd, i, a, b in kit.rack_slots():
+        if knd == "collar":
+            out.append(box("b_shelf", at((0.0, float(a[1]), float(a[2]) - 2.0)),
+                           (px + 2.0, pu + 2.0, 1.5), (1, 0, 0), (0, 1, 0),
+                           C_NEST, CAGE, ROD))
+            continue
+        u = _unit(b - a)
+        L = float(np.linalg.norm(b - a))
+        drop = (kit.d / 2.0) / sin(radians(Magazine.SLOT_ANGLE / 2.0))
+        for k, (off, bl) in enumerate(Magazine.blocks(L)):
+            c = at((a + b) / 2.0 + u * off - np.array([0, 0, drop]))
+            out += v_flanks("b_slot%d_%d" % (i, k), c, u, np.array([0, 0, 1.0]),
+                            bl, Magazine.SLOT_DEPTH, 1.0, Magazine.SLOT_ANGLE / 2.0,
+                            C_RACK, CAGE, ROD)
+    # ---- the kit's own parts, as free bodies in their start poses
+    for knd, i, a, b in kit.rack_slots():
+        c = (np.asarray(a) + np.asarray(b)) / 2.0
+        nm = "bcollar" if knd == "collar" else "bgrid%d" % i
+        if knd == "collar":
+            g = box(nm + "_g", (0, 0, 0), (px, pu, Bracket.SHEET / 2.0),
+                    (1, 0, 0), (0, 1, 0), C_KIT, ROD, ROD | CAGE | HEAD_B,
+                    mass=Bracket.mass(Payload, kit.d))
+        else:
+            g = cylinder(nm + "_g", np.asarray(a) - c, np.asarray(b) - c, kit.d / 2.0,
+                         C_ROD, ROD, ROD | CAGE | HEAD_B,
+                         mass=Stock.rho_lin(kit.d) * float(np.linalg.norm(
+                             np.asarray(b) - np.asarray(a))) / 1000.0)
+        out.append('<body name="%s" pos="%s"><freejoint name="%s_f"/>%s</body>'
+                   % (nm, _v(at(c)), nm, g))
+        eq.append('    <weld name="bkeep_%s" body1="b_module" body2="%s" active="false" '
+                  'solref="0.004 1" solimp="0.98 0.999 0.001"/>' % (nm, nm))
+        eq.append('    <weld name="bhold_%s" body1="bgw" body2="%s" active="false" '
+                  'solref="0.004 1" solimp="0.98 0.999 0.001"/>' % (nm, nm))
+    # ---- the module itself, welded down: it is placed by hand and stays
+    out.append('<body name="b_module" pos="%s">' % _v(at((0, 0, 0))))
+    out.append("  " + box("b_board", (0, 0, 0),
+                          (Payload.BOX[0] / 2.0, Payload.BOX[2] / 2.0,
+                           Payload.BOX[1] / 2.0), (1, 0, 0), (0, 1, 0),
+                          C_CAM, CAGE, ROD, mass=Payload.MASS))
+    hz = Payload.BOX[1] / 2.0 - Payload.CASE_PROUD / 2.0
+    out.append("  " + box("b_hous", (0, 0, hz),
+                          (Payload.CASE[0] / 2.0, Payload.CASE[1] / 2.0,
+                           Payload.CASE_PROUD / 2.0), (1, 0, 0), (0, 1, 0),
+                          "0.10 0.10 0.12 1", CAGE, ROD, mass=0.3))
+    out.append("</body>")
+    # ---- B's gantry and head
+    ex, ey, ez = kit.extent()
+    out += _station_b_head(kit, o, ex, ey, ez)
+    act.append('    <position name="ba_x" joint="bx" kp="20000" kv="300" '
+               'forcerange="-%g %g"/>' % (StationB.STALL_N["x"], StationB.STALL_N["x"]))
+    act.append('    <position name="ba_y" joint="by" kp="20000" kv="300" '
+               'forcerange="-%g %g"/>' % (StationB.STALL_N["y"], StationB.STALL_N["y"]))
+    act.append('    <position name="ba_z" joint="bz" kp="20000" kv="300" '
+               'forcerange="-%g %g"/>' % (StationB.STALL_N["z"], StationB.STALL_N["z"]))
+    act.append('    <position name="ba_g" joint="bg" kp="2000" kv="30" '
+               'forcerange="-25 25"/>')
+    act.append('    <position name="ba_d" joint="bd" kp="2000" kv="30" '
+               'forcerange="-25 25"/>')
+    act.append('    <position name="ba_w" joint="bw" kp="0.8" kv="0.01" '
+               'forcerange="-0.3 0.3"/>')
+    act.append('    <position name="ba_f" tendon="bjaws" kp="300" kv="3" '
+               'forcerange="-15 15"/>')
+    act.append('    <velocity name="ba_ring" joint="bring" kv="0.02" '
+               'forcerange="-0.5 0.5"/>')
+    eq.append('    <joint name="bjaws_sym" joint1="bf_l" joint2="bf_r" '
+              'polycoef="0 1 0 0 0"/>')
+    ten = ('  <tendon>\n    <fixed name="bjaws">\n'
+           '      <joint joint="bf_l" coef="1"/>\n'
+           '      <joint joint="bf_r" coef="1"/>\n    </fixed>\n  </tendon>')
+    return out, eq, act, ten
+
+
+def _station_b_head(kit, o, ex, ey, ez):
+    """B's carriage: three slides, a gripper on a stroke and a yaw, a small
+    ring on a hinge, and a nozzle."""
+    from .spec import StationB, Gripper
+    z0 = float(o[2]) + ez + StationB.LIFT_CLEAR + 30.0
+    r_in, r_out = StationB.ring_r_in(), StationB.ring_r_out()
+    out = [
+        '<body name="bx" pos="%.6f %.6f %.6f">' % (mm(o[0]), mm(o[1]), mm(z0)),
+        '  <joint name="bx" type="slide" axis="1 0 0" range="%.6f %.6f" damping="4"/>'
+        % (mm(-StationB.X_TRAVEL / 2.0), mm(StationB.X_TRAVEL / 2.0)),
+        # a slide with no mass of its own is not a body MuJoCo will move
+        '  ' + box("b_beam", (0, 0, 70.0), (8.0, StationB.Y_TRAVEL / 2.0, 8.0),
+                   (1, 0, 0), (0, 1, 0), "0.3 0.3 0.33 0.4", 0, 0, mass=0.8),
+        '  <body name="by" pos="0 0 0">',
+        '    <joint name="by" type="slide" axis="0 1 0" range="%.6f %.6f" damping="4"/>'
+        % (mm(-StationB.Y_TRAVEL / 2.0), mm(StationB.Y_TRAVEL / 2.0)),
+        '    ' + box("b_sled", (0, 0, 58.0), (18.0, 18.0, 8.0),
+                     (1, 0, 0), (0, 1, 0), "0.3 0.3 0.33 0.5", 0, 0, mass=0.6),
+        '    <body name="bz" pos="0 0 0" gravcomp="1">',
+        '      <joint name="bz" type="slide" axis="0 0 1" range="%.6f %.6f" damping="4"/>'
+        % (mm(-StationB.Z_TRAVEL), 0.0),
+        '      ' + box("b_head", (0, 0, 34.0), (26.0, 16.0, 8.0), (1, 0, 0), (0, 1, 0),
+                       "0.35 0.35 0.38 0.4", HEAD_B, ROD | CAGE, mass=120.0),
+        '      <site name="b_ring_centre" pos="0 0 0" size="0.0005"/>',
+        # the winder: a gapped ring turning about B's x, mouth facing down
+        '      <body name="bring" pos="0 0 0" gravcomp="1">',
+        '        <joint name="bring" type="hinge" axis="1 0 0" damping="2e-6" '
+        'armature="2e-8"/>',
+    ]
+    n = 18
+    r_mid = (r_in + r_out) / 2.0
+    arc = 2 * pi * r_mid / n
+    for i in range(n):
+        psi = 2 * pi * (i + 0.5) / n
+        if abs(((degrees(psi) + 180.0) % 360.0) - 180.0) < StationB.RING_GAP / 2.0:
+            continue
+        c = (0.0, r_mid * sin(psi), -r_mid * cos(psi))
+        tan_ = (0.0, cos(psi), sin(psi))
+        out.append('        ' + box("bring%d" % i, c,
+                                    (StationB.RING_W / 2.0, arc * 0.55,
+                                     (r_out - r_in) / 2.0),
+                                    (1, 0, 0), tan_, C_RING, HEAD_B, ROD | CAGE,
+                                    mass=0.6))
+    out.append('      </body>')
+    # the dispenser, outboard of the ring
+    out += [
+        '      <body name="bdisp" pos="%.6f 0 0" gravcomp="1">' % mm(-34.0),
+        '        <joint name="bd" type="slide" axis="0 0 -1" range="0 %.6f" '
+        'damping="2"/>' % mm(40.0),
+        '        ' + cylinder("b_nozzle", (0, 0, 0), (0, 0, 16.0), 1.1,
+                              "0.85 0.85 0.9 1", HEAD_B, ROD | CAGE, mass=3.0),
+        '        <site name="b_nozzle_tip" pos="0 0 0" size="0.0005"/>',
+        '      </body>',
+        # the gripper, on the other side
+        '      <body name="bgrip" pos="%.6f 0 0" gravcomp="1">' % mm(34.0),
+        '        <joint name="bg" type="slide" axis="0 0 -1" range="0 %.6f" '
+        'damping="2"/>' % mm(40.0),
+        '        ' + box("b_gbody", (0, 0, 26.0), (7.0, 6.0, 8.0),
+                         (1, 0, 0), (0, 1, 0), C_HEAD, HEAD_B, ROD | CAGE, mass=30.0),
+        '        <body name="bgw" pos="0 0 0" gravcomp="1">',
+        '          <joint name="bw" type="hinge" axis="0 0 1" range="-95 95" '
+        'damping="0.002"/>',
+        '          <site name="b_grip_pt" pos="0 0 0" size="0.0005"/>',
+        '          ' + box("b_gplate", (0, 0, 14.0), (7.0, 7.0, 2.0), (1, 0, 0),
+                           (0, 1, 0), C_HEAD, 0, 0, mass=4.0),
+    ]
+    for sgn, tag in ((1.0, "l"), (-1.0, "r")):
+        y = sgn * (Gripper.JAW_OPEN / 2.0 + Gripper.PAD_T / 2.0)
+        out += [
+            '          <body name="bfinger_%s" pos="0 %.6f 0" gravcomp="1">' % (tag, mm(y)),
+            '            <joint name="bf_%s" type="slide" axis="0 %d 0" '
+            'range="%.6f 0" damping="0.5"/>' % (tag, int(-sgn),
+                                                mm(-(Gripper.JAW_OPEN / 2.0 - 0.3))),
+            '            ' + box("bpad_%s" % tag,
+                                 (0, 0, Gripper.PAD_H / 2.0 - Gripper.PAD_UNDER),
+                                 (Gripper.PAD_L / 2.0, Gripper.PAD_T / 2.0,
+                                  Gripper.PAD_H / 2.0), (1, 0, 0), (0, 1, 0),
+                                 "0.2 0.2 0.22 1", HEAD_B, ROD | CAGE, mass=2.0,
+                                 extra=' friction="0.9 0.005 0.0001"'),
+            '          </body>',
+        ]
+    out += ['        </body>', '      </body>', '    </body>', '  </body>', '</body>']
+    return out
+
+
 # ------------------------------------------------------------ assembly
 def z_floor(geom, fixture):
     """Lowest ring-centre height the carriage needs: seated on the lowest
@@ -611,7 +814,7 @@ def z_floor(geom, fixture):
 
 
 def scene_cell(geom, fixture, stage="empty", start=None, timestep=5e-4, n_drops=None,
-               mount=None):
+               mount=None, kit=None):
     """The whole cell.  stage="empty": rods in their racks, welds off;
     "loaded": rods in the fixture, welded to the cage.  Pass `mount` (a
     truss.mount.Mount) to hang the finished camera nose on the cage."""
@@ -627,6 +830,10 @@ def scene_cell(geom, fixture, stage="empty", start=None, timestep=5e-4, n_drops=
     parts += rods_in_racks(geom, fixture) if stage == "empty" else rods_in_fixture(geom)
     parts += head_body(geom, fixture, z_lo, start=start)
     parts += drops(n_drops)
+    b_eq, b_act, b_ten = [], [], None
+    if kit is not None:
+        b_parts, b_eq, b_act, b_ten = station_b(kit)
+        parts += b_parts
     # ---- equality: a weld per rod to the cage (the keeper) and to the
     # gripper's yaw body (the grip), both inactive unless loaded
     eq = ["  <equality>",
@@ -653,6 +860,7 @@ def scene_cell(geom, fixture, stage="empty", start=None, timestep=5e-4, n_drops=
     for i in range(n_drops):
         eq.append('    <weld name="stick%d" body1="cage" body2="drop%d" active="false" '
                   'solref="0.004 1" solimp="0.98 0.999 0.001"/>' % (i, i))
+    eq += b_eq
     eq.append("  </equality>")
     # ---- actuators
     act = """  <actuator>
@@ -665,7 +873,7 @@ def scene_cell(geom, fixture, stage="empty", start=None, timestep=5e-4, n_drops=
     <position name="a_f" tendon="jaws" kp="300" kv="3" forcerange="-15 15"/>
     <position name="a_ring" joint="ring" kp="%.6f" kv="%.6f" forcerange="-%g %g"/>
     <position name="a_cage" joint="cage" kp="60" kv="2.5" forcerange="-6 6"/>
-  </actuator>""" % (Gantry.STALL_N["x"], Gantry.STALL_N["x"], Gantry.STALL_N["y"], Gantry.STALL_N["y"],
+%s  </actuator>""" .replace("%s", "\n".join(b_act) + ("\n" if b_act else "")) % (Gantry.STALL_N["x"], Gantry.STALL_N["x"], Gantry.STALL_N["y"], Gantry.STALL_N["y"],
                     Gantry.STALL_N["z"], Gantry.STALL_N["z"], Ring.servo_kp(),
                     Ring.servo_kv(), Ring.DRIVE_TORQUE, Ring.DRIVE_TORQUE)
     ten = """  <tendon>
@@ -674,6 +882,8 @@ def scene_cell(geom, fixture, stage="empty", start=None, timestep=5e-4, n_drops=
       <joint joint="gf_r" coef="1"/>
     </fixed>
   </tendon>"""
+    if b_ten:
+        ten = ten[:-len("  </tendon>")] + b_ten[len("  <tendon>\n"):]
     sen = """  <sensor>
     <jointpos name="s_ring" joint="ring" noise="0.0005"/>
     <jointpos name="s_cage" joint="cage"/>

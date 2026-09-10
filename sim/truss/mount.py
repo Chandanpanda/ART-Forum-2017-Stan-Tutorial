@@ -266,13 +266,22 @@ def landing_in_camera(mount, geom, end=0, payload=Payload):
     return out
 
 
-def mech_standoff(payload=Payload, clear=None):
-    """The least standoff the BOARD needs: the platform's plane cuts the
-    enclosure, and the board reaches half its own length back toward the
-    truss from there, so what must not touch is the board against the chord
-    ends."""
+def mech_standoff(payload=Payload, clear=None, d_strut=1.5):
+    """The least standoff the HEAD KIT needs, mm.
+
+    WHAT STANDS OFF IS NOT THE BOARD.  It is the kit station B delivers --
+    the module, the collar and the wound tic-tac-toe -- and the grid
+    overhangs the board by OVERRUN on every side.  Sized on the board's own
+    half-length the kit reaches 5 mm PAST the chord ends, into the cage's
+    backbone, its torsion shafts and the first of its arms: measured on the
+    built scene, eight cage parts inside the kit, the worst 4.5 mm deep.
+    The camera would not seat because there was something already there.
+
+    And what it must clear is not only the chords: the mandrel's own spine
+    starts at the same station."""
+    from .spec import Carrier
     clear = Process.SEAT_CLEAR if clear is None else clear
-    return payload.BOX[0] / 2.0 + clear
+    return Carrier.kit_half(payload, d_strut)[0] + clear
 
 
 def look_azimuth(geom):
@@ -299,7 +308,7 @@ def fov_standoff(geom, payload=Payload, d_strut=1.5, lo=None, hi=200.0, tol=0.05
     photographing it is geometry, not taste -- it falls out of the chord
     radius and the field of view, and it moves when either does.
     """
-    lo = mech_standoff(payload) if lo is None else lo
+    lo = mech_standoff(payload, d_strut=d_strut) if lo is None else lo
     if _clear_at(geom, hi, payload, d_strut, azimuth) <= 0.0:
         return None
     if _clear_at(geom, lo, payload, d_strut, azimuth) > 0.0:
@@ -432,7 +441,7 @@ def solve(geom, payload=Payload, d_strut=1.5, clear=None, standoff_mm=None,
     seat = Bracket.seat_l(payload)
     l0 = Bracket.layer_l(0, payload, d_strut)
     l1 = Bracket.layer_l(1, payload, d_strut)
-    over = Bracket.OVERRUN
+    over = Bracket.overrun(d_strut, geom.t.thread_d)
     rods, poses = [], []
     for end, x0 in ((0, 0.0), (1, t.length)):
         sign = -1.0 if end == 0 else 1.0

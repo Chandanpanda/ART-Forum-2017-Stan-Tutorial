@@ -145,9 +145,16 @@ def main():
           float(axis @ (look / np.linalg.norm(look))) < -0.999,
           "%.1f degrees off the look" % np.degrees(np.arccos(
               np.clip(float(axis @ (look / np.linalg.norm(look))), -1.0, 1.0))))
-    check("...and being radial rather than axial it costs the cage no room at all",
-          abs(Carrier.reach(so) - (so + Payload.BOX[0] / 2.0)) < 1e-9,
-          "reach %.2f mm is the module's own outer face" % Carrier.reach(so))
+    check("...and being radial rather than axial it costs the cage no room at all: "
+          "what reaches past the chord ends is the KIT's own outer face and nothing "
+          "of the carrier",
+          abs(Carrier.reach(so, Payload, t.d_diag)
+              - (so + Carrier.kit_half(Payload, t.d_diag)[0])) < 1e-9
+          and Carrier.reach(so, Payload, t.d_diag) < so + Carrier.boss_l(
+              Payload, t.d_diag),
+          "reach %.2f mm is the kit's own outer face; the boss is %.1f mm long and "
+          "costs none of it"
+          % (Carrier.reach(so, Payload, t.d_diag), Carrier.boss_l(Payload, t.d_diag)))
     # EVERY MOUNT ROD HAS TO BE LAYABLE WITH THE YAW THE MACHINE HAS.  The
     # servo has a stop; asked past it, it clamps and answers "settled", and
     # the rod goes down off its own line with nothing reporting anything.
@@ -198,7 +205,8 @@ def main():
     worst_side = Load.SECTION_MAX
     wg = geometry.TrussGeometry(Truss(length=t.length, side=worst_side, alpha=45.0,
                                       d_chord=3.0, d_diag=min(Stock.DIAMETERS)))
-    worst = Carrier.reach(mount.fov_standoff(wg, d_strut=min(Stock.DIAMETERS)))
+    d_worst = min(Stock.DIAMETERS)
+    worst = Carrier.reach(mount.fov_standoff(wg, d_strut=d_worst), Payload, d_worst)
     check("the cage's end freedom clears a loaded carrier on the LARGEST section the "
           "cell is specified to build, not just on the chosen one",
           Cage.END_FREE >= worst + Process.SEAT_CLEAR,
@@ -211,6 +219,62 @@ def main():
           % fx.nose_reach)
     check("...and the winding head parked at a thread post still fits in the same room",
           Cage.END_FREE >= Cage.POST_OFF + Head.ring_axial_half() + Process.SEAT_CLEAR)
+    # AND NOTHING OF THE CAGE IS IN THE NOSE, measured on the BUILT scene
+    # with the kit at the pose the plan sends it to.  This is the check that
+    # was missing: the camera is mounted on the cage's own axis, and the
+    # cage's backbone, its draw rod, its torsion shafts, two of its arms and
+    # its end plate were all in there with it -- eight parts, the worst
+    # 4.5 mm deep.  Every op reported success and the kit came to rest 24 mm
+    # from its target, because it was resting on the mandrel.
+    import mujoco
+    from truss import mjcf as _mjcf
+    gk = geometry.TrussGeometry(t)
+    Mk = mount.solve(gk, d_strut=t.d_diag,
+                     standoff_mm=mount.fov_standoff(gk, d_strut=t.d_diag))
+    gk.attach_mount(Mk)
+    fk = fixture.Fixture(gk)
+    mk = mujoco.MjModel.from_xml_string(
+        _mjcf.scene_cell(gk, fk, stage="truss", n_drops=8))
+    dk = mujoco.MjData(mk)
+
+    def _rz(a):
+        c_, s_ = np.cos(np.radians(a)), np.sin(np.radians(a))
+        return np.array([[c_, -s_, 0.], [s_, c_, 0.], [0., 0., 1.]])
+
+    worst_k, pair_k = 1e9, ("", "")
+    for r in gk.mount_rods:
+        if r.kind != "mcam":
+            continue
+        offer = mount.poses_for(r.axis, reversible=False)
+        th, yaw = max([p for p in offer if abs(p[1]) <= Head.GRIP_YAW],
+                      key=lambda p: float((geometry.rot_x(p[0]) @ r.mid)[2]))
+        b = mujoco.mj_name2id(mk, mujoco.mjtObj.mjOBJ_BODY, "rod%d" % r.index)
+        adr = mk.jnt_qposadr[mk.body_jntadr[b]]
+        # the part is PICKED at yaw 90, so only the change in yaw turns it
+        R = _rz(yaw - 90.0)
+        q = np.empty(4)
+        mujoco.mju_mat2Quat(q, R.flatten())
+        dk.qpos[adr:adr + 3] = (geometry.rot_x(th) @ r.mid) / 1000.0
+        dk.qpos[adr + 3:adr + 7] = q
+        jc = mujoco.mj_name2id(mk, mujoco.mjtObj.mjOBJ_JOINT, "cage")
+        dk.qpos[mk.jnt_qposadr[jc]] = np.radians(th)
+        mujoco.mj_forward(mk, dk)
+        mine = list(range(mk.body_geomadr[b],
+                          mk.body_geomadr[b] + mk.body_geomnum[b]))
+        for i in mine:
+            for j2 in range(mk.ngeom):
+                if j2 in mine:
+                    continue
+                e = mujoco.mj_geomDistance(mk, dk, i, j2, 0.02, None) * 1000.0
+                if e < worst_k:
+                    worst_k = e
+                    pair_k = (mujoco.mj_id2name(mk, mujoco.mjtObj.mjOBJ_GEOM, i),
+                              mujoco.mj_id2name(mk, mujoco.mjtObj.mjOBJ_GEOM, j2))
+    check("nothing of the cell is inside the nose: the head kit at the pose the plan "
+          "sends it to clears every geom in the scene",
+          worst_k >= Process.SEAT_CLEAR - 1e-6,
+          "%.2f mm at %s / %s, against a process clearance of %.2f"
+          % (worst_k, pair_k[0], pair_k[1], Process.SEAT_CLEAR))
     check("making that room is NOT free: it pushes the end racks out with it, and the "
           "chosen truss is inside the gantry's X travel with 17 mm to spare",
           x_now <= Gantry.X_TRAVEL
@@ -387,14 +451,28 @@ def main():
     check("with the mount built, nothing of the truss or of the mount is inside the "
           "camera's %.1f x %.1f degree field" % Payload.FOV,
           mount.fov_clear(m) > 0.0, "%.2f mm to spare" % mount.fov_clear(m))
-    check("...which took a solved standoff: the mechanical clearance alone leaves the "
-          "truss in the picture",
+    # WHAT SETS THE STANDOFF CHANGED, and it is worth asserting which.  It
+    # used to be the field of view: the mechanical clearance alone left the
+    # end batten across the picture.  Now the part that stands off is the
+    # whole head kit, and its own half-width is wider than the field ever
+    # asked for -- so the mechanical bound binds and the solve returns it.
+    so_mech = mount.mech_standoff(Payload, d_strut=t.d_diag)
+    check("the standoff is set by the KIT's own width now, not by the field of view "
+          "-- and the field is still clear at it",
+          abs(so - so_mech) < 1e-6 and mount.fov_clear(m) > 0.0,
+          "mechanical %.2f, solved %.2f, %.2f mm of field to spare"
+          % (so_mech, so, mount.fov_clear(m)))
+    check("...and it was the field that set it while the cell laid the grid itself: "
+          "on the BOARD's half-width alone the truss is in the picture",
           mount.fov_clear(mount.solve(g, d_strut=t.d_diag,
-                                      standoff_mm=mount.mech_standoff())) < 0.0,
-          "%.1f mm at the %.1f mm mechanical standoff, %.1f mm at the solved %.2f"
+                                      standoff_mm=Payload.BOX[0] / 2.0
+                                      + Process.SEAT_CLEAR)) < 0.0,
+          "%.1f mm at the board's own %.1f mm, %.1f mm at the solved %.2f"
           % (mount.fov_clear(mount.solve(g, d_strut=t.d_diag,
-                                         standoff_mm=mount.mech_standoff())),
-             mount.mech_standoff(), mount.fov_clear(m), so))
+                                         standoff_mm=Payload.BOX[0] / 2.0
+                                         + Process.SEAT_CLEAR)),
+             Payload.BOX[0] / 2.0 + Process.SEAT_CLEAR,
+             mount.fov_clear(m), so))
 
     # ------------------------------------- AND NOT INSIDE THE CAMERA
     # THE CHECK THAT WAS MISSING.  The collar was a fin standing on edge in

@@ -265,6 +265,12 @@ class CellSim(hal.AxesHAL, hal.RingHAL, hal.CageHAL, hal.GripperHAL,
         if best is not None and best_d < best.r + 1.5 and opening <= best.r + 0.6:
             self._weld_now(self.eq_hold[best.index], self.b_gripw, self.b_rod[best.index])
             self._held = best.index
+            # ...AND THEN STOP CLOSING.  `close` asks for a fixed travel,
+            # not for the rod's own diameter, so the jaws go on past it and
+            # sit 0.2 mm into a 1 mm rod with 15 N behind them -- a fight
+            # against the weld that holds it, on a body whose inertia is
+            # 5e-9.  The jaws close ONTO the rod and hold there.
+            self.d.ctrl[self.a_f] = -2.0 * mm(Gripper.JAW_OPEN / 2.0 - best.r)
 
     # ----------------------------------------------------------- keeper
     # A KEPT ROD IS PART OF THE FIXTURE, so it stops colliding with the

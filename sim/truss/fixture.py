@@ -117,6 +117,40 @@ class Fixture:
         from . import mount
         return Carrier.reach(mount.fov_standoff(self.g, d_strut=self.t.d_diag))
 
+    def nose_span(self, end=0):
+        """(x_in, x_out) the head kit occupies at this end, mm -- or None if
+        no camera is being built onto this truss.
+
+        NOTHING OF THE MANDREL MAY BE IN HERE.  The kit is centred on the
+        cage's own axis -- that is the whole point of the mount, since a
+        mass off the axis turns a manoeuvre into camera yaw -- so there is
+        no radius a backbone can neck down to that clears it.  Not 3 mm,
+        not 1: the module CONTAINS the axis.  `nose_spine_r` assumed the
+        module's nearest face was 4.5 mm off it and stepped the tube down
+        to 3.0; measured on the built scene, the tube was 4.5 mm inside the
+        board and the camera would not seat because there was something
+        already there.
+        """
+        cams = [r for r in getattr(self.g, "mount_rods", ()) if r.kind == "mcam"]
+        if not cams:
+            return None
+        from .spec import Payload, Carrier
+        d = self.t.d_diag
+        kx = Carrier.kit_half(Payload, d)[0]
+        xs = []
+        for r in cams:
+            if r.chord != end:
+                continue
+            xp = 0.5 * (float(r.p0[0]) + float(r.p1[0]))
+            # the boss's midpoint is not the module's centre; the module is
+            # at the boss's inboard end
+            xp = float(r.p0[0]) if end == 0 else float(r.p0[0])
+            xs.append(xp)
+        if not xs:
+            return None
+        xc = xs[0]
+        return (xc - kx, xc + kx)
+
     def end_free(self):
         """Axial room between the chord ends and the end plate, mm.  A
         machine fact: the cage is built once (spec.Cage.END_FREE)."""

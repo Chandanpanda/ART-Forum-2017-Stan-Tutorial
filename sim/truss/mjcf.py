@@ -24,7 +24,7 @@ from math import pi, cos, sin, radians, degrees, atan2, sqrt
 import numpy as np
 
 from .spec import (mm, Truss, Ring, Gantry, Head, Gripper, Cage, Magazine, Stock,
-                   Dispenser, Vision, ring_r_in, ring_r_out, rail_r_out)
+                   Dispenser, Vision, Process, ring_r_in, ring_r_out, rail_r_out)
 from .geometry import radial
 from . import band as _band
 
@@ -151,16 +151,24 @@ def cage_body(geom, fixture, mount=None):
            'armature="1e-5"/>']
     ef = fixture.end_free()
     x0, x1 = -(ef + Cage.END_PLATE_T), t.length + ef + Cage.END_PLATE_T
-    # THE BACKBONE IS STEPPED.  Over the nose at each end it necks down to
-    # Cage.nose_spine_r(): the camera is mounted on this same axis, and at
-    # full size the tube runs straight through it.
+    # THE BACKBONE STOPS AT THE NOSE.  It used to be STEPPED over it,
+    # necked down to Cage.nose_spine_r() -- but the camera is mounted on
+    # this same axis and its board contains it, so no radius clears it and
+    # the tube ran 4.5 mm inside the module.  Over the nose the end plate
+    # is carried on the machine's own bearing; what is drawn here is the
+    # plate's hub, reaching in as far as the nose allows.
     nr = Cage.nose_spine_r()
+    n0, n1 = fixture.nose_span(0), fixture.nose_span(1)
+    hub0 = min(0.0, n0[0] - Process.SEAT_CLEAR) if n0 else 0.0
+    hub1 = max(t.length, n1[1] + Process.SEAT_CLEAR) if n1 else t.length
     out.append("  " + cylinder("spine", (0.0, 0, 0), (t.length, 0, 0),
                                fixture.spine_r(), C_CAGE, CAGE, ROD | HEAD_B, mass=80.0))
-    out.append("  " + cylinder("spine_n0", (x0, 0, 0), (0.0, 0, 0), nr, C_CAGE,
-                               CAGE, ROD | HEAD_B, mass=4.0))
-    out.append("  " + cylinder("spine_n1", (t.length, 0, 0), (x1, 0, 0), nr, C_CAGE,
-                               CAGE, ROD | HEAD_B, mass=4.0))
+    if hub0 > x0:
+        out.append("  " + cylinder("spine_n0", (x0, 0, 0), (hub0, 0, 0), nr, C_CAGE,
+                                   CAGE, ROD | HEAD_B, mass=4.0))
+    if x1 > hub1:
+        out.append("  " + cylinder("spine_n1", (hub1, 0, 0), (x1, 0, 0), nr, C_CAGE,
+                                   CAGE, ROD | HEAD_B, mass=4.0))
     plate_r = fixture.plate_r()
     for tag, xa in (("p0", x0), ("p1", t.length + ef)):
         out.append("  " + cylinder("plate_%s" % tag, (xa, 0, 0), (xa + Cage.END_PLATE_T, 0, 0),
@@ -196,8 +204,14 @@ def cage_body(geom, fixture, mount=None):
                                   Cage.LINK_T / 2.0, C_HEAD, CAGE, ROD | HEAD_B))
         out.append("  " + capsule("brace%db" % b.shaft, b.knee, b.attach,
                                   Cage.LINK_T / 2.0, C_HEAD, CAGE, ROD | HEAD_B))
-    # the release rod, down the spine's bore and out past the end plate
-    out.append("  " + cylinder("draw", (x0 - col.draw_stroke(), 0, 0), (x1, 0, 0),
+    # the release rod, down the spine's bore.  IT STOPS AT THE NOSE TOO --
+    # it is 6 mm across on the axis, and the camera is on the axis.  Its
+    # pull is taken off the axis outside the kit's silhouette (see
+    # Cage.nose_spine_r); what is drawn is the rod inside the truss, which
+    # is where it is for the whole build.
+    dx0 = (n0[1] + Process.SEAT_CLEAR) if n0 else (x0 - col.draw_stroke())
+    dx1 = (n1[0] - Process.SEAT_CLEAR) if n1 else x1
+    out.append("  " + cylinder("draw", (dx0, 0, 0), (dx1, 0, 0),
                                Cage.DRAW_D / 2.0, C_HEAD, CAGE, ROD | HEAD_B, mass=20.0))
     # pins: a post from the rail out to the notch, then the V
     for i, p in enumerate(fixture.pins):
@@ -293,7 +307,7 @@ def rod_body(geom, rod, p0, p1):
                           mass=Bracket.mass(Payload, d) / len(segs)))
         # the tic-tac-toe, wound and bonded at station B
         gx, gu = Bracket.grid_half(Payload, d)
-        over = Bracket.OVERRUN
+        over = Bracket.overrun(d)
         grid = ([((-gx - over, Bracket.layer_l(0, Payload, d), su * gu),
                   (+gx + over, Bracket.layer_l(0, Payload, d), su * gu))
                  for su in (+1.0, -1.0)]

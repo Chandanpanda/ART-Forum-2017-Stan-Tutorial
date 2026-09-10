@@ -305,6 +305,12 @@ def mount_phase(P, hs, move, index, yaw_to, geom, fixture, cruise):
     from . import mount as _mount
     order = {"mbatten": 0, "mcam": 1, "mstrut": 2}
     gx = Head.grip_x()
+    # ...AND HIGH ENOUGH THAT THE ROD, HUNG BELOW THE HEAD, CLEARS THE WORK.
+    # The swing costs the whole stroke in height, so the carriage has to be
+    # a stroke plus the cage's own radius above the axis to make room for it.
+    swing_z = max(cruise,
+                  geom.R + geom.t.d_chord / 2.0 + Process.SEAT_CLEAR
+                  + Head.yaw_stroke(geom.t.d_chord / 2.0) - Head.TIP_PARK)
     for end in (0, 1):
         rods = sorted([r for r in geom.mount_rods if r.chord == end],
                       key=lambda r: (order[r.kind], r.index))
@@ -342,8 +348,28 @@ def mount_phase(P, hs, move, index, yaw_to, geom, fixture, cruise):
             P.add("retract", stroke_time(Head.GRIP_STROKE), "mount", tool="grip")
             move("mount", z=cruise)
             move("mount", x=float(place[0]) - gx, y=float(place[1]))
+            # TURN IT BELOW THE HEAD, NOT INSIDE IT.  Retracted, the grip
+            # point sits TIP_PARK above the ring's centre -- inside its bore
+            # -- and a rod swung about that point sweeps its own half-length
+            # out of the bore and into the annulus.  Measured on rig_mount:
+            # a 39.7 mm strut turned to -33.7 degrees sat 0.67 mm inside
+            # `ring7`, and went down 71.6 degrees off its own line with the
+            # yaw servo reporting the commanded angle and every op reporting
+            # success.  Extended past the head's own rim it turns in clear
+            # air at any yaw, which is why this is a stroke and not a filter
+            # on the poses: filtered, two struts an end have no pose left.
+            sw = Head.yaw_stroke(r.r)
+            move("mount", z=float(swing_z))
+            P.add("extend", stroke_time(sw), "mount", tool="grip", mm=float(sw))
             yaw_to("mount", yaw)
-            move("mount", z=grip_z(float(place[2])) + Process.DROP_IN)
+            P.add("retract", stroke_time(sw), "mount", tool="grip")
+            # DOWN TO WHERE THE ROD GOES, not to a hover above it.  A truss
+            # rod is released a millimetre above a V and the V takes it;
+            # THE MOUNT HAS NO V's, and the keeper welds each rod where the
+            # tool left it -- so a millimetre of drop-in is a millimetre of
+            # permanent error on every part of the nose, and it was the
+            # floor under every reading in rig_mount.
+            move("mount", z=grip_z(float(place[2])))
             P.add("extend", stroke_time(Head.GRIP_STROKE), "mount", tool="grip")
             # TACKED, NOT DROPPED.  A truss rod is released a millimetre
             # above a V and the V takes it.  THE MOUNT HAS NO V's -- its

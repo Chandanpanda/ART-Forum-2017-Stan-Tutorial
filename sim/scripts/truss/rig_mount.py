@@ -61,6 +61,10 @@ def main():
     ap.add_argument("--window", nargs=2, type=float, metavar=("T0", "T1"))
     ap.add_argument("--end", type=int, default=0,
                     help="which nose to frame the sweep on")
+    ap.add_argument("--trace", type=int, metavar="ROD",
+                    help="follow one part through its own ops: what the op "
+                         "asked of each axis, what the axis did, where the "
+                         "part is, and what is touching it")
     ap.add_argument("--phases", default="mount,bond")
     a = ap.parse_args()
 
@@ -110,11 +114,48 @@ def main():
                                     window=tuple(a.window) if a.window else None)
     print("%s: %d mount parts, %d ops of %d, %.1f min planned"
           % (t.name, len(g.mount_rods), len(P.ops), len(full.ops), P.total / 60.0))
+    tr = None
+    if a.trace is not None:
+        b_tr = c.b_rod[a.trace]
+        gname = lambda i: mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_GEOM, i) or ""
+        gof = lambda b: range(m.body_geomadr[b],
+                              m.body_geomadr[b] + m.body_geomnum[b])
+        mine = set(gof(b_tr))
+
+        def tr(tag, op=None):
+            R0 = geometry.rot_x(-c.cage_truth())
+            q0, q1 = c.rod_pose(a.trace)
+            mid = R0 @ (0.5 * (np.asarray(q0) + np.asarray(q1)))
+            r = [x for x in g.mount_rods if x.index == a.trace][0]
+            hits = sorted({(round(d.contact[k].dist * 1000, 2),
+                            gname(d.contact[k].geom1), gname(d.contact[k].geom2))
+                           for k in range(d.ncon)
+                           if d.contact[k].geom1 in mine
+                           or d.contact[k].geom2 in mine})[:3]
+            print("   %7.2f %-9s ax(%8.2f %7.2f %7.2f) w %6.1f gz %6.2f "
+                  "grip %s held=%s kept=%d  mid %s (want %s, %5.2f off)  %s"
+                  % (d.time, tag, c.at("x"), c.at("y"), c.at("z"), c.at("w"),
+                     c.at("g"), np.round(c.grip_point(), 1),
+                     c._held, int(c.kept(a.trace)), np.round(mid, 1),
+                     np.round(r.mid, 1), float(np.linalg.norm(mid - r.mid)),
+                     hits))
+
     t0 = time.time()
+    seen, near = [0], [False]
     for _ in ex.run():
         clk.tick()
         if strip is not None:
             strip.maybe(d.time, d)
+        if tr is not None and len(ex.timeline) > seen[0]:
+            seen[0] = len(ex.timeline)
+            op = ex.timeline[-1][0]
+            mine_op = op.args.get("rod") == a.trace
+            if mine_op:
+                near[0] = True
+            if near[0]:
+                tr("%s/%s" % (op.phase, op.kind), op)
+            if op.kind == "retract" and c._held is None and not mine_op:
+                near[0] = near[0] and c.kept(a.trace) == 0
     if strip is not None:
         strip.maybe(d.time + 1e9, d)
     print("ran %d of %d ops in %.0f s wall, %.1f min simulated; %d warnings"
@@ -143,24 +184,35 @@ def main():
                     float(np.linalg.norm(a1 - r.p1))),
                 max(float(np.linalg.norm(a0 - r.p1)),
                     float(np.linalg.norm(a1 - r.p0))))
-        want, _yaw = asked.get(r.index, (None, 0.0))
+        want, want_yaw = asked.get(r.index, (None, 0.0))
         # the op's pose is in the WORLD at the cage angle it was laid at,
         # so bring it back the same way the part was brought back
-        plan_e = trak = float("nan")
+        plan_e = trak = tilt = float("nan")
         if want is not None:
             th_at = op_theta.get(r.index)
             w_cage = (geometry.rot_x(-th_at) @ want) if th_at is not None else want
             plan_e = float(np.linalg.norm(w_cage - r.mid))
+            # TRACKING IS NOT JUST THE MIDPOINT.  A rod at the right place
+            # and the wrong angle reads zero here, and three struts a truss
+            # were doing exactly that -- sitting at a direction that matches
+            # NO pose the plan offers, midpoint dead on.
+            got_u = (a1 - a0) / float(np.linalg.norm(a1 - a0))
+            want_u = np.asarray(mount.axis_from(th_at, want_yaw), float) \
+                if th_at is not None else r.axis
+            tilt = float(np.degrees(np.arccos(
+                min(1.0, abs(float(got_u @ want_u))))))
             trak = float(np.linalg.norm(mid - w_cage))
-        rows.append((e, plan_e, trak, r, a0, a1))
-    print("  %-8s %3s %4s  %7s %7s %7s" % ("kind", "ix", "end",
-                                           "plan", "track", "built"))
-    for e, pe, tk, r, a0, a1 in sorted(rows, key=lambda v: -v[0]):
-        print("  %-8s %3d %4d  %7.2f %7.2f %7.2f   at %s .. %s   want %s .. %s"
-              % (r.kind, r.index, r.chord, pe, tk, e,
+        rows.append((e, plan_e, trak, tilt, r, a0, a1))
+    print("  %-8s %3s %4s  %7s %7s %7s %7s" % ("kind", "ix", "end",
+                                                "plan", "track", "tilt", "built"))
+    for e, pe, tk, tl, r, a0, a1 in sorted(rows, key=lambda v: -v[0]):
+        print("  %-8s %3d %4d  %7.2f %7.2f %6.1fd %7.2f   at %s .. %s   want %s .. %s"
+              % (r.kind, r.index, r.chord, pe, tk, tl, e,
                  np.round(a0, 1), np.round(a1, 1),
                  np.round(r.p0, 1), np.round(r.p1, 1)))
-    print("mount built within %.2f mm of its own geometry" % max(v[0] for v in rows))
+    print("mount built within %.2f mm and %.1f degrees of its own geometry"
+          % (max(v[0] for v in rows),
+             max((v[3] for v in rows if v[3] == v[3]), default=0.0)))
     if strip is not None:
         from PIL import Image
         from truss import filmstrip as _fs

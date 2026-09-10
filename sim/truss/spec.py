@@ -159,7 +159,7 @@ class Carrier:
         the rack's pitch, the nest and the boss are all sized off this."""
         p = Payload if payload is None else payload
         gx, gu = Bracket.grid_half(p, d_rod)
-        o = Bracket.OVERRUN + d_rod / 2.0
+        o = Bracket.overrun(d_rod) + d_rod / 2.0
         px, pu = Bracket.plate_half(p, d_rod)
         return (max(p.BOX[0] / 2.0, px, gx + o),
                 max(p.BOX[2] / 2.0, pu, gu + o))
@@ -179,7 +179,7 @@ class Carrier:
         return (p.BOX[1], p.CASE[0])
 
     @classmethod
-    def reach(cls, standoff_mm, payload=None):
+    def reach(cls, standoff_mm, payload=None, d_rod=1.5):
         """How far past the chord ends the loaded carrier reaches, mm.
 
         THE BOSS IS RADIAL, NOT AXIAL, and that is what keeps this number
@@ -189,9 +189,13 @@ class Carrier:
         out of the module's BACK -- 180 degrees from the optical axis, so
         it can never be in shot -- it costs nothing axially, and the cage
         turns it under the jaws exactly as it does a diagonal.
+
+        WHAT REACHES IS THE KIT, not the module: the grid overhangs the
+        board by OVERRUN on every side, so this is 6.5 mm further out than
+        the board's own face and the cage's end freedom follows it.
         """
         p = Payload if payload is None else payload
-        return standoff_mm + p.BOX[0] / 2.0
+        return standoff_mm + cls.kit_half(p, d_rod)[0]
 
     @staticmethod
     def boss_axis(look):
@@ -251,9 +255,30 @@ class Bracket:
     RHO         = 2.70e-3      # g/mm^3
     BOND_GAP    = 0.10         # mm, the aperture cut oversize for adhesive
     WALL        = 1.5          # mm of metal beside a cut edge
-    OVERRUN     = 4.0          # mm a grid rod runs past a crossing, so the
-                               # crossing has rod either side of it to wind
-                               # against rather than a rod end
+
+    @classmethod
+    def overrun(cls, d_rod=1.5, thread_d=None, turns=None):
+        """How far a grid rod runs past its crossing, mm.
+
+        THE CROSSING HAS TO HAVE ROD EITHER SIDE OF IT to wind against
+        rather than a rod end, and how much is the BAND'S OWN WIDTH: the
+        turns are laid side by side along the rod, so half of them fall
+        each side of the crossing, and past the last one the rod needs an
+        end distance to bear on -- one diameter, as a lashing always does.
+
+        4.0 was typed.  It is 2.05 mm on a 1 mm rod, and the difference is
+        not cosmetic: this sets the kit's half-width, which sets the
+        camera's standoff, which sets the cage's end freedom, which pushes
+        the end racks along the gantry's X -- and at 4.0 the largest truss
+        the cell is specified to build wants 1403 mm of the brief's 1400.
+        """
+        from dataclasses import fields as _fields
+        if thread_d is None:
+            thread_d = next(f.default for f in _fields(Truss)
+                            if f.name == "thread_d")
+        if turns is None:
+            turns = StationB.TURNS
+        return float(turns) * float(thread_d) / 2.0 + float(d_rod)
 
     @classmethod
     def aperture(cls, payload=None):
@@ -1316,6 +1341,50 @@ class Head:
         return (Head.ring_axial_half() + Head.TOOL_CLEAR + Vision.cam_bay()
                 + Dispenser.BODY_W / 2.0)
 
+    @classmethod
+    def yaw_swing_clear(cls, length, yaw_deg, r=0.0):
+        """How far a rod held at its middle clears the head's OWN RING while
+        the gripper turns to `yaw_deg`, mm.  Positive is clear.
+
+        THE YAW HAPPENS WITH THE GRIPPER RETRACTED, at cruise height, and
+        retracted the grip point sits TIP_PARK ABOVE the ring's centre --
+        inside its bore.  A rod swung about that point sweeps its own
+        half-length round it, and at some yaws its ends come out of the
+        bore and into the annulus.  Measured on the mount rig: a 39.7 mm
+        strut turned to -33.7 degrees sat 0.67 mm inside `ring7`, and went
+        down 71.6 degrees off its own line with every op reporting success.
+        This function reads -0.67 for that case.
+
+        THE YAW SERVO'S STOP IS NOT THIS CONSTRAINT.  -33.7 is well inside
+        the +-95 degrees the servo has; what it is outside is the head.
+        """
+        from math import cos as _cos, sin as _sin, radians as _rad, hypot as _hyp
+        psi = _rad(float(yaw_deg))
+        ux, uy = _cos(psi), _sin(psi)
+        worst, n = 1e9, 64
+        for i in range(n + 1):
+            s = -length / 2.0 + length * i / n
+            x = cls.grip_x() + s * ux
+            rad = _hyp(s * uy, cls.TIP_PARK)
+            worst = min(worst, max(abs(x) - cls.ring_axial_half(),
+                                   rad - (race_r_out() + r),
+                                   (ring_r_in() - r) - rad))
+        return worst
+
+    @classmethod
+    def yaw_stroke(cls, r=0.0, clear=None):
+        """How far the gripper must be extended before a carried rod may be
+        TURNED, mm.
+
+        Retracted, the grip point is TIP_PARK above the ring's centre and a
+        rod swung there sweeps out of the bore and into the annulus.
+        Extended past the ring's own outer radius it sweeps in clear air,
+        whatever the yaw -- so the rule is not "which yaws are legal" but
+        "turn it below the head".
+        """
+        clear = Process.SEAT_CLEAR if clear is None else clear
+        return cls.TIP_PARK + race_r_out() + r + clear
+
     @staticmethod
     def grip_x():
         return -(Head.ring_axial_half() + Head.TOOL_CLEAR + Gripper.BODY_W / 2.0)
@@ -1389,7 +1458,27 @@ class Cage:
     # It was 40 while the camera was aimed 30 degrees off a chord and needed
     # 21 mm of standoff to stop photographing it.  Aimed at a face the field
     # costs no standoff at all, and eight millimetres of this came back.
-    END_FREE    = 32.0
+    #
+    # AND THEN IT WENT BACK OUT AGAIN, because what the cage has to leave
+    # room for is not the module.  It is the head kit station B delivers,
+    # and the grid overhangs the board by OVERRUN on every side.  At 32 the
+    # kit's outboard edge was a millimetre PAST the end plate's inner face
+    # and its inboard edge was 5 mm INSIDE the mandrel -- in the backbone,
+    # the torsion shafts and the first arms.  Eight cage parts inside the
+    # kit, the worst 4.5 mm deep, measured on the built scene; the camera
+    # would not seat because there was something already there.
+    #
+    # IT WANTED 41.5 AND THE GANTRY ONLY ALLOWS 40.5, and that is what
+    # found the last typed number in the kit: `Bracket.OVERRUN` was 4.0
+    # where the band it has to carry is 2.05.  Derived, the kit is 1.95 mm
+    # narrower each side, the standoff comes back to 18.55 and this to
+    # 37.10 -- so the brief's own 1400 mm of X still covers the largest
+    # truss the cell is specified to build.  Rounded up from that to 39,
+    # which is what the BUILT scene wants: check_mount measures the kit at
+    # the pose the plan sends it to against every geom in the cell, and the
+    # grid's outboard tips want their process clearance from the end
+    # plate's face like anything else.  x_reach is then 1397 of 1400.
+    END_FREE    = 39.0
     POST_R      = 1.5          # thread anchor post
     POST_OFF    = 8.0          # post from the chord end, axially
     CRADLE_L    = 6.0          # along the diagonal
@@ -1412,24 +1501,32 @@ class Cage:
 
     @staticmethod
     def nose_spine_r(payload=None):
-        """Radius the backbone must neck down to over the NOSE, mm.
+        """Radius the backbone may be over the NOSE, mm -- and the answer is
+        that there is no backbone over the nose at all.
 
-        The camera is mounted on the spine's own axis -- that is the whole
-        point of the mount, since a mass off the axis turns a manoeuvre into
-        camera yaw -- and the cage's backbone is on that axis too.  At full
-        size the tube runs straight THROUGH the module: 8.00 mm of steel
-        where the module's nearest face is 4.50 mm off the axis, an
-        interference of 3.50 mm that no drawing showed and the first render
-        did.  So the backbone is stepped over the last stretch at each end,
-        which is outside the truss and carries nothing but the end plate.
+        THE CAMERA CONTAINS THE AXIS.  It is mounted on the spine's own
+        axis -- that is the whole point of the mount, since a mass off the
+        axis turns a manoeuvre into camera yaw -- and its board is 9 mm
+        deep centred on that axis.  So there is no radius a tube can neck
+        down to and clear it: not 8 mm, not 3, not 1.
 
-        It lands on Cage.SPINE_R_MIN exactly, which is the cage's own stated
-        floor -- so the neck is as thin as this cage is allowed to be and no
-        thinner, and if a fatter camera ever arrives the assertion in
-        check_mount is what says so.
+        THIS FUNCTION USED TO RETURN 3.0, from `BOX[1]/2 - SEAT_CLEAR`, on
+        the belief that the module's nearest face was 4.5 mm OFF the axis.
+        It is not off it; the axis runs through the middle of the board.
+        Measured on the built scene, the tube was 4.5 mm inside the board,
+        the draw rod with it, and six more cage parts besides -- and the
+        camera would not seat, because there was something already there.
+
+        What is left is a stub: the plate's own hub, reaching in from the
+        end plate as far as the nose lets it and no further, which
+        `fixture.nose_span` says.  Across the nose the end plate is carried
+        on the machine's own bearing, and the draw rod's pull is taken off
+        the axis, outside the kit's silhouette -- there is a corridor 15 mm
+        wide for it between the mount's own struts.  [VERIFY: draw that
+        linkage; check_mount holds the rule, not the mechanism.]
         """
-        p = Payload if payload is None else payload
-        return p.BOX[1] / 2.0 - Process.SEAT_CLEAR
+        return Cage.SPINE_R_MIN
+
     # Retention.  A rod in an upward-opening V falls out when the cage
     # turns it downward; the real fixture needs a keeper (spring clip, wax
     # dab).  Modelled as a weld once a rod is seated; check_load reports

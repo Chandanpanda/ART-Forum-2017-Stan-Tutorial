@@ -108,7 +108,7 @@ class Kit:
         LAYER 0 FIRST, and not by preference: layer 1 lies ON layer 0 at
         every crossing.  Laid the other way round the second pair has
         nothing under it but the collar's own aperture."""
-        over = Bracket.OVERRUN
+        over = Bracket.overrun(self.d)
         out = []
         for su in (+1.0, -1.0):                      # layer 0, along B's x
             out.append(Rod("grid", len(out),
@@ -276,7 +276,7 @@ class Kit:
         reach = abs(float(t[1])) * StationB.ring_r_out() \
             + abs(float(n[1])) * StationB.RING_W / 2.0
         near = max(self.gu + reach,                       # the ring
-                   self.gu + Bracket.OVERRUN,             # the rods
+                   self.gu + Bracket.overrun(self.d),     # the rods
                    self.gu + StationB.POST_D)             # the base plate
         return (Payload.BOX[2] / 2.0 + StationB.NEST_WALL
                 + Process.SEAT_CLEAR + near)

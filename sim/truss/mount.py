@@ -366,6 +366,45 @@ def fov_clear(mount, payload=Payload, end=None):
     return worst
 
 
+def collar_segments(payload=Payload, d_strut=1.5, clear=None):
+    """The collar's own outline, in the plate's plane: (across, up) pairs,
+    mm from the module's centre.
+
+    FOUR BANDS ROUND THE RECTANGLE THE GRID LIES ON, four ribs in to the
+    ring round the aperture.  It is an open frame, not a plate -- there is
+    a lens behind it.
+
+    Shared because two machines build it: `solve` puts it on the truss and
+    `mjcf.station_b` puts it in station B's nest, and drawn separately B's
+    came out a solid slab lying over the housing.  A part with two
+    definitions has one of them wrong.
+    """
+    px, pu = Bracket.plate_half(payload, d_strut, clear)
+    bw = Bracket.band_w(d_strut)
+    bx, bu = px - bw / 2.0, pu - bw / 2.0       # band centrelines
+    rx, ru = Bracket.ring_half(payload)
+    ax, au = [v / 2.0 for v in Bracket.aperture(payload)]
+    cx, cu = 0.5 * (ax + rx), 0.5 * (au + ru)   # ring centrelines
+    bands = [((-bx, +bu), (+bx, +bu), bw), ((+bx, +bu), (+bx, -bu), bw),
+             ((+bx, -bu), (-bx, -bu), bw), ((-bx, -bu), (-bx, +bu), bw)]
+    # THE RING ROUND THE APERTURE, which the ribs run out from and which
+    # `Bracket.bond_area` has always counted -- it is the whole bond to the
+    # lens housing.  Left out of the outline it was left out of the model
+    # too, so the collar had a hole where its one seating face should be
+    # and the vacuum head reached through it onto the housing.
+    # AND EACH SEGMENT CARRIES ITS OWN WIDTH.  The ring is one WALL wide,
+    # not one band: drawn at the band's width its inner edge closes to 3.1
+    # mm and an 8.5 mm lens housing will not pass through it -- the collar
+    # sat down on top of the camera, 2 mm proud, and every rod after it.
+    ring = [((-cx, +cu), (+cx, +cu), Bracket.WALL),
+            ((+cx, +cu), (+cx, -cu), Bracket.WALL),
+            ((+cx, -cu), (-cx, -cu), Bracket.WALL),
+            ((-cx, -cu), (-cx, +cu), Bracket.WALL)]
+    ribs = [((0.0, +ru), (0.0, +bu), bw), ((0.0, -ru), (0.0, -bu), bw),
+            ((+rx, 0.0), (+bx, 0.0), bw), ((-rx, 0.0), (-bx, 0.0), bw)]
+    return tuple(bands + ring + ribs)
+
+
 def solve(geom, payload=Payload, d_strut=1.5, clear=None, standoff_mm=None,
           azimuth=None):
     """The whole mount for this truss, in the cage frame.
@@ -417,16 +456,11 @@ def solve(geom, payload=Payload, d_strut=1.5, clear=None, standoff_mm=None,
         # plate on the housing can be in; as a fin on edge it was 4.50 mm
         # inside the PCB.
         lc = 0.5 * (seat[0] + seat[1])
-        bx, bu = px - bw / 2.0, pu - bw / 2.0   # band centrelines
-        rx, ru = Bracket.ring_half(payload)
-        bands = [((-bx, +bu), (+bx, +bu)), ((+bx, +bu), (+bx, -bu)),
-                 ((+bx, -bu), (-bx, -bu)), ((-bx, -bu), (-bx, +bu))]
-        ribs = [((0.0, +ru), (0.0, +bu)), ((0.0, -ru), (0.0, -bu)),
-                ((+rx, 0.0), (+bx, 0.0)), ((-rx, 0.0), (-bx, 0.0))]
-        for (ax0, au0), (ax1, au1) in bands + ribs:
+        for (ax0, au0), (ax1, au1), sw in collar_segments(payload, d_strut,
+                                                          clear):
             rods.append(Strut("collar", len(rods), at(ax0, lc, au0),
                               at(ax1, lc, au1), Bracket.SHEET / 2.0, end,
-                              w=bw / 2.0, normal=look))
+                              w=sw / 2.0, normal=look))
 
         # ---- THE GRID: four rods on the plate's front face, two layers.
         # Layer 0 runs across the spine, laid along the band's two long

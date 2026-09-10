@@ -430,8 +430,10 @@ class StationB:
     # where the station sits in the cell's own coordinates, mm
     ORIGIN      = (0.0, -520.0, 0.0)
     # its gantry: small, because the part is
+    # AS BUILT, and `reach` computes what the layout needs; check_stationb
+    # holds these against it, the way check_geometry holds the cell's.
     X_TRAVEL    = 260.0
-    Y_TRAVEL    = 200.0
+    Y_TRAVEL    = 260.0
     Z_TRAVEL    = 120.0
     V_MAX       = {"x": 60.0, "y": 60.0, "z": 40.0}
     A_MAX       = {"x": 400.0, "y": 400.0, "z": 300.0}
@@ -451,7 +453,124 @@ class StationB:
     TURNS       = 14           # per crossing [VERIFY on the joint rig]
     # the gripper: the same jaws, because the rods are the same rods
     LIFT_CLEAR  = 3.0
-    PLACE_CLEAR = 1.0
+    # THERE IS NO PLACE CLEARANCE.  A tool that hovers a millimetre over
+    # where the part goes leaves the part a millimetre out, because the
+    # keeper welds it where the tool left it -- and the frame collected that
+    # millimetre twice, once onto the jig and once onto the collar.  The
+    # tool lands the part; the stroke ends when it stops.
+    # ...AND A VACUUM HEAD, because the collar is not a rod.  It is a flat
+    # frame 1.5 mm thick lying face up; parallel jaws can only take it by an
+    # edge, and an edge grip cannot be turned face-down again without an
+    # axis B does not have.  Suction on the face is what a machine picks a
+    # flat part up with -- and on THIS part, four pads on the ring round the
+    # aperture, which is the only metal at its centre.  See `vac_pads`.
+    # WHERE EACH TOOL SITS ON THE CARRIAGE, mm from the winder's centre.
+    # The plan has to aim the TOOL, not the carriage; the cell's own plan
+    # does the same with Head.grip_x().  Left out, B drove its carriage to
+    # each rack slot and closed its jaws 34 mm away from the rod -- and the
+    # frames showed four rods that never left the rack.
+    TOOL_CLEAR  = 2.0          # mm between a tool and the winder's rim
+    VAC_KPA     = 60.0         # kPa of vacuum at the cup [device]
+    VAC_STROKE  = 40.0
+    # THE JIG: where the tic-tac-toe is built and wound, off the camera.
+    # Hardware, both of these -- a plate and four turned posts.  WHERE the
+    # posts stand is not hardware and is not here; `Kit.jig_posts` solves
+    # it against the winder's own swept solid.
+    POST_D      = 3.0          # mm, jig post
+    JIG_BASE_T  = 3.0          # mm, jig base plate
+
+    # ...and where each tool sits, DERIVED: just clear of the winder's own
+    # rim, on three sides of it.  34 and 30 were numbers I wrote down.
+    @classmethod
+    def grip_off(cls):
+        return (cls.ring_r_out() + Gripper.BODY_W / 2.0 + cls.TOOL_CLEAR, 0.0)
+
+    @classmethod
+    def disp_off(cls):
+        return (-(cls.ring_r_out() + Dispenser.BODY_W / 2.0 + cls.TOOL_CLEAR), 0.0)
+
+    # ...AND THE VACUUM HEAD IS FOUR PADS, not a cup.
+    #
+    # A CUP NEEDS FLAT METAL AND THE COLLAR IS MOSTLY HOLE.  The one piece of
+    # it at the plate's own centre is the RING round the aperture -- a
+    # square annulus one WALL wide -- so the head is four pads on that ring.
+    # Centred, so the plate lifts balanced; and outside the aperture, so it
+    # clears the lens housing standing through it.  A solid cup inside the
+    # aperture was what was drawn, and it rode up on the housing and left
+    # the collar 1.6 mm proud of its seat -- measured, and visible in the
+    # frames as a plate floating over a camera.
+    @classmethod
+    def vac_pads(cls, payload=None):
+        """((cx, cy), (hx, hy)) of the four pads, mm, in the collar's own
+        plane."""
+        ax, au = [v / 2.0 for v in Bracket.aperture(payload)]
+        rx, ru = Bracket.ring_half(payload)
+        w = Bracket.WALL / 2.0
+        return (((0.5 * (ax + rx), 0.0), (w, au)),
+                ((-0.5 * (ax + rx), 0.0), (w, au)),
+                ((0.0, 0.5 * (au + ru)), (ax, w)),
+                ((0.0, -0.5 * (au + ru)), (ax, w)))
+
+    @classmethod
+    def vac_half(cls, payload=None):
+        """(x, y) half-extent of the head, mm -- the ring's own outline."""
+        return Bracket.ring_half(payload)
+
+    @classmethod
+    def vac_hold_N(cls, payload=None):
+        """What the head can lift, N, at its own vacuum over its own pads."""
+        a = sum(4.0 * h[0] * h[1] for _c, h in cls.vac_pads(payload))
+        return cls.VAC_KPA * 1e3 * a * 1e-6
+
+    @classmethod
+    def vac_off(cls):
+        return (0.0, cls.ring_r_out() + cls.vac_half()[1] + cls.TOOL_CLEAR)
+
+    @classmethod
+    def tool_lift(cls, kit):
+        """How far above the winder's own centre each tool's tip is seated
+        when it is retracted, mm.
+
+        THE TOOLS SHARE A CARRIAGE WITH THE RING, and when the ring is
+        winding, its centre is ON the crossing -- so a tool whose tip sits
+        at the carriage's own height is at the crossing's height too, and
+        the dispenser's nozzle stands 20 mm away in x, which on this kit is
+        directly over a grid rod.  A tool has to be seated clear of the
+        tallest thing the ring straddles.
+
+        The gripper's pads reach PAD_UNDER below its grip point, so that
+        comes off the same budget: seat them all by the worst of the
+        three."""
+        over = kit.work_above_crossing()
+        return over + Process.SEAT_CLEAR + Gripper.PAD_UNDER
+
+    @classmethod
+    def tool_stroke(cls, kit):
+        """How far a tool has to be able to reach below its seat, mm.
+
+        The carriage flies at the height the WINDER needs and every tool
+        works from there, so the stroke is the whole drop from the cruise
+        height to the lowest thing a tip has to touch.  40 was a number."""
+        return (kit.cruise_z() + cls.tool_lift(kit) - kit.lowest_tip()
+                + cls.LIFT_CLEAR)
+
+    @classmethod
+    def reach(cls, kit):
+        """(x, y) half-extents the CARRIAGE must cover, mm -- every place a
+        tool has to be, offset by that tool's own seat.  What the travels
+        are held against."""
+        pts = []
+        for tool, off in (("grip", cls.grip_off()), ("disp", cls.disp_off()),
+                          ("vac", cls.vac_off())):
+            for _k, _i, a, b in kit.rack_slots():
+                pts.append((0.5 * (float(a[0]) + float(b[0])) - off[0],
+                            0.5 * (float(a[1]) + float(b[1])) - off[1]))
+            for q in kit.crossings():
+                pts.append((float(q[0]) - off[0], float(q[1]) - off[1]))
+            for r in kit.rods:
+                pts.append((float(r.mid[0]) - off[0], float(r.mid[1]) - off[1]))
+            pts.append((-off[0], -off[1]))
+        return (max(abs(p[0]) for p in pts), max(abs(p[1]) for p in pts))
 
     @staticmethod
     def ring_r_in():

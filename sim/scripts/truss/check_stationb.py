@@ -83,13 +83,71 @@ def main():
               "the head is %.1f mm to its rim and there is %.1f mm from the crossing "
               "to the chord circle; B's winder is %.1f"
               % (race_r_out(), room, StationB.ring_r_out()))
-        # a hoop round one rod alone would not tie the two together
-        check(tag + "the hoop is laid perpendicular to the LOWER rod, so it encircles "
-              "both -- the upper one passes through that plane at the crossing",
-              abs(float(kit.wind_axis(0) @ np.array([1.0, 0.0, 0.0])) - 1.0) < 1e-9
-              and abs(kit.rods[0].axis[0]) > 0.999
-              and abs(kit.rods[2].axis[1]) > 0.999,
-              "lower layer along x, upper along y")
+        # THE BORE IS ON THE CROSSING'S DIAGONAL, and it has to be: a ring
+        # can only orbit what lies along its axis, and put on either rod the
+        # OTHER rod lies in the ring's own plane.  Measured before this was
+        # understood: one crossing of four wound, the rest at zero turns.
+        n = kit.wind_axis(0)
+        t = np.array([-n[1], n[0], 0.0])
+        worst_ax = min(abs(float(r.axis @ n)) for r in kit.rods)
+        check(tag + "the winder's bore lies on the crossing's DIAGONAL, so BOTH "
+              "rods pierce the ring's plane at the crossing and neither lies in it",
+              worst_ax > 0.5 and abs(float(n @ np.array([0.0, 0.0, 1.0]))) < 1e-9,
+              "each rod is %.0f degrees to the ring's plane"
+              % np.degrees(np.arcsin(worst_ax)))
+        # ...and at the bore's own radius the rods are long clear of the ring
+        s_bore = StationB.ring_r_in() / abs(float(kit.rods[0].axis @ t))
+        check(tag + "...and where a rod reaches the bore's radius it is already "
+              "clear of the ring's own thickness",
+              s_bore * abs(float(kit.rods[0].axis @ n)) > StationB.RING_W / 2.0,
+              "%.1f mm off the plane at the bore, against a ring %.1f thick"
+              % (s_bore * abs(float(kit.rods[0].axis @ n)), StationB.RING_W))
+
+        # ------------------------------------------- IT IS WOUND ON A JIG
+        # A RING CANNOT ORBIT A JOINT WITH A PLATE UNDER IT.  This is the
+        # whole reason there is a jig, and it is geometry, not preference.
+        lx = 0.5 * (kit.l0 + kit.l1)
+        drop = StationB.ring_r_out() - (lx - kit.seat[1])
+        check(tag + "the winder could not wind a crossing where the crossing "
+              "finally sits: it reaches below the collar it is bonded to",
+              drop > 0.0,
+              "the rim is %.1f mm under the collar's own face" % drop)
+        check(tag + "so the frame is built on a JIG, and every post of it stands "
+              "clear of the winder's swept solid",
+              kit.post_clearance() > 0.0 and len(kit.jig_posts()) == 4,
+              "least clearance %.2f mm on %d posts"
+              % (kit.post_clearance(), len(kit.jig_posts())))
+        check(tag + "...and the winder's lowest reach clears the jig's own base "
+              "plate",
+              kit.jig_floor_clear() > 0.0,
+              "%.2f mm" % kit.jig_floor_clear())
+        check(tag + "no post stands under layer 1: it rests on layer 0 at all four "
+              "crossings, exactly as it does in the finished mount, which leaves "
+              "the two rods with nothing over them free for the jaws",
+              all(min(abs(float(p[1]) - float(r.p0[1]))
+                      for r in kit.jig_rods() if r.layer == 0) < 1e-6
+                  for p in kit.jig_posts()),
+              "%s" % [tuple(round(v, 1) for v in p) for p in kit.jig_posts()])
+        # THE MOUTH HAS TO BE PARKED, and that is a measurement, not a habit:
+        # left where fourteen turns stopped it, the ring came down on the next
+        # crossing through its own rim and drove a rod 32 degrees round.
+        check(tag + "the winder's mouth is wider than the crossing needs to enter "
+              "it, so there is a tolerance to park to at all",
+              kit.park_tol() > 0.0,
+              "mouth %.0f deg, the crossing wants %.1f, so %.1f deg of tolerance"
+              % (StationB.RING_GAP, kit.entry_half_angle(), kit.park_tol()))
+
+        # ------------------------------------------- IT CAN BE HANDED OVER
+        under, along = kit.frame_grip_margin()
+        check(tag + "the finished frame is lifted by a LAYER-1 rod -- on layer 0 "
+              "the jaws reach below the collar they are setting it down on",
+              kit.frame_rod().layer == 1 and under > 0.0,
+              "%.2f mm under the pads on layer 1; layer 0 would be %.2f"
+              % (under, under - (kit.l1 - kit.l0)))
+        check(tag + "...at its middle, which is the one span on the frame with "
+              "nothing under it and nothing over it",
+              along > 0.0 and abs(float(kit.frame_rod().mid[0])) > 1e-9,
+              "the pads stop %.2f mm short of the nearest crossing" % along)
         check(tag + "one turn of thread round a crossing is the hull of the pair, not "
               "a circle round one",
               kit.hoop_perimeter() > np.pi * T.d_diag,
@@ -146,13 +204,59 @@ def main():
     kit = stationb.Kit(d_rod=T.d_diag)
     m0 = mujoco.MjModel.from_xml_string(mjcf.scene_cell(g, fx, n_drops=80))
     m1 = mujoco.MjModel.from_xml_string(mjcf.scene_cell(g, fx, kit=kit, n_drops=80))
-    b_joints = [n for n in ("bx", "by", "bz", "bg", "bw", "bring", "bf_l", "bf_r")
+    b_joints = [n for n in ("bx", "by", "bz", "bg", "bv", "bw", "bring",
+                            "bf_l", "bf_r")
                 if mujoco.mj_name2id(m1, mujoco.mjtObj.mjOBJ_JOINT, n) >= 0]
     check("station B is a SEPARATE SET OF ACTUATORS in the same scene -- it shares "
           "the floor with the cell and nothing else",
-          m1.nu == m0.nu + 8 and len(b_joints) == 8,
+          m1.nu == m0.nu + 9 and len(b_joints) == 9,
           "%d actuators against the cell's %d; joints %s"
           % (m1.nu, m0.nu, ",".join(b_joints)))
+    # THE COLLAR IS AN OPEN FRAME AND THE MODEL HAS TO SAY SO.  Drawn as a
+    # plate it covered the lens; drawn with its ring at the band's width it
+    # would not pass over the housing and sat 2 mm proud of its seat.
+    segs = mount.collar_segments(Payload, T.d_diag)
+    ax, au = [v / 2.0 for v in Bracket.aperture(Payload)]
+    inner = min(min(abs(a[0]), abs(b[0])) - w / 2.0 for a, b, w in segs
+                if abs(a[1] - b[1]) > 1e-9 and abs(a[0]) > 1e-9)
+    check("the collar's ring clears the lens housing it goes over",
+          inner <= ax + 1e-9 and ax > Payload.CASE[0] / 2.0,
+          "the ring's inner edge is at %.2f, the aperture at %.2f, the case at %.2f"
+          % (inner, ax, Payload.CASE[0] / 2.0))
+    check("...and the vacuum head lands on that ring and nowhere else -- it is the "
+          "only metal at the plate's own centre, and it clears the housing",
+          all(abs(c[0]) - h[0] >= Payload.CASE[0] / 2.0 - 1e-9
+              or abs(c[1]) - h[1] >= Payload.CASE[1] / 2.0 - 1e-9
+              for c, h in StationB.vac_pads(Payload)),
+          "pads at %s" % [tuple(round(v, 2) for v in c)
+                          for c, _h in StationB.vac_pads(Payload)])
+    check("...and it can lift what it is asked to lift",
+          StationB.vac_hold_N(Payload)
+          > 10.0 * Bracket.mass(Payload, T.d_diag) * 9.81e-3,
+          "%.2f N against a collar of %.3f N"
+          % (StationB.vac_hold_N(Payload),
+             Bracket.mass(Payload, T.d_diag) * 9.81e-3))
+    # EVERY TOOL IS SEATED ABOVE THE RING, because they share its carriage
+    kitc = stationb.Kit(d_rod=T.d_diag)
+    check("every tool on B's carriage is seated clear of the tallest thing the "
+          "winder straddles -- they ride with it, and when it winds, its centre "
+          "is ON the crossing",
+          StationB.tool_lift(kitc) > kitc.work_above_crossing(),
+          "%.2f mm of seat over %.2f mm of work"
+          % (StationB.tool_lift(kitc), kitc.work_above_crossing()))
+    check("...and the carriage flies at the height the WINDER needs, not the "
+          "tool's -- the ring does not retract",
+          kitc.cruise_z() - StationB.ring_r_out() > kitc.table_top(),
+          "cruise %.1f, rim reaches %.1f, the table stands %.1f"
+          % (kitc.cruise_z(), kitc.cruise_z() - StationB.ring_r_out(),
+             kitc.table_top()))
+    check("...and every tool's stroke covers the drop from there to the lowest "
+          "thing it has to touch",
+          StationB.tool_stroke(kitc)
+          >= kitc.cruise_z() + StationB.tool_lift(kitc) - kitc.lowest_tip(),
+          "%.1f mm of stroke for a %.1f mm drop"
+          % (StationB.tool_stroke(kitc),
+             kitc.cruise_z() + StationB.tool_lift(kitc) - kitc.lowest_tip()))
     check("...and adding it moves nothing of the cell",
           m1.ngeom > m0.ngeom and m0.nu == 9,
           "%d geoms against %d" % (m1.ngeom, m0.ngeom))

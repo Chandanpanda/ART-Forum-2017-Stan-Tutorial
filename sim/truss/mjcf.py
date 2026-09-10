@@ -650,8 +650,14 @@ def station_b(kit, origin=None):
     # under the collar
     for knd, i, a, b in kit.rack_slots():
         if knd == "collar":
-            out.append(box("b_shelf", at((0.0, float(a[1]), float(a[2]) - 2.0)),
-                           (px + 2.0, pu + 2.0, 1.5), (1, 0, 0), (0, 1, 0),
+            # THE SHELF'S FACE IS WHERE THE RACK SAYS THE COLLAR LIES, less
+            # its own thickness.  Two millimetres down was a number, and the
+            # collar settled a quarter of a millimetre above where the plan
+            # went looking for it.
+            t = 1.5
+            top = float(a[2]) - Bracket.SHEET / 2.0
+            out.append(box("b_shelf", at((0.0, float(a[1]), top - t / 2.0)),
+                           (px + 2.0, pu + 2.0, t / 2.0), (1, 0, 0), (0, 1, 0),
                            C_NEST, CAGE, ROD))
             continue
         u = _unit(b - a)
@@ -662,17 +668,54 @@ def station_b(kit, origin=None):
             out += v_flanks("b_slot%d_%d" % (i, k), c, u, np.array([0, 0, 1.0]),
                             bl, Magazine.SLOT_DEPTH, 1.0, Magazine.SLOT_ANGLE / 2.0,
                             C_RACK, CAGE, ROD)
+    # ---- THE JIG: where the frame is built and wound, in clear air.
+    # A plate and four posts, and every one of those positions comes out of
+    # `Kit` -- the posts stand as far along the layer-0 rods as the winder's
+    # own swept solid allows, and none stands under layer 1, because layer 1
+    # rests on layer 0 exactly as it does in the finished mount.
+    jc, jh = kit.jig_base()
+    out.append(box("b_jigbase", at(jc), jh, (1, 0, 0), (0, 1, 0),
+                   C_NEST, CAGE, ROD))
+    drop = (kit.d / 2.0) / sin(radians(Magazine.SLOT_ANGLE / 2.0))
+    for i, (jx, jy, jz) in enumerate(kit.jig_posts()):
+        # the post carries the rod's centreline at jz; its V's apex sits
+        # `drop` under that, the same geometry the rack's blocks use
+        out.append(cylinder("b_post%d" % i, at((jx, jy, StationB.JIG_BASE_T)),
+                            at((jx, jy, jz - drop)), StationB.POST_D / 2.0,
+                            C_NEST, CAGE, ROD))
+        out += v_flanks("b_postv%d" % i, at((jx, jy, jz - drop)),
+                        np.array([1.0, 0.0, 0.0]), np.array([0.0, 0.0, 1.0]),
+                        StationB.POST_D, kit.d / 2.0, 0.6,
+                        Magazine.SLOT_ANGLE / 2.0, C_NEST, CAGE, ROD)
     # ---- the kit's own parts, as free bodies in their start poses
     for knd, i, a, b in kit.rack_slots():
         c = (np.asarray(a) + np.asarray(b)) / 2.0
         nm = "bcollar" if knd == "collar" else "bgrid%d" % i
+        # THE KIT'S OWN PARTS DO NOT COLLIDE WITH EACH OTHER.  They are
+        # designed touching -- layer 1 lies ON layer 0 at every crossing and
+        # layer 0 lies ON the collar -- and once they are wound and bonded
+        # they are one part.  Left colliding, the contact solver pushed
+        # tangent rods apart while the frame's own welds pulled them back,
+        # and the finished tic-tac-toe came off the jig 12 mm out of shape
+        # and 25 degrees out of plane.  So drop ROD from what a kit part
+        # answers to; it still collides with the jig, the nest and the head,
+        # which is where a real crash would be.
+        kaff = CAGE | HEAD_B
         if knd == "collar":
-            g = box(nm + "_g", (0, 0, 0), (px, pu, Bracket.SHEET / 2.0),
-                    (1, 0, 0), (0, 1, 0), C_KIT, ROD, ROD | CAGE | HEAD_B,
-                    mass=Bracket.mass(Payload, kit.d))
+            from .mount import collar_segments
+            segs = collar_segments(Payload, kit.d, kit.clear)
+            g = "".join(
+                box("%s_g%d" % (nm, k),
+                    (0.5 * (s0[0] + s1[0]), 0.5 * (s0[1] + s1[1]), 0.0),
+                    (max(abs(s1[0] - s0[0]) / 2.0, sw / 2.0),
+                     max(abs(s1[1] - s0[1]) / 2.0, sw / 2.0),
+                     Bracket.SHEET / 2.0),
+                    (1, 0, 0), (0, 1, 0), C_KIT, ROD, kaff,
+                    mass=Bracket.mass(Payload, kit.d) / len(segs))
+                for k, (s0, s1, sw) in enumerate(segs))
         else:
             g = cylinder(nm + "_g", np.asarray(a) - c, np.asarray(b) - c, kit.d / 2.0,
-                         C_ROD, ROD, ROD | CAGE | HEAD_B,
+                         C_ROD, ROD, kaff,
                          mass=Stock.rho_lin(kit.d) * float(np.linalg.norm(
                              np.asarray(b) - np.asarray(a))) / 1000.0)
         out.append('<body name="%s" pos="%s"><freejoint name="%s_f"/>%s</body>'
@@ -681,17 +724,41 @@ def station_b(kit, origin=None):
                   'solref="0.004 1" solimp="0.98 0.999 0.001"/>' % (nm, nm))
         eq.append('    <weld name="bhold_%s" body1="bgw" body2="%s" active="false" '
                   'solref="0.004 1" solimp="0.98 0.999 0.001"/>' % (nm, nm))
-    # ---- the module itself, welded down: it is placed by hand and stays
+        eq.append('    <weld name="bvac_%s" body1="bvac" body2="%s" active="false" '
+                  'solref="0.004 1" solimp="0.98 0.999 0.001"/>' % (nm, nm))
+        # the JIG's own keeper: the frame is not built on the module, so
+        # `bkeep_` (which welds to it) cannot hold a rod on the jig
+        eq.append('    <weld name="bjig_%s" body1="world" body2="%s" active="false" '
+                  'solref="0.004 1" solimp="0.98 0.999 0.001"/>' % (nm, nm))
+    # ---- and the frame's own joints.  Once four crossings are wound and
+    # cured the tic-tac-toe is ONE PART, which is the whole reason it can be
+    # picked up by a single rod; these welds are that fact.
+    for i in range(1, len(kit.rods)):
+        eq.append('    <weld name="bfrm%d" body1="bgrid0" body2="bgrid%d" '
+                  'active="false" solref="0.002 1" solimp="0.99 0.9999 0.001"/>'
+                  % (i, i))
+    # ---- the module itself, welded down: it is placed by hand and stays.
+    # TWO BOXES, from `mount.payload_solid`, and not one slab -- the collar
+    # SEATS ON THE BOARD'S FRONT FACE with the housing standing through its
+    # aperture, so a module modelled as one 9 mm box puts the collar 1.5 mm
+    # inside the part.  Built that way here, the nozzle went to dose the
+    # aperture and drove into a housing that was not where the part says it
+    # is.  The two machines read the module from the same function now.
+    from .mount import payload_solid
+    slab, hous = payload_solid(Payload)
     out.append('<body name="b_module" pos="%s">' % _v(at((0, 0, 0))))
-    out.append("  " + box("b_board", (0, 0, 0),
-                          (Payload.BOX[0] / 2.0, Payload.BOX[2] / 2.0,
-                           Payload.BOX[1] / 2.0), (1, 0, 0), (0, 1, 0),
-                          C_CAM, CAGE, ROD, mass=Payload.MASS))
-    hz = Payload.BOX[1] / 2.0 - Payload.CASE_PROUD / 2.0
-    out.append("  " + box("b_hous", (0, 0, hz),
-                          (Payload.CASE[0] / 2.0, Payload.CASE[1] / 2.0,
-                           Payload.CASE_PROUD / 2.0), (1, 0, 0), (0, 1, 0),
-                          "0.10 0.10 0.12 1", CAGE, ROD, mass=0.3))
+    for nm, e, col, ms in (("b_board", slab, C_CAM, Payload.MASS),
+                           ("b_hous", hous, "0.10 0.10 0.12 1", 0.3)):
+        # payload_solid speaks the CAMERA's frame (x, look, up); B's is
+        # (x, up, look), which is why the last two swap
+        out.append("  " + box(nm,
+                              (0.5 * (e[0][0] + e[0][1]),
+                               0.5 * (e[2][0] + e[2][1]),
+                               0.5 * (e[1][0] + e[1][1])),
+                              (0.5 * (e[0][1] - e[0][0]),
+                               0.5 * (e[2][1] - e[2][0]),
+                               0.5 * (e[1][1] - e[1][0])),
+                              (1, 0, 0), (0, 1, 0), col, CAGE, ROD, mass=ms))
     out.append("</body>")
     # ---- B's gantry and head
     ex, ey, ez = kit.extent()
@@ -712,6 +779,8 @@ def station_b(kit, origin=None):
                'forcerange="-15 15"/>')
     act.append('    <velocity name="ba_ring" joint="bring" kv="0.02" '
                'forcerange="-0.5 0.5"/>')
+    act.append('    <position name="ba_v" joint="bv" kp="2000" kv="30" '
+               'forcerange="-25 25"/>')
     eq.append('    <joint name="bjaws_sym" joint1="bf_l" joint2="bf_r" '
               'polycoef="0 1 0 0 0"/>')
     ten = ('  <tendon>\n    <fixed name="bjaws">\n'
@@ -723,8 +792,15 @@ def station_b(kit, origin=None):
 def _station_b_head(kit, o, ex, ey, ez):
     """B's carriage: three slides, a gripper on a stroke and a yaw, a small
     ring on a hinge, and a nozzle."""
-    from .spec import StationB, Gripper
-    z0 = float(o[2]) + ez + StationB.LIFT_CLEAR + 30.0
+    from .spec import StationB, Gripper, Dispenser, Payload
+    z0 = float(o[2]) + kit.cruise_z() + StationB.LIFT_CLEAR
+    stroke = StationB.tool_stroke(kit)
+    # EVERY TOOL IS SEATED ABOVE THE RING'S OWN CENTRE.  They share a
+    # carriage with it, and when the ring winds, that centre is ON the
+    # crossing -- so a tool whose tip sat at the carriage's height sat at
+    # the crossing's height, twenty millimetres away in x, which on this
+    # kit is directly over a grid rod.  See StationB.tool_lift.
+    tz = StationB.tool_lift(kit)
     r_in, r_out = StationB.ring_r_in(), StationB.ring_r_out()
     out = [
         '<body name="bx" pos="%.6f %.6f %.6f">' % (mm(o[0]), mm(o[1]), mm(z0)),
@@ -745,7 +821,11 @@ def _station_b_head(kit, o, ex, ey, ez):
                        "0.35 0.35 0.38 0.4", HEAD_B, ROD | CAGE, mass=120.0),
         '      <site name="b_ring_centre" pos="0 0 0" size="0.0005"/>',
         # the winder: a gapped ring turning about B's x, mouth facing down
-        '      <body name="bring" pos="0 0 0" gravcomp="1">',
+        # THE BORE LIES ON THE CROSSING'S DIAGONAL, not on either rod: a
+        # ring can only orbit what lies along its axis, and on a rod the
+        # OTHER rod is in the ring's plane.  See Kit.wind_axis.
+        '      <body name="bring" pos="0 0 0" euler="0 0 %.1f" gravcomp="1">'
+        % kit.wind_yaw(),
         '        <joint name="bring" type="hinge" axis="1 0 0" damping="2e-6" '
         'armature="2e-8"/>',
     ]
@@ -766,17 +846,35 @@ def _station_b_head(kit, o, ex, ey, ez):
     out.append('      </body>')
     # the dispenser, outboard of the ring
     out += [
-        '      <body name="bdisp" pos="%.6f 0 0" gravcomp="1">' % mm(-34.0),
+        '      <body name="bdisp" pos="%.6f %.6f %.6f" gravcomp="1">'
+        % (mm(StationB.disp_off()[0]), mm(StationB.disp_off()[1]), mm(tz)),
         '        <joint name="bd" type="slide" axis="0 0 -1" range="0 %.6f" '
-        'damping="2"/>' % mm(40.0),
-        '        ' + cylinder("b_nozzle", (0, 0, 0), (0, 0, 16.0), 1.1,
+        'damping="2"/>' % mm(stroke),
+        '        ' + cylinder("b_nozzle", (0, 0, 0), (0, 0, 16.0),
+                              Dispenser.NOZZLE_D / 2.0,
                               "0.85 0.85 0.9 1", HEAD_B, ROD | CAGE, mass=3.0),
         '        <site name="b_nozzle_tip" pos="0 0 0" size="0.0005"/>',
         '      </body>',
+        # the vacuum head, for the collar: FOUR PADS ON THE APERTURE RING,
+        # which is the only metal at the plate's own centre.  See
+        # StationB.vac_pads for why it is not a cup in the middle.
+        '      <body name="bvac" pos="%.6f %.6f %.6f" gravcomp="1">'
+        % (mm(StationB.vac_off()[0]), mm(StationB.vac_off()[1]), mm(tz)),
+        '        <joint name="bv" type="slide" axis="0 0 -1" range="0 %.6f" '
+        'damping="2"/>' % mm(stroke),
+    ] + [
+        '        ' + box("b_cup%d" % k, (c[0], c[1], 3.0), (h[0], h[1], 3.0),
+                         (1, 0, 0), (0, 1, 0), "0.25 0.25 0.28 1",
+                         HEAD_B, ROD | CAGE, mass=1.0)
+        for k, (c, h) in enumerate(StationB.vac_pads(Payload))
+    ] + [
+        '        <site name="b_cup_tip" pos="0 0 0" size="0.0005"/>',
+        '      </body>',
         # the gripper, on the other side
-        '      <body name="bgrip" pos="%.6f 0 0" gravcomp="1">' % mm(34.0),
+        '      <body name="bgrip" pos="%.6f %.6f %.6f" gravcomp="1">'
+        % (mm(StationB.grip_off()[0]), mm(StationB.grip_off()[1]), mm(tz)),
         '        <joint name="bg" type="slide" axis="0 0 -1" range="0 %.6f" '
-        'damping="2"/>' % mm(40.0),
+        'damping="2"/>' % mm(stroke),
         '        ' + box("b_gbody", (0, 0, 26.0), (7.0, 6.0, 8.0),
                          (1, 0, 0), (0, 1, 0), C_HEAD, HEAD_B, ROD | CAGE, mass=30.0),
         '        <body name="bgw" pos="0 0 0" gravcomp="1">',
@@ -790,8 +888,13 @@ def _station_b_head(kit, o, ex, ey, ez):
         y = sgn * (Gripper.JAW_OPEN / 2.0 + Gripper.PAD_T / 2.0)
         out += [
             '          <body name="bfinger_%s" pos="0 %.6f 0" gravcomp="1">' % (tag, mm(y)),
+            # THE TRAVEL CLOSES.  With the axis the other way up the
+            # finger at +y moved further +y on a negative command: the jaws
+            # OPENED when the HAL told them to close, and every frame of
+            # every run showed a rod between jaws standing 8 mm apart while
+            # the weld did all the gripping.
             '            <joint name="bf_%s" type="slide" axis="0 %d 0" '
-            'range="%.6f 0" damping="0.5"/>' % (tag, int(-sgn),
+            'range="%.6f 0" damping="0.5"/>' % (tag, int(sgn),
                                                 mm(-(Gripper.JAW_OPEN / 2.0 - 0.3))),
             '            ' + box("bpad_%s" % tag,
                                  (0, 0, Gripper.PAD_H / 2.0 - Gripper.PAD_UNDER),
@@ -803,6 +906,38 @@ def _station_b_head(kit, o, ex, ey, ez):
         ]
     out += ['        </body>', '      </body>', '    </body>', '  </body>', '</body>']
     return out
+
+
+def scene_station_b(kit, timestep=5e-4, origin=(0.0, 0.0, 0.0)):
+    """Station B on its own, for the rig and the demo.
+
+    THE CELL IS 668 GEOMS AND B IS FORTY.  Stepping the whole plant to
+    watch one small station make one small part costs ten minutes of wall
+    clock for three of simulated time, and buys nothing: B shares the floor
+    with the cell and nothing else, so a scene with only B in it is the
+    same physics."""
+    parts, eq, act, ten = station_b(kit, origin=origin)
+    floor_z = origin[2] - 60.0
+    body = ['<geom name="floor" type="plane" pos="%.6f %.6f %.6f" size="1 1 0.1" '
+            'material="floor" contype="%d" conaffinity="%d"/>'
+            % (mm(origin[0]), mm(origin[1]), mm(floor_z), CAGE, ROD | DROP)]
+    body += parts
+    return """<mujoco model="station_b">
+%s
+  <worldbody>
+    <camera name="b_cell" pos="%.4f %.4f %.4f" xyaxes="1 0 0 0 0.5 0.87"/>
+%s
+  </worldbody>
+  <equality>
+%s
+  </equality>
+%s
+  <actuator>
+%s
+  </actuator>
+</mujoco>
+""" % (preamble(timestep), mm(origin[0]), mm(origin[1]) - 0.16, mm(origin[2]) + 0.10,
+       "\n".join("    " + p for p in body), "\n".join(eq), ten, "\n".join(act))
 
 
 # ------------------------------------------------------------ assembly

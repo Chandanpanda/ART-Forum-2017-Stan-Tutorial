@@ -236,6 +236,89 @@ def payload_clearance(mount, geom, end=0, payload=Payload, aperture=True):
     return worst, who
 
 
+def post_station(geom, mount, post_r, post_l, clear=None, lo=None, hi=None,
+                 coarse=0.5, step=0.05):
+    """How far outboard of the chord ends a thread post can stand, mm.
+
+    THIS IS WHY THE FOUR LONG STRUTS CAME OUT SIX DEGREES OFF.  A thread
+    post is a radial pin on the chord's own line, `post_off` beyond the
+    chord end; the mount's struts leave the SAME point heading radially
+    inward to the crossings.  So near the end the post is inside the
+    struts' cone and further out it is not, and the offset the cage was
+    drawn with put it 0.66 mm inside two struts an end on the chosen truss,
+    1.16 on the 300.  The rod was driven into the pin while the gripper
+    held it rigidly, the keeper welded it at that pose, and the contact
+    levered it round the weld the moment the jaws opened.  Every axis
+    reported its commanded value throughout, because every axis went where
+    it was told.
+
+    The window is bounded at both ends and neither bound is new:
+
+        below   the ring's plate has to pass the post in x without reaching
+                the chord end -- `Cage.post_off_min`, which is exactly the
+                8.0 mm the cage was drawn with, arrived at by hand
+        above   the ring PARKED at the post has to clear the end plate --
+                `Cage.post_off_max`, which spec.CHECKS already asserted
+
+    Returns the nearest station to the chord end that clears every part of
+    the mount by `clear`, or None if the window holds no such station --
+    which is a truss this cell cannot put a camera on, not a number to
+    relax.  Scanned rather than bisected: the gap is not monotone in the
+    offset once the struts have crossed the chord's radius, and it is the
+    NEAREST clearing station that is wanted, not any of them.
+    """
+    from .spec import Cage, Process
+    from .geometry import capsule_gap
+    t = geom.t
+    clear = Process.SEAT_CLEAR if clear is None else clear
+    lo = Cage.post_off_min() if lo is None else lo
+    hi = Cage.post_off_max() if hi is None else hi
+    if hi < lo:
+        return None
+    # THE WHOLE MOUNT, not the rods the cell lays: the collar and the grid
+    # arrive on the kit and are as solid as anything else.  Each is padded
+    # by its LARGEST half-extent, which over-reports a strip of sheet edge
+    # on -- the safe direction for a clearance, and the collar is nowhere
+    # near the chords anyway.
+    ends = {}
+    for end in (0, 1):
+        rs = [r for r in mount.rods if r.end == end]
+        if rs:
+            ends[end] = (np.array([np.asarray(r.p0, float) for r in rs]),
+                         np.array([np.asarray(r.p1, float) for r in rs]),
+                         np.array([max(r.r, r.half_w) for r in rs]))
+    if not ends:
+        return float(lo)
+
+    def gap(off):
+        worst = float("inf")
+        for k in range(t.n_chords):
+            up = radial(chord_phi(k))
+            for end, (p0, p1, rr) in ends.items():
+                c = geom.chord_point(k, 0.0 if end == 0 else t.length) \
+                    + np.array([-off if end == 0 else off, 0.0, 0.0])
+                d = capsule_gap(c - up * post_l / 2.0, c + up * post_l / 2.0,
+                                post_r, p0, p1, rr)
+                worst = min(worst, float(d.min()))
+        return worst
+
+    coarse_at = [lo]
+    while coarse_at[-1] < hi - 1e-9:
+        coarse_at.append(min(hi, coarse_at[-1] + coarse))
+    hit = next((i for i, o in enumerate(coarse_at) if gap(o) >= clear - 1e-9),
+               None)
+    if hit is None:
+        return None
+    if hit == 0:
+        return float(lo)
+    o = coarse_at[hit - 1]
+    while o < coarse_at[hit]:
+        if gap(o) >= clear - 1e-9:
+            return float(o)
+        o += step
+    return float(coarse_at[hit])
+
+
 def landing_frame(geom, payload=Payload):
     """(x, look, up) unit vectors of the camera's own frame, cage coords."""
     look = radial(look_azimuth(geom))

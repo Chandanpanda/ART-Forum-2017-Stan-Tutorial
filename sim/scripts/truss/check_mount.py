@@ -38,6 +38,33 @@ def pitch_bound(jaw):
             + Magazine.SLOT_DEPTH * tan(radians(Magazine.SLOT_ANGLE / 2.0)) + 1.0 + 1.0)
 
 
+def _post_gap(geom, m, off):
+    """Least surface gap between a thread post `off` mm past the chord ends
+    and any part of the mount, mm, with what it is nearest.  Negative is
+    inside.  The pure-geometry twin of the built-scene check below: it names
+    the pin and the strut, which a scene-wide minimum does not.  The pin is
+    a CYLINDER in the scene and a capsule here, so this reads 0.66 mm inside
+    where the scene reads 0.30 -- the conservative side, which is the side a
+    clearance model should be wrong on."""
+    from truss.geometry import capsule_gap
+    worst, who = 1e9, ("", -1)
+    for k in range(geom.t.n_chords):
+        up = geometry.radial(geometry.chord_phi(k))
+        for end in (0, 1):
+            rs = [r for r in m.rods if r.end == end]
+            c = geom.chord_point(k, 0.0 if end == 0 else geom.t.length) \
+                + np.array([-off if end == 0 else off, 0.0, 0.0])
+            d = capsule_gap(c - up * Cage.POST_L / 2.0, c + up * Cage.POST_L / 2.0,
+                            Cage.POST_R,
+                            np.array([np.asarray(r.p0, float) for r in rs]),
+                            np.array([np.asarray(r.p1, float) for r in rs]),
+                            np.array([max(r.r, r.half_w) for r in rs]))
+            i = int(np.argmin(d))
+            if float(d[i]) < worst:
+                worst, who = float(d[i]), (rs[i].kind, rs[i].index)
+    return worst, who[0], who[1]
+
+
 def reach_with(t, diag_pitch, chord_pitch, end_free):
     """The gantry travel a fixture wants with the magazine and the cage at
     the given pitches -- measured by building one, not re-derived."""
@@ -217,11 +244,54 @@ def main():
           20.0 < fx.nose_reach + Process.SEAT_CLEAR,
           "the chosen truss's carrier reaches %.2f mm past the chord ends"
           % fx.nose_reach)
-    check("...and the winding head parked at a thread post still fits in the same room",
-          Cage.END_FREE >= Cage.POST_OFF + Head.ring_axial_half() + Process.SEAT_CLEAR)
-    # AND NOTHING OF THE CAGE IS IN THE NOSE, measured on the BUILT scene
-    # with the kit at the pose the plan sends it to.  This is the check that
-    # was missing: the camera is mounted on the cage's own axis, and the
+    # ------------------------------------------- WHERE A THREAD POST STANDS
+    # NOT A NUMBER.  A post is a radial pin on the chord's own line and the
+    # struts leave that same line heading inward, so the near bound the
+    # cage was drawn with -- 8.0 mm, which is exactly what the ring's own
+    # loop needs and nothing else -- put two struts an end INSIDE a pin.
+    gp = geometry.TrussGeometry(t)
+    Mp = mount.solve(gp, d_strut=t.d_diag,
+                     standoff_mm=mount.fov_standoff(gp, d_strut=t.d_diag))
+    gp.attach_mount(Mp)
+    fp = fixture.Fixture(gp)
+    near = Cage.post_off_min()
+    at_near = _post_gap(gp, Mp, near)
+    at_solved = _post_gap(gp, Mp, fp.post_off)
+    check("a thread post at the 8 mm the ring's own loop needs is INSIDE the mount: "
+          "the struts leave the chord ends on the same line the posts stand on",
+          at_near[0] < 0.0,
+          "%.2f mm at %s %d, %.2f mm past the chord end"
+          % (at_near[0], at_near[1], at_near[2], near))
+    check("...so the station is solved, not set: mount.post_station finds the nearest "
+          "one that clears the whole mount by the process clearance",
+          at_solved[0] >= Process.SEAT_CLEAR - 1e-6,
+          "%.2f mm past the chord ends, clearing by %.2f at %s %d"
+          % (fp.post_off, at_solved[0], at_solved[1], at_solved[2]))
+    check("...and it is still a station the head can use: inside the window between "
+          "the ring's loop clearing the chord end and the ring parked at it clearing "
+          "the end plate",
+          Cage.post_off_min() <= fp.post_off <= Cage.post_off_max()
+          and Cage.END_FREE >= fp.post_off + Head.ring_axial_half() + Process.SEAT_CLEAR,
+          "%.2f in [%.2f, %.2f]" % (fp.post_off, Cage.post_off_min(),
+                                    Cage.post_off_max()))
+    bare = fixture.Fixture(geometry.TrussGeometry(t))
+    check("...and with no camera on the truss there is nothing to clear, so the post "
+          "goes back to the ring's own bound -- which is why 8 mm looked right",
+          abs(bare.post_off - Cage.post_off_min()) < 1e-9)
+
+    # ------------------------------------------ AND THE PINS AT THE ENDS
+    # The same fault twice: the chord ends now carry the END BATTENS, and
+    # the last V-pin's station was a pin's own thickness from the end --
+    # a fact about the pin that says nothing about what is laid over it.
+    check("the last V-pin stands clear of the end batten laid across the chord ends, "
+          "not a pin's thickness from the end",
+          fp.end_exclusion() >= Cage.PIN_T / 2.0 + t.d_diag / 2.0 + Process.SEAT_CLEAR
+          - 1e-9 and min(fp.pin_xs(0)) >= fp.end_exclusion() - 1e-9,
+          "%.2f mm margin, first pin at %.2f (was %.2f on a bare truss)"
+          % (fp.end_exclusion(), min(fp.pin_xs(0)), min(bare.pin_xs(0))))
+    # AND NOTHING OF THE CELL IS IN THE MOUNT, measured on the BUILT scene
+    # with each part at the pose the plan sends it to.  This is the check
+    # that was missing: the camera is mounted on the cage's own axis, and the
     # cage's backbone, its draw rod, its torsion shafts, two of its arms and
     # its end plate were all in there with it -- eight parts, the worst
     # 4.5 mm deep.  Every op reported success and the kit came to rest 24 mm
@@ -241,11 +311,25 @@ def main():
         c_, s_ = np.cos(np.radians(a)), np.sin(np.radians(a))
         return np.array([[c_, -s_, 0.], [s_, c_, 0.], [0., 0., 1.]])
 
-    worst_k, pair_k = 1e9, ("", "")
+    # EVERY MOUNT ROD, not just the kit.  The kit-only version of this check
+    # passed while four struts a truss were 0.66 mm inside a thread post,
+    # for the plainest possible reason: it was only ever asked about one
+    # part of nine.  A rod's own ENDS are excluded -- they are bonded to the
+    # chord ends, and a fillet is a joint, not a collision -- so what is
+    # measured is each rod's SHAFT, out past `Payload.FILLET_R` from either
+    # bond point.  The post was 8 mm along a 40 mm strut.
+    DMAX = 0.02                                   # m, as far as MuJoCo looks
+    ft = np.zeros(6)
+    worst_k, pair_k, kind_k = 1e9, ("", ""), ""
+    # ONE ROD AT A TIME, AND PUT IT BACK.  Posed and left there, the second
+    # rod is measured against the first one already at the nose: the first
+    # run of this reported -1.50 mm between two struts, which is exactly
+    # two radii, which is two centrelines on top of each other.  Suspect
+    # the check.
+    rest = dk.qpos.copy()
     for r in gk.mount_rods:
-        if r.kind != "mcam":
-            continue
-        offer = mount.poses_for(r.axis, reversible=False)
+        dk.qpos[:] = rest
+        offer = mount.poses_for(r.axis, reversible=r.kind != "mcam")
         th, yaw = max([p for p in offer if abs(p[1]) <= Head.GRIP_YAW],
                       key=lambda p: float((geometry.rot_x(p[0]) @ r.mid)[2]))
         b = mujoco.mj_name2id(mk, mujoco.mjtObj.mjOBJ_BODY, "rod%d" % r.index)
@@ -259,22 +343,33 @@ def main():
         jc = mujoco.mj_name2id(mk, mujoco.mjtObj.mjOBJ_JOINT, "cage")
         dk.qpos[mk.jnt_qposadr[jc]] = np.radians(th)
         mujoco.mj_forward(mk, dk)
+        # the bond points in the same frame the measurement comes back in;
+        # the kit has none -- it is seated on its carrier, and the schedule
+        # lays no fillet on it
+        Rth = geometry.rot_x(th)
+        bonds = () if r.kind == "mcam" else (Rth @ r.p0 / 1000.0,
+                                             Rth @ r.p1 / 1000.0)
         mine = list(range(mk.body_geomadr[b],
                           mk.body_geomadr[b] + mk.body_geomnum[b]))
         for i in mine:
             for j2 in range(mk.ngeom):
                 if j2 in mine:
                     continue
-                e = mujoco.mj_geomDistance(mk, dk, i, j2, 0.02, None) * 1000.0
-                if e < worst_k:
-                    worst_k = e
-                    pair_k = (mujoco.mj_id2name(mk, mujoco.mjtObj.mjOBJ_GEOM, i),
-                              mujoco.mj_id2name(mk, mujoco.mjtObj.mjOBJ_GEOM, j2))
-    check("nothing of the cell is inside the nose: the head kit at the pose the plan "
-          "sends it to clears every geom in the scene",
+                e = mujoco.mj_geomDistance(mk, dk, i, j2, DMAX, ft) * 1000.0
+                if e >= worst_k or e >= DMAX * 1000.0 - 1e-9:
+                    continue          # `ft` is only written inside distmax
+                if any(np.linalg.norm(ft[:3] - bp) * 1000.0
+                       <= Payload.FILLET_R for bp in bonds):
+                    continue                      # that is the fillet
+                worst_k = e
+                kind_k = r.kind
+                pair_k = (mujoco.mj_id2name(mk, mujoco.mjtObj.mjOBJ_GEOM, i),
+                          mujoco.mj_id2name(mk, mujoco.mjtObj.mjOBJ_GEOM, j2))
+    check("nothing of the cell is inside the mount: EVERY mount rod at the pose the "
+          "plan sends it to clears every geom in the scene, its own bonded ends aside",
           worst_k >= Process.SEAT_CLEAR - 1e-6,
-          "%.2f mm at %s / %s, against a process clearance of %.2f"
-          % (worst_k, pair_k[0], pair_k[1], Process.SEAT_CLEAR))
+          "%.2f mm at %s / %s (a %s), against a process clearance of %.2f"
+          % (worst_k, pair_k[0], pair_k[1], kind_k, Process.SEAT_CLEAR))
     check("making that room is NOT free: it pushes the end racks out with it, and the "
           "chosen truss is inside the gantry's X travel with 17 mm to spare",
           x_now <= Gantry.X_TRAVEL

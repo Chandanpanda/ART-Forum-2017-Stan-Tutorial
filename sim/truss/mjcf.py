@@ -547,7 +547,11 @@ def head_body(geom, fixture, z_lo, start=None):
     """The gantry carriage: x, y, z slides carrying the ring, the
     dispenser on its stroke, the gripper on its stroke and yaw."""
     t = geom.t
-    sx, sy, sz = start if start is not None else (-Cage.POST_OFF, 0.0, z_lo + Gantry.Z_TRAVEL - 5.0)
+    # HOME IS OVER THE FIRST POST IT ANCHORS AT, wherever that is on this
+    # truss -- the fixture solves the station, so read it rather than
+    # re-typing the offset it used to be.
+    sx, sy, sz = start if start is not None else (-fixture.post_off, 0.0,
+                                                  z_lo + Gantry.Z_TRAVEL - 5.0)
     r_in, r_out = ring_r_in(), ring_r_out()
     hx, hy, hz0, hz1 = Ring.HEAD_BOX
     lo, hi = fixture.x_range()

@@ -167,6 +167,27 @@ class Fixture:
         return (Head.ring_axial_half() + self.t.band / 2.0
                 + max(Cage.PIN_T, Cage.ARM_W) / 2.0 + Process.SEAT_CLEAR)
 
+    def end_exclusion(self):
+        """Axial margin at each chord end that no pin may enter, mm.
+
+        THE CHORD ENDS ARE NOT FREE ANY MORE.  The mount's three END
+        BATTENS are laid right across them, in the plane the ends define,
+        so a pin arm at the end of a chord is a pin arm in a batten's way.
+        Measured on the built scene once every mount rod was measured
+        rather than only the kit: the last arm stood 0.75 mm from a batten
+        where the process wants 1.50, on a margin that was `Cage.PIN_T` --
+        a pin's own thickness, which is a fact about the pin and says
+        nothing about what is laid over it.
+
+        With no camera on this truss the ends carry nothing and the margin
+        falls back to the arm's half-thickness plus clearance, which is the
+        3 mm it always was.
+        """
+        m = getattr(self.g, "mount", None)
+        rb = max((r.r for r in m.rods if r.kind == "batten"), default=0.0) \
+            if m is not None else 0.0
+        return Cage.PIN_T / 2.0 + rb + Process.SEAT_CLEAR
+
     def free_spans(self, k):
         """The stretches of chord k nothing fixed may cross, merged: between
         one joint's exclusion zone and the next, and clear of the gripper's
@@ -187,11 +208,12 @@ class Fixture:
                 merged[-1] = (merged[-1][0], max(merged[-1][1], b))
             else:
                 merged.append((a, b))
-        free, lo = [], Cage.PIN_T
+        margin = self.end_exclusion()
+        free, lo = [], margin
         for a, b in merged:
             free.append((lo, a))
             lo = b
-        free.append((lo, t.length - Cage.PIN_T))
+        free.append((lo, t.length - margin))
         return [(a, b) for a, b in free if b - a >= Cage.PIN_T]
 
     def pin_xs(self, k):
@@ -282,14 +304,47 @@ class Fixture:
         return out
 
     # ------------------------------------------------------------ posts
+    @cached_property
+    def post_off(self):
+        """How far outboard of the chord ends this truss's thread posts
+        stand, mm.
+
+        SOLVED, NOT SET.  A post is a radial pin on the chord's own line and
+        the mount's struts leave that same line heading inward, so a post
+        near the end is in the struts' cone: at the 8 mm the cage was drawn
+        with, two struts an end were 0.66 mm inside a pin, and the four
+        long ones came out of the mount phase six degrees off their own
+        line with every axis reporting success.  `mount.post_station` scans
+        the window `Cage.post_off_min/max` bound for the nearest station
+        that clears the whole mount.
+
+        With no mount on this truss there is nothing to clear and the post
+        goes to the near bound -- which is what the cage was drawn with,
+        and is why the number looked right for as long as nobody put a
+        camera on it.
+        """
+        m = getattr(self.g, "mount", None)
+        if m is None:
+            return Cage.post_off_min()
+        from . import mount as _mount
+        off = _mount.post_station(self.g, m, Cage.POST_R, Cage.POST_L)
+        if off is None:
+            raise ValueError(
+                "no thread post station clears the mount on this truss: "
+                "the window is %.2f..%.2f mm past the chord ends"
+                % (Cage.post_off_min(), Cage.post_off_max()))
+        return off
+
     def _posts(self):
         t = self.t
         out = []
+        off = self.post_off
         for k in range(t.n_chords):
             up = radial(chord_phi(k))
-            for end, x in enumerate((-Cage.POST_OFF, t.length + Cage.POST_OFF)):
+            for end, x in enumerate((-off, t.length + off)):
                 c = self.g.chord_point(k, x)
-                out.append(Post(k, end, c - up * 6.0, c + up * 6.0))
+                out.append(Post(k, end, c - up * Cage.POST_L / 2.0,
+                                c + up * Cage.POST_L / 2.0))
         return out
 
     # --------------------------------------------------------- magazine
@@ -368,7 +423,8 @@ class Fixture:
     def x_range(self):
         """The ring-centre x the cell must reach, (min, max): the posts,
         and every slot with the gripper's offset from the ring plane."""
-        xs = [-Cage.POST_OFF, self.t.length + Cage.POST_OFF]
+        off = self.post_off
+        xs = [-off, self.t.length + off]
         for s in self.slots:
             xs.append(float(s.p0[0]) - Head.grip_x())
             xs.append(float(s.p1[0]) - Head.grip_x())

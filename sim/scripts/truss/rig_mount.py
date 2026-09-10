@@ -122,6 +122,21 @@ def main():
                               m.body_geomadr[b] + m.body_geomnum[b])
         mine = set(gof(b_tr))
 
+        _tr_rod = [x for x in g.mount_rods if x.index == a.trace][0]
+
+        def tilt_now():
+            """How far the rod is off its own design line, IN THE CAGE'S
+            FRAME -- which is where the error is.  Measured in the world it
+            conflates the cage's own motion with the rod's, and a rod
+            welded to a cage that is still settling reads as a rod that has
+            turned."""
+            q0, q1 = c.rod_pose(a.trace)
+            R0 = geometry.rot_x(-c.cage_truth())
+            u = R0 @ (np.asarray(q1) - np.asarray(q0))
+            u = u / np.linalg.norm(u)
+            return float(np.degrees(np.arccos(
+                min(1.0, abs(float(u @ _tr_rod.axis))))))
+
         def tr(tag, op=None):
             R0 = geometry.rot_x(-c.cage_truth())
             q0, q1 = c.rod_pose(a.trace)
@@ -146,7 +161,8 @@ def main():
     # the yaw servo a degree off its target, and a rod is laid by all four.
     at_lay = {}
     t0 = time.time()
-    seen, near = [0], [False]
+    seen, near, ticks, last_tilt = [0], [False], [0], [0.0]
+    seen_hits = {}
     for _ in ex.run():
         clk.tick()
         if strip is not None:
@@ -157,6 +173,28 @@ def main():
             _op = ex.timeline[-1][0]
             if _op.kind == "release" and "rod" in _op.args:
                 at_lay[_op.args["rod"]] = (c.cage_truth(), c.at("w"))
+        if tr is not None and near[0]:
+            ticks[0] += 1
+            # EVERY TICK, not every tenth: a contact that lasts three
+            # milliseconds is still a contact that turns a rod weighing
+            # fifty micrograms, and sampling at 5 Hz reports an empty list
+            # while it happens.
+            for k in range(d.ncon):
+                if d.contact[k].geom1 in mine or d.contact[k].geom2 in mine:
+                    key = tuple(sorted((gname(d.contact[k].geom1),
+                                        gname(d.contact[k].geom2))))
+                    seen_hits[key] = seen_hits.get(key, 0) + 1
+            if ticks[0] % 10 == 0:
+                hits = sorted({(round(d.contact[k].dist * 1000, 2),
+                                gname(d.contact[k].geom1), gname(d.contact[k].geom2))
+                               for k in range(d.ncon)
+                               if d.contact[k].geom1 in mine
+                               or d.contact[k].geom2 in mine})[:3]
+                out_of = tilt_now()
+                if abs(out_of - last_tilt[0]) > 0.3 or hits:
+                    print("      %7.2f   off its own line %5.2f deg   %s"
+                          % (d.time, out_of, hits))
+                    last_tilt[0] = out_of
         if tr is not None and len(ex.timeline) > seen[0]:
             seen[0] = len(ex.timeline)
             op = ex.timeline[-1][0]
@@ -169,6 +207,16 @@ def main():
                 near[0] = near[0] and c.kept(a.trace) == 0
     if strip is not None:
         strip.maybe(d.time + 1e9, d)
+    if tr is not None:
+        # SAY "NOTHING", NOT NOTHING.  Printed only when it found something,
+        # this is a line that cannot report a clean carry -- and a clean
+        # carry is the result.  It found `post0 / rod13_g` for four ticks
+        # when a strut was 1.16 mm inside a thread post; it has to be able
+        # to say that it now finds none, over how many ticks it looked.
+        print("   what touched rod %d over %d ticks of carry: %s"
+              % (a.trace, ticks[0], "nothing" if not seen_hits else ""))
+        for k, n in sorted(seen_hits.items(), key=lambda kv: -kv[1]):
+            print("      %-34s %d" % ("%s / %s" % k, n))
     print("ran %d of %d ops in %.0f s wall, %.1f min simulated; %d warnings"
           % (len(ex.timeline), len(P.ops), time.time() - t0, d.time / 60.0,
              len(msgs)))

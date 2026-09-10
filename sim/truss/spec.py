@@ -1440,9 +1440,9 @@ class Cage:
     # the ring's axial half-extent plus clearance, asserted in CHECKS
     # PLATE FACE BEYOND THE CHORD ENDS, AND THE CAMERA IS WHAT SETS IT.
     # This was 20 mm, which is what the winding head parked at a thread
-    # post needs (POST_OFF + ring_axial_half + SEAT_CLEAR = 14.5).  But the
-    # camera mount goes on INSIDE the cage -- its rods are laid by the same
-    # gripper and bonded by the same dispenser, and the cage is what
+    # post needs (post_off_min + ring_axial_half + SEAT_CLEAR = 14.5).
+    # But the camera mount goes on INSIDE the cage -- its rods are laid by
+    # the same gripper and bonded by the same dispenser, and the cage is what
     # presents their angles -- so the module has to fit in there too, and
     # at 20 mm it lands in the end plate: the solved standoff puts a Camera
     # Module 3's outer face 33.9 mm past the chord ends of the chosen truss
@@ -1480,7 +1480,15 @@ class Cage:
     # plate's face like anything else.  x_reach is then 1397 of 1400.
     END_FREE    = 39.0
     POST_R      = 1.5          # thread anchor post
-    POST_OFF    = 8.0          # post from the chord end, axially
+    POST_L      = 12.0         # the pin's length, straddling the chord's line
+    # WHERE THE POST STANDS IS NOT HERE.  It is a station, and the truss's
+    # own camera mount is what decides it: `mount.post_station` scans the
+    # window these two bound and `Fixture.post_off` is what the cell reads.
+    # This was POST_OFF = 8.0, and 8.0 is exactly what `post_off_min`
+    # returns -- the number was right about the ring and had never been
+    # asked about the mount, which wants 11.15 on the chosen truss and
+    # 13.70 at the thickest diagonal in the rack.  Two struts an end were
+    # 0.66 mm inside a pin.
     CRADLE_L    = 6.0          # along the diagonal
     CRADLE_T    = 1.5          # wall
     CRADLE_ANGLE = 90.0
@@ -1494,6 +1502,23 @@ class Cage:
     # that leaves less than SPINE_R_MIN cannot be wound by this ring.
     SPINE_R_MAX = 8.0
     SPINE_R_MIN = 3.0
+
+    @staticmethod
+    def post_off_min():
+        """Nearest a thread post can stand to the chord end, mm.
+
+        The head hooks the strand by running a rectangle round the post
+        (approach.post_loop), and that rectangle's half-width in x is what
+        it takes for the ring's PLATE to pass fully beyond the pin --
+        ring_axial_half + POST_R + clearance.  Any nearer and the far leg
+        of the loop is inside the chord end."""
+        return Head.ring_axial_half() + Cage.POST_R + Process.SEAT_CLEAR
+
+    @staticmethod
+    def post_off_max():
+        """Furthest, mm: the ring PARKED at the post still clears the end
+        plate.  The same expression CHECKS used to hold POST_OFF to."""
+        return Cage.END_FREE - Head.ring_axial_half() - Process.SEAT_CLEAR
 
     @staticmethod
     def spine_r(R):
@@ -2218,8 +2243,12 @@ CHECKS = [
      Cage.NOTCH_ANGLE < 120.0),
     ("pins pitch at 50 mm, the brief's straightness rule",
      abs(Cage.PIN_PITCH - 50.0) < 1e-9),
-    ("a ring parked at a thread post clears the end plate",
-     Cage.END_FREE >= Cage.POST_OFF + Head.ring_axial_half() + Process.SEAT_CLEAR),
+    # A POST HAS SOMEWHERE TO STAND AT ALL: the ring's loop needs it clear
+    # of the chord end and the ring parked at it needs to clear the plate,
+    # and those two bounds have to leave a window.  Which station in the
+    # window is `mount.post_station`'s answer, and it depends on the mount.
+    ("a thread post has a window to stand in between the chord end and the plate",
+     Cage.post_off_min() <= Cage.post_off_max()),
     ("the camera resolves a chord's edge to a hundredth of a millimetre",
      Vision.mm_per_px(Vision.range_nominal()) * Vision.EDGE_SIGMA_PX < 0.02),
     ("...so the bracket, not the sensor, is the budget",

@@ -133,7 +133,9 @@ def plan(geom, fixture, stations, interleave=True, start=None):
     t = geom.t
     P = Plan()
     cruise = _approach.index_lift(geom, fixture)
-    hs = HeadState(*(start or (-Cage.POST_OFF, 0.0, cruise)), theta=0.0)
+    # the same home the scene puts the carriage at: over the first post it
+    # anchors at, at whatever station this truss's mount leaves for it
+    hs = HeadState(*(start or (-fixture.post_off, 0.0, cruise)), theta=0.0)
     obstacles = {}
 
     def obs_at(theta):

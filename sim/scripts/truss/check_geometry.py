@@ -167,6 +167,42 @@ def main():
     other = Truss(length=600.0, side=70.0, alpha=40.0, d_chord=2.0, d_diag=1.5,
                   name="other")
     truss_checks(other, "other")
+    # ---------------------------------------------- THE RING'S SOLVERS
+    # These are cached because approach.head_distance calls them in its
+    # innermost loop (uncached, check_approach went from 4 minutes to over
+    # 50).  A cache that ignores its inputs is worse than a slow solver, so
+    # this is the check that it does not.
+    import time as _t
+    t0 = _t.time()
+    for _ in range(50000):
+        Ring.mesh()
+        Ring.pinion_az()
+    check("the ring's mesh and pinion solvers are cheap enough to call from an "
+          "inner loop", _t.time() - t0 < 1.0, "50k of each in %.3f s" % (_t.time() - t0))
+    m0, az0, mouth0 = Ring.mesh(), Ring.pinion_az(), Ring.race_mouth()
+    keep = (Ring.RACE_CLEAR, Ring.OD, Ring.GAP)
+    try:
+        Ring.RACE_CLEAR = keep[0] + 0.05
+        moved_mouth = abs(Ring.race_mouth() - mouth0) > 1e-6
+        Ring.RACE_CLEAR = keep[0]
+        Ring.OD = keep[1] + 8.0
+        m1 = Ring.mesh()
+        moved_mesh = (m1.n_ring, m1.m) != (m0.n_ring, m0.m)
+        Ring.OD = keep[1]
+        # 45 rather than any old number: the gap must still be a whole
+        # number of teeth or mesh() rightly refuses (90 degrees has no
+        # admissible module at all, which is itself worth knowing)
+        Ring.GAP = 45.0
+        moved_az = abs(Ring.pinion_az()[0] - az0[0]) > 1e-6
+    finally:
+        Ring.RACE_CLEAR, Ring.OD, Ring.GAP = keep
+    check("...and the cache is keyed on what they read: a different clearance, rim "
+          "or gap re-solves", moved_mouth and moved_mesh and moved_az,
+          "mouth %s, mesh %s, pinions %s" % (moved_mouth, moved_mesh, moved_az))
+    check("...and restoring the spec restores the answer",
+          Ring.mesh() == m0 and Ring.pinion_az() == az0
+          and abs(Ring.race_mouth() - mouth0) < 1e-12)
+
     # motion profiles
     from truss import motion
     for d, v, a in ((10.0, 40.0, 300.0), (500.0, 60.0, 400.0), (0.5, 40.0, 300.0)):

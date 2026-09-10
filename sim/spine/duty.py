@@ -16,7 +16,13 @@ from dataclasses import dataclass, field
 @dataclass(frozen=True)
 class Duty:
     name:        str = "quadrotor"
-    tip_mass_g:  float = 50.0      # one camera head
+    tip_mass_g:  float = 4.0       # one camera head: a 3 g module plus a
+                                   # 1 g allowance for the flex's
+                                   # termination.  It was 50 g -- a
+                                   # placeholder, and the number every
+                                   # other number in this package is most
+                                   # sensitive to.  NOT the mount: the
+                                   # mount's rods are members in build.
     manoeuvre_g: float = 3.0       # sustained, any direction
     g:           float = 9.81
     range_m:     float = 100.0     # the range the accuracy claim is made at

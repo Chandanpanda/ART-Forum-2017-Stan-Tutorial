@@ -18,6 +18,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 FAST = [
     ("check_geometry",  "the spec's assertions and the truss re-derived from it"),
     ("check_structure", "the beam model against the brief; the optimiser's answer"),
+    ("check_mount",     "whether this cell can put a camera on what it just built"),
+    ("check_collapse",  "whether the fixture can get back out of the truss"),
     ("check_approach",  "a station for every joint, with a measured margin"),
     ("check_schedule",  "the plan: every rod, every joint, inside the clock"),
     ("check_model",     "the built MuJoCo cell against the parameters"),
@@ -27,6 +29,7 @@ FAST = [
     ("check_cycle",     "a truss made end to end, judged by the inspector"),
 ]
 SLOW = [
+    ("check_drive",     "the ring's drive: a free ring, real teeth, one belt"),
     ("check_ring",      "one joint wound with a real thread"),
     ("check_vision",    "the chord found in rendered frames"),
 ]

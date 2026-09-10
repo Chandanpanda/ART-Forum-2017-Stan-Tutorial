@@ -25,6 +25,8 @@ DECISIONS TAKEN HERE, WITH THE REASON:
 """
 from dataclasses import dataclass, field
 
+from math import atan2, degrees
+
 import numpy as np
 
 from .spec import (Gantry, Ring, Head, Gripper, Cage, Dispenser, Cutter, Vision,
@@ -104,7 +106,7 @@ def look_x(t, joint):
     Measured (check_vision): seen through the plate's gap from the far
     side, one diagonal of two is lost and the joint's x comes back up to
     2 mm off; on the camera's side both are in view and it is within
-    LOOK_SIGMA.  On a run toward the camera's side this is the band start
+    look_sigma.  On a run toward the camera's side this is the band start
     and costs nothing; on the return run it is a band's width away."""
     side = 1.0 if Vision.cam_pos()[0] >= 0.0 else -1.0
     return float(joint.x) - side * t.band / 2.0
@@ -260,8 +262,111 @@ def plan(geom, fixture, stations, interleave=True, start=None):
             index("dose", theta)
             for j, a in zip(geom.joints_on(k), aps):
                 dose(P, hs, move, geom, j, a, "dose")
+    # ------------------------------------------------------------ mount
+    # THE CAMERA GOES ON IN THE CAGE.  Its rods are laid by the same
+    # gripper at cage angles the same worm indexes, and its bonds are laid
+    # by the same dispenser -- which is why the mount was solved for poses
+    # the machine already has rather than for the tidiest geometry.
+    if geom.mount_rods:
+        mount_phase(P, hs, move, index, yaw_to, geom, fixture, cruise)
     move("done", z=cruise)
     return P
+
+
+def theta_up(p):
+    """The cage angle that brings a point on the work to the top, degrees.
+
+    The gantry reaches down; the cage is what presents a face to it.  Every
+    other phase already knows this -- `theta_for_loading` for a rod, the
+    approach solver's station for a joint -- and the mount's fillets are no
+    different."""
+    return degrees(atan2(float(p[1]), float(p[2]))) % 360.0
+
+
+def mount_phase(P, hs, move, index, yaw_to, geom, fixture, cruise):
+    """Both noses: the camera on its carrier, thirteen rods an end, a
+    fillet at every rod end, and a wound joint at every grid crossing.
+
+    ORDER IS MECHANICAL, not arbitrary.  The battens close the chord
+    triangle first, because everything else is measured from it.  The
+    CAMERA goes on next -- the grid is laid ON its collar, so the collar
+    has to be there.  Then the grid, then the struts, which land where two
+    grid rods already cross.  A strut laid before its crossing exists would
+    be a rod bonded to air.
+    """
+    from . import mount as _mount
+    order = {"mbatten": 0, "mcam": 1, "mgrid": 2, "mstrut": 3}
+    gx = Head.grip_x()
+    for end in (0, 1):
+        rods = sorted([r for r in geom.mount_rods if r.chord == end],
+                      key=lambda r: (order[r.kind], r.index))
+        for r in rods:
+            # EITHER CAGE ANGLE LAYS THE ROD; only one of them puts it
+            # where the gantry can reach.  rot_x(theta+180) with the yaw
+            # negated is the same line in the cage's frame, but the rod's
+            # POSITION flips with it, and the three end battens came out
+            # 4.7 mm below the z axis's own floor at the first solution.
+            # Take the one that holds the rod higher.
+            poses = _mount.poses_for(r.axis)
+            if not poses:
+                raise ValueError("mount rod %d has no cage pose" % r.index)
+            theta, yaw = max(poses, key=lambda p: float((rot_x(p[0]) @ r.mid)[2]))
+            index("mount", theta)
+            s = fixture.slot_of(r.index)
+            pick = (s.p0 + s.p1) / 2.0
+            place = rot_x(theta) @ r.mid
+            move("mount", x=float(pick[0]) - gx, y=float(pick[1]), z=cruise)
+            yaw_to("mount", 90.0)
+            move("mount", z=grip_z(float(pick[2])))
+            P.add("extend", stroke_time(Head.GRIP_STROKE), "mount", tool="grip")
+            P.add("grip", Gripper.JAW_CLOSE_S, "mount", rod=r.index)
+            P.add("retract", stroke_time(Head.GRIP_STROKE), "mount", tool="grip")
+            move("mount", z=cruise)
+            move("mount", x=float(place[0]) - gx, y=float(place[1]))
+            yaw_to("mount", yaw)
+            move("mount", z=grip_z(float(place[2])) + Process.DROP_IN)
+            P.add("extend", stroke_time(Head.GRIP_STROKE), "mount", tool="grip")
+            # TACKED, NOT DROPPED.  A truss rod is released a millimetre
+            # above a V and the V takes it.  THE MOUNT HAS NO V's -- its
+            # rods are laid onto the collar and onto each other -- so the
+            # keeper has to take each one while the jaws are still shut.
+            # On the machine that is a tack of adhesive before the gripper
+            # lets go; released first and welded after, every mount rod
+            # fell on the floor (measured, in the assembly run).
+            P.add("release", Gripper.JAW_CLOSE_S + 0.4, "mount", rod=r.index,
+                  pose=tuple(float(v) for v in place), yaw=float(yaw),
+                  tack=True)
+            P.add("retract", stroke_time(Head.GRIP_STROKE), "mount", tool="grip")
+            move("mount", z=cruise)
+        # ---- the bonds.  EVERY MOUNT JOINT IS AN EPOXY FILLET: the ring
+        # cannot reach past the last truss joint, and does not need to --
+        # a fillet on a 1.5 mm rod carries a kilonewton against a service
+        # load under half a newton, and comes out stiffer than the strut.
+        # EVERY BOND POINT COMES UP TO THE NOZZLE.  The mount's rods sit all
+        # round the cage; the dispenser only reaches over the top, and the
+        # first version sent it to cage coordinates at theta zero -- which
+        # put it under the work half the time, stalled the z axis against
+        # the fixture, and shook the truss off its own V's.  The cage turns
+        # for a fillet exactly as it turns for a rod.  Sorted by angle, so
+        # the worm indexes once per group rather than once per fillet.
+        pts = []
+        for r in rods:
+            if r.kind == "mcam":
+                continue
+            for q in (r.p0, r.p1):
+                q = np.asarray(q, float)
+                pts.append((theta_up(q), r.index, q))
+        for th, ri, q in sorted(pts, key=lambda t: (round(t[0], 3), t[1])):
+            index("bond", th)
+            w = rot_x(th) @ q                    # where it is once turned up
+            move("bond", x=float(w[0]) - Head.disp_x(), y=float(w[1]),
+                 z=float(w[2]) + Head.DISP_STROKE + Process.LIFT_CLEAR)
+            P.add("extend", stroke_time(Head.DISP_STROKE), "bond", tool="disp",
+                  mm=float(Head.DISP_STROKE))
+            P.add("bond", Dispenser.DOSE_S + Process.DOSE_SETTLE_S, "bond",
+                  rod=ri, at=tuple(float(v) for v in w))
+            P.add("retract", stroke_time(Head.DISP_STROKE), "bond", tool="disp")
+        move("bond", z=cruise)
 
 
 def dose(P, hs, move, geom, j, a, phase):

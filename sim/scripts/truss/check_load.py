@@ -19,12 +19,15 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from truss.glenv import headless        # noqa: E402  (before mujoco)
 headless()
+from math import cos, sin, radians
+
 import numpy as np
 import mujoco
 
 from truss import structure, geometry, fixture, mjcf, cell, inspector, schedule, approach
-from truss.spec import Head, Gripper, Process, Cage
-from truss.geometry import TrussGeometry, theta_chord_up, theta_face_up
+from truss.spec import (Head, Gripper, Process, Cage, Gantry,
+                        stepper_scale_sigma)
+from truss.geometry import TrussGeometry, theta_chord_up, theta_face_up, rot_x
 
 VERBOSE = "-v" in sys.argv
 RESULTS = []
@@ -50,6 +53,24 @@ def fresh(t, stage="empty"):
 def ticks(clk, n):
     for _ in range(n):
         clk.tick()
+
+
+def indexed(c, clk, theta, cap=2000):
+    """Index the cage and WAIT FOR IT, rather than for a number of ticks.
+
+    A hardcoded 300 ticks was 6 s, and the worm turns 60 deg/s, so it
+    covered any index up to 360 degrees -- until the 300 mm truss's design
+    moved and its first diagonal wanted a 300 degree index at a cage that
+    had further to go than the wait allowed.  The rod was then placed 42 mm
+    from its seat and the check read it as a loader that could not seat a
+    rod.  Ask the axis, do not time it.
+    """
+    c.index(theta)
+    n = 0
+    while not c.indexed() and n < cap:
+        clk.tick()
+        n += 1
+    return c.indexed()
 
 
 def goto_settle(c, clk, n=120, **axes):
@@ -78,8 +99,7 @@ def place(c, clk, fx, rod, dx=0.0, dy=0.0, dz=None, settle=1.0):
     and released dz above the seat, and let it settle."""
     dz = Process.DROP_IN if dz is None else dz
     p, yaw, th = fx.place_pose(rod)
-    c.index(th)
-    ticks(clk, 300)
+    indexed(c, clk, th)
     goto_settle(c, clk, 200, x=p[0] - Head.grip_x() + dx, y=p[1] + dy)
     if abs(((yaw - c.at("w")) + 180.0) % 360.0 - 180.0) > 1e-6:
         # the plan's order: down to the solved height, gripper out, turn
@@ -139,15 +159,67 @@ def main():
           "seats to %.1f, misses from %s" % (max(seated) if seated else -1,
                                              min(missed) if missed else "never"))
     # ------------------------------------------------ a diagonal
+    # FROM ITS RACK, which is the only way the machine ever fetches one.
+    # This was written as "take a seated diagonal out of the fixture and
+    # put it back", and the extraction is a move the plan does not make:
+    # the gripper retracts at the rod's PLACING yaw, and a rod lying at
+    # alpha to the axis while retracted crosses the ring's rim (the law
+    # approach.yaw_height exists for).  The rod came up 9.7 degrees out of
+    # true and the check read it as a fixture that could not seat a
+    # diagonal.  The next check measures that instead of tripping over it.
+    g, fx, c, clk = fresh(t)
+    r = g.diags[0]
+    held = pick(c, clk, fx, r)
+    check("a diagonal is picked from its rack", held)
+    e = place(c, clk, fx, r)
+    check("...and released over its cradles it seats within %.2f mm" % inspector.SEAT_TOL,
+          e < inspector.SEAT_TOL, "%.3f mm" % e)
+    # ------------------------- the diagonal's capture range, measured
+    # NOT A NUMBER PICKED TO PASS.  This read "released 0.4 mm off in x
+    # and y", which is 2.4 times the arrival error the machine can
+    # actually produce and outside the cradle's mouth, so it failed and
+    # said the fixture could not seat a diagonal.  What the check is for
+    # is whether the CRADLE catches what the GANTRY can miss by, so both
+    # sides are measured: the arrival error from the axis's repeatability
+    # and its screw growth, the capture by walking the release ACROSS the
+    # rod -- the binding direction; along it the 6 mm block has slack --
+    # until it no longer seats.
+    arrive = Gantry.REPEAT + stepper_scale_sigma() * t.length
+    nx, ny = -sin(radians(fx.place_pose(r)[1])), cos(radians(fx.place_pose(r)[1]))
+    drows, off = [], arrive
+    while off <= 64.0 * arrive:          # doubling, and stop at the first miss
+        g, fx, c, clk = fresh(t)
+        r = g.diags[0]
+        pick(c, clk, fx, r)
+        e = place(c, clk, fx, r, dx=off * nx, dy=off * ny)
+        drows.append((off, e))
+        if e >= inspector.SEAT_TOL:
+            break
+        off *= 2.0
+    dseat = [o for o, e in drows if e < inspector.SEAT_TOL]
+    check("a diagonal arriving anywhere the gantry can actually leave it -- its "
+          "repeatability plus the screw's growth over the truss -- seats within "
+          "%.2f mm" % inspector.SEAT_TOL,
+          bool(dseat) and max(dseat) >= arrive - 1e-9,
+          "arrival %.3f mm; %s" % (arrive,
+                                   " ".join("%.2f->%.3f" % (o, e) for o, e in drows)))
+    check("...and the cradle's capture is finite, so this is a measurement and not "
+          "an assumption -- and it is many times what the machine can miss by",
+          len(dseat) < len(drows) and max(dseat) > 8.0 * arrive,
+          "seats to %.2f mm (%.0fx the %.3f mm arrival), misses from %.2f"
+          % (max(dseat) if dseat else -1.0,
+             (max(dseat) / arrive) if dseat else 0.0, arrive,
+             min((o for o, e in drows if e >= inspector.SEAT_TOL), default=-1.0)))
+    # ------------------------------- and WHY the plan turns when extended
+    # approach.yaw_height's premise, measured: a rod held at a placing yaw
+    # and retracted is drawn up beside the ring's plane, where a rod at
+    # alpha to the axis crosses the rim.  A rod along the axis threads the
+    # bore and does not.
     g, fx, c, clk = fresh(t, stage="loaded")
-    # free the chords' keepers?  No: chords stay welded; a diagonal is
-    # placed into its two cradles against them.  Take diagonal 0 out of
-    # the fixture first: unkeep it, lift it into the gripper, then re-place
     r = g.diags[0]
     p, yaw, th = fx.place_pose(r)
-    c.index(th)
-    ticks(clk, 300)
-    c.release_keeper(r.index)          # free it only once its face is up
+    indexed(c, clk, th)
+    c.release_keeper(r.index)
     ticks(clk, 30)
     goto_settle(c, clk, 200, x=p[0] - Head.grip_x(), y=p[1], z=schedule.grip_z(p[2]) + 30.0)
     goto_settle(c, clk, 40, w=yaw)
@@ -156,23 +228,36 @@ def main():
     c.close()
     ticks(clk, 40)
     check("a seated diagonal is picked out of its cradles", c.holding())
+    goto_settle(c, clk, 120, z=schedule.grip_z(p[2]) + 30.0)
+    Rm = rot_x(c.cage_truth())
+    a_, b_ = (Rm @ q for q in g.diag_body_ends(r))
+    un = (b_ - a_) / np.linalg.norm(b_ - a_)
+
+    def off_axis():
+        q0, q1 = (np.array(x) for x in c.rod_pose(r.index))
+        u = (q1 - q0) / np.linalg.norm(q1 - q0)
+        u = u if u @ un >= 0 else -u
+        return float(np.degrees(np.arccos(np.clip(u @ un, -1.0, 1.0))))
+
+    clear = off_axis()
     goto_settle(c, clk, 80, g=0.0)
-    goto_settle(c, clk, 60, z=schedule.grip_z(p[2]) + 30.0)
-    e = place(c, clk, fx, r, dx=0.4, dy=-0.4)
-    check("...and put back 0.4 mm off in x and y it seats within %.2f mm" % inspector.SEAT_TOL,
-          e < inspector.SEAT_TOL, "%.3f mm" % e)
+    fouled = off_axis()
+    check("...and lifted clear with the gripper OUT it carries true; RETRACTED at that "
+          "yaw the ring's rim pushes it out of the jaws, which is why the plan turns "
+          "only when extended (approach.yaw_height)",
+          clear < 0.5 and fouled > 5.0,
+          "%.2f deg extended, %.2f deg retracted" % (clear, fouled))
     # ------------------------------------------------ retention
     g, fx, c, clk = fresh(t, stage="loaded")
     r = g.diags[1]
     th = theta_face_up(r.face)
-    c.index(th)
-    ticks(clk, 400)
+    indexed(c, clk, th)
     c.release_keeper(r.index)
     ticks(clk, 100)
     e_up = inspector.seat_error(g, r, *c.rod_pose(r.index), theta=c.cage_truth())
     check("a free diagonal, face up, rests in its cradles", e_up < 0.2, "%.3f mm" % e_up)
-    c.index(th + 180.0)
-    ticks(clk, 700)
+    indexed(c, clk, th + 180.0)
+    ticks(clk, 100)         # ...and let it fall out, which is the point
     e_down = inspector.seat_error(g, r, *c.rod_pose(r.index), theta=c.cage_truth())
     check("...and turned face DOWN with no keeper it leaves them -- the keeper is a "
           "requirement, not a nicety (Cage.KEEPER)", e_down > 5.0, "%.1f mm off" % e_down)

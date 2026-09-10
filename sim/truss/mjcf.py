@@ -23,8 +23,9 @@ from math import pi, cos, sin, radians, degrees, atan2, sqrt
 
 import numpy as np
 
-from .spec import (mm, Truss, Ring, Gantry, Head, Gripper, Cage, Magazine,
-                   Dispenser, Vision, ring_r_in, ring_r_out)
+from .spec import (mm, Truss, Ring, Gantry, Head, Gripper, Cage, Magazine, Stock,
+                   Dispenser, Vision, ring_r_in, ring_r_out, rail_r_out)
+from .geometry import radial
 from . import band as _band
 
 C_ROD, C_CAGE, C_HEAD = "0.12 0.12 0.13 1", "0.55 0.58 0.62 1", "0.85 0.45 0.15 1"
@@ -140,22 +141,67 @@ def preamble(timestep):
 
 
 # ------------------------------------------------------------------ cage
-def cage_body(geom, fixture):
-    """The rotating fixture as one body on a hinge about x."""
+def cage_body(geom, fixture, mount=None):
+    """The rotating fixture as one body on a hinge about x.  With `mount`,
+    the finished nose rides on it too -- by then the truss is cured and the
+    whole assembly turns together."""
     t = geom.t
     out = ['<body name="cage" pos="0 0 0">',
            '  <joint name="cage" type="hinge" axis="1 0 0" damping="0.05" '
            'armature="1e-5"/>']
-    x0, x1 = -(Cage.END_FREE + Cage.END_PLATE_T), t.length + Cage.END_FREE + Cage.END_PLATE_T
-    out.append("  " + cylinder("spine", (x0, 0, 0), (x1, 0, 0), fixture.spine_r(), C_CAGE,
-                               CAGE, ROD | HEAD_B, mass=80.0))
+    ef = fixture.end_free()
+    x0, x1 = -(ef + Cage.END_PLATE_T), t.length + ef + Cage.END_PLATE_T
+    # THE BACKBONE IS STEPPED.  Over the nose at each end it necks down to
+    # Cage.nose_spine_r(): the camera is mounted on this same axis, and at
+    # full size the tube runs straight through it.
+    nr = Cage.nose_spine_r()
+    out.append("  " + cylinder("spine", (0.0, 0, 0), (t.length, 0, 0),
+                               fixture.spine_r(), C_CAGE, CAGE, ROD | HEAD_B, mass=80.0))
+    out.append("  " + cylinder("spine_n0", (x0, 0, 0), (0.0, 0, 0), nr, C_CAGE,
+                               CAGE, ROD | HEAD_B, mass=4.0))
+    out.append("  " + cylinder("spine_n1", (t.length, 0, 0), (x1, 0, 0), nr, C_CAGE,
+                               CAGE, ROD | HEAD_B, mass=4.0))
     plate_r = fixture.plate_r()
-    for tag, xa in (("p0", x0), ("p1", t.length + Cage.END_FREE)):
+    for tag, xa in (("p0", x0), ("p1", t.length + ef)):
         out.append("  " + cylinder("plate_%s" % tag, (xa, 0, 0), (xa + Cage.END_PLATE_T, 0, 0),
                                    plate_r, C_CAGE, CAGE, ROD | HEAD_B, mass=40.0))
-    # pins: an arm from the spine out to the notch, then the V
+    # THE COLLAPSING MANDREL.  Six torsion shafts on the spine's surface,
+    # parallelogram arms off them, segmented rails on the arms, one
+    # over-centre brace per shaft.  Drawn erect and locked, which is how it
+    # spends the whole build; collapsing it is a manual step afterwards.
+    col = fixture.collapse
+    sx0, sx1 = x0 + Cage.END_PLATE_T, t.length + ef
+    for sh, (kind, kk, phi) in enumerate(col.shafts):
+        up = radial(phi)
+        a = np.array([sx0, 0.0, 0.0]) + up * col.shaft_r()
+        b = np.array([sx1, 0.0, 0.0]) + up * col.shaft_r()
+        out.append("  " + cylinder("shaft%d" % sh, a, b, Cage.PIVOT_D / 2.0,
+                                   C_CAGE, CAGE, ROD | HEAD_B, mass=6.0))
+    for i, (kind, sh, phi, r, (xa, xb)) in enumerate(col.rails):
+        up = radial(phi)
+        a = np.array([xa, 0.0, 0.0]) + up * r
+        b = np.array([xb, 0.0, 0.0]) + up * r
+        out.append("  " + box("rail%d" % i, (a + b) / 2.0,
+                              (float(np.linalg.norm(b - a)) / 2.0,
+                               Cage.ARM_W / 2.0, col.rail_h() / 2.0),
+                              np.array([1.0, 0.0, 0.0]), np.cross(up, np.array([1.0, 0, 0])),
+                              C_CAGE, CAGE, ROD | HEAD_B, mass=2.0))
+    for i, a in enumerate(col.arms):
+        out.append("  " + box("marm%d" % i, (a.base + a.tip) / 2.0,
+                              (a.length / 2.0, Cage.LINK_W / 2.0, Cage.LINK_T / 2.0),
+                              a.up, np.cross(np.array([1.0, 0, 0]), a.up),
+                              C_CAGE, CAGE, ROD | HEAD_B, mass=1.0))
+    for b in col.braces:
+        out.append("  " + capsule("brace%da" % b.shaft, b.anchor, b.knee,
+                                  Cage.LINK_T / 2.0, C_HEAD, CAGE, ROD | HEAD_B))
+        out.append("  " + capsule("brace%db" % b.shaft, b.knee, b.attach,
+                                  Cage.LINK_T / 2.0, C_HEAD, CAGE, ROD | HEAD_B))
+    # the release rod, down the spine's bore and out past the end plate
+    out.append("  " + cylinder("draw", (x0 - col.draw_stroke(), 0, 0), (x1, 0, 0),
+                               Cage.DRAW_D / 2.0, C_HEAD, CAGE, ROD | HEAD_B, mass=20.0))
+    # pins: a post from the rail out to the notch, then the V
     for i, p in enumerate(fixture.pins):
-        root = np.array([p.x, 0.0, 0.0]) + p.up * (fixture.spine_r() - 1.0)
+        root = np.array([p.x, 0.0, 0.0]) + p.up * col.rail_r("chord", p.chord)
         arm_c = (root + p.apex) / 2.0
         L = float(np.linalg.norm(p.apex - root))
         out.append("  " + box("arm%d" % i, arm_c, (L / 2.0, Cage.ARM_W / 2.0, Cage.PIN_T / 2.0),
@@ -169,9 +215,10 @@ def cage_body(geom, fixture):
         out += ["  " + s for s in v_flanks("cradle%d" % i, c.apex, c.axis, c.up,
                                            Cage.CRADLE_L, Cage.NOTCH_DEPTH * 0.8, Cage.CRADLE_T,
                                            Cage.CRADLE_ANGLE / 2.0, C_CAGE, CAGE, ROD | HEAD_B)]
-        # a stem back to the spine's neighbourhood so the cradle is held
+        # a stem down onto the face rail, which is what carries it
         stem0 = c.apex - c.up * 2.0
-        stem1 = c.apex - c.up * 14.0
+        stem1 = c.apex - c.up * max(3.0, float(np.linalg.norm(c.apex[1:]))
+                                    - col.rail_r("face", 0))
         out.append("  " + capsule("cstem%d" % i, stem0, stem1, 1.5, C_CAGE, CAGE, ROD | HEAD_B))
     for i, q in enumerate(fixture.posts):
         out.append("  " + cylinder("post%d" % i, q.p0, q.p1, Cage.POST_R, C_CAGE, CAGE,
@@ -184,6 +231,8 @@ def cage_body(geom, fixture):
                    'rgba="%s" contype="0" conaffinity="0" mass="0"/>'
                    % (j.index, _v(c - np.array([0.05, 0, 0])), _v(c + np.array([0.05, 0, 0])),
                       mm(r), C_BAND))
+    if mount is not None:
+        out += mount_geoms(geom, mount)
     out.append("</body>")
     return out
 
@@ -192,7 +241,45 @@ def cage_body(geom, fixture):
 def rod_body(geom, rod, p0, p1):
     """A free rod at world endpoints p0, p1 (its centreline)."""
     t = geom.t
-    if rod.kind == "chord":
+    if rod.kind == "mcam":
+        # THE CAMERA AND ITS COLLAR, as one part on a carrier boss.  Drawn
+        # where the boss is, so the loader picks it up exactly where the
+        # jaws will be: everything else about the module hangs off that.
+        from .spec import Payload, Bracket, Carrier
+        c = (p0 + p1) / 2.0
+        look = -(p1 - p0) / float(np.linalg.norm(p1 - p0))
+        xh = np.array([1.0, 0.0, 0.0])
+        up = np.cross(look, xh)
+        if np.linalg.norm(up) < 1e-9:
+            up = np.array([0.0, 0.0, 1.0])
+        up = up / np.linalg.norm(up)
+        base = p0 + look * (Payload.BOX[1] / 2.0)      # the module's centre
+        gs = [cylinder("rod%d_g" % rod.index, p0 - c, p1 - c, rod.r,
+                       C_ALU, ROD, ROD | CAGE | HEAD_B | DROP,
+                       mass=Carrier.MASS, extra=' class="rod"'),
+              box("rod%d_b" % rod.index, base - c,
+                  (Payload.BOX[0] / 2.0, Payload.BOX[1] / 2.0, Payload.BOX[2] / 2.0),
+                  xh, look, C_CAM, ROD, ROD | CAGE | HEAD_B | DROP,
+                  mass=Payload.MASS),
+              box("rod%d_p" % rod.index,
+                  base - c + look * (0.5 * sum(Bracket.seat_l())),
+                  (Bracket.plate_half(None, 2.0 * rod.r * 0.0 + 1.5)[0],
+                   Bracket.SHEET / 2.0,
+                   Bracket.plate_half(None, 1.5)[1]),
+                  xh, look, C_ALU, ROD, ROD | CAGE | HEAD_B | DROP,
+                  mass=Bracket.mass())]
+        return ('<body name="rod%d" pos="%s"><freejoint name="rod%d_f"/>%s</body>'
+                % (rod.index, _v(c), rod.index, "".join(gs)))
+    if rod.kind.startswith("m"):
+        # A MOUNT ROD.  Its mass is its own: the truss's per-rod averages
+        # are for chords and diagonals, and a 30 mm strut charged as one of
+        # twenty-four diagonals weighs three times what it is.
+        L = float(np.linalg.norm(p1 - p0))
+        g = cylinder("rod%d_g" % rod.index, p0 - (p0 + p1) / 2.0, p1 - (p0 + p1) / 2.0,
+                     rod.r, C_ROD, ROD, ROD | CAGE | HEAD_B | DROP,
+                     mass=Stock.rho_lin(2.0 * rod.r) * L / 1000.0,
+                     extra=' class="rod"')
+    elif rod.kind == "chord":
         g = capsule("rod%d_g" % rod.index, p0 - (p0 + p1) / 2.0, p1 - (p0 + p1) / 2.0,
                     rod.r, C_ROD, ROD, ROD | CAGE | HEAD_B | DROP,
                     mass=t.mass_chords / t.n_chords, cls=' class="rod"')
@@ -207,7 +294,7 @@ def rod_body(geom, rod, p0, p1):
 
 def rods_in_racks(geom, fixture):
     out = []
-    for rod in geom.rods:
+    for rod in geom.all_rods:
         s = fixture.slot_of(rod.index)
         out.append(rod_body(geom, rod, s.p0, s.p1))
     return out
@@ -215,9 +302,58 @@ def rods_in_racks(geom, fixture):
 
 def rods_in_fixture(geom):
     out = []
-    for rod in geom.rods:
-        p0, p1 = (rod.p0, rod.p1) if rod.kind == "chord" else geom.diag_body_ends(rod)
+    for rod in geom.all_rods:
+        p0, p1 = (rod.p0, rod.p1) if rod.kind != "diag" else geom.diag_body_ends(rod)
         out.append(rod_body(geom, rod, p0, p1))
+    return out
+
+
+# ----------------------------------------------------------------- mount
+C_ALU, C_CAM, C_LENS = "0.72 0.75 0.78 1", "0.10 0.35 0.16 1", "0.06 0.06 0.08 1"
+
+
+def mount_geoms(geom, mount, payload=None):
+    """The camera mount, welded to the cage: the carbon of the nose, the
+    laser-cut collar, and the module itself.
+
+    Part of the CAGE body rather than free rods -- by the time the mount
+    goes on, the truss is cured and the whole assembly turns together.  What
+    this is for is looking at it: the numbers are check_mount's.
+    """
+    from .spec import Payload, Bracket
+    from .geometry import radial
+    payload = Payload if payload is None else payload
+    out = []
+    for r in mount.rods:
+        if r.kind == "collar":
+            # a STRIP OF SHEET, wide in its own plane and thin through it:
+            # drawn as a rod it looked like a wire frame, and the plate's
+            # real footprint on the board is what says whether it fits
+            n = np.asarray(r.normal, float)
+            n = n / np.linalg.norm(n)
+            e = np.cross(r.axis, n)
+            out.append("  " + box("collar%d" % r.index, r.mid,
+                                  (float(np.linalg.norm(r.p1 - r.p0)) / 2.0,
+                                   r.half_w, r.r),
+                                  r.axis, e, C_ALU, CAGE, ROD | HEAD_B))
+        else:
+            col = {"grid": C_ROD, "strut": C_ROD, "batten": C_ROD}[r.kind]
+            out.append("  " + capsule("m_%s%d" % (r.kind, r.index), r.p0, r.p1,
+                                      r.r, col, CAGE, ROD | HEAD_B))
+    # the module: a slab on the plate's plane, looking out along `look`
+    for centre, look, _lr in mount.payload:
+        look = np.asarray(look, float) / float(np.linalg.norm(look))
+        up = np.cross(look, np.array([1.0, 0.0, 0.0]))
+        up = up / np.linalg.norm(up)
+        i = len(out)
+        out.append("  " + box("cam%d" % i, centre,
+                              (payload.BOX[0] / 2.0, payload.BOX[1] / 2.0,
+                               payload.BOX[2] / 2.0),
+                              np.array([1.0, 0.0, 0.0]), look, C_CAM, CAGE, ROD | HEAD_B))
+        lens0 = centre + look * (payload.BOX[1] / 2.0)
+        out.append("  " + cylinder("lens%d" % i, lens0,
+                                   lens0 + look * 1.5, payload.LENS_D / 2.0,
+                                   C_LENS, CAGE, ROD | HEAD_B))
     return out
 
 
@@ -232,18 +368,74 @@ def rack_geoms(geom, fixture):
     drop_c = (geom.t.d_chord / 2.0) / sin(radians(Magazine.SLOT_ANGLE / 2.0))
     drop_d = (geom.t.d_diag / 2.0) / sin(radians(Magazine.SLOT_ANGLE / 2.0))
     for s in fixture.slots:
-        rod = geom.rods[s.rod]
-        drop = drop_c if rod.kind == "chord" else drop_d
+        rod = geom.all_rods[s.rod]
+        drop = drop_c if rod.kind in ("chord", "mcam") else drop_d
         u = _unit(s.p1 - s.p0)
         mid = (s.p0 + s.p1) / 2.0
-        half = float(np.linalg.norm(s.p1 - s.p0)) / 2.0
-        for k, sign in enumerate((-1.0, 1.0)):
-            centre = mid + u * (sign * (half - Magazine.BLOCK_IN)) - s.up * drop
-            out += v_flanks("slot%d_%d" % (s.rod, k), centre, u, s.up, Magazine.BLOCK_L,
+        L = float(np.linalg.norm(s.p1 - s.p0))
+        if rod.kind == "mcam":
+            # THE CAMERA IS NOT A ROD IN ITS RECEPTACLE.  It is a module on
+            # a printed carrier, and what the rack holds is the CARRIER --
+            # a nest under the module's own body, with the boss standing
+            # free for the jaws.  Held on V-blocks under the boss alone it
+            # is a 4 g overhang on a 3 mm pin, and it rolls off.
+            from .spec import Payload, Carrier
+            look = -u
+            base = s.p0 + look * (Payload.BOX[1] / 2.0)
+            # A POCKET, NOT A SHELF.  The module is 24 mm tall on a 9 mm
+            # base; stood on a flat nest it topples the moment the sim
+            # settles and drags itself off by the boss -- measured.  Two
+            # walls a bond gap outside its faces hold it upright, which is
+            # what a printed kitting nest is.
+            # A FIT, NOT A CLEARANCE.  At a wall-thickness of slack the
+            # module slides 1.7 mm toward the boss as the sim settles, and
+            # its near face ends up 0.3 mm inside where the pads close --
+            # measured, as a stalled stroke on the board.  The nest is
+            # printed to the part, so it is the carrier's own FIT.
+            wall = 2.0
+            hy = Payload.BOX[1] / 2.0 + Carrier.FIT
+            out.append(box("nest%d" % s.rod, base - s.up * (Payload.BOX[2] / 2.0 + 4.5),
+                           (Payload.BOX[0] / 2.0 + wall, hy + wall, 4.0),
+                           np.array([1.0, 0.0, 0.0]), look, C_RACK, CAGE, ROD))
+            # The FAR wall is whole; the NEAR one is SPLIT, because the
+            # carrier's boss comes out through it and the jaws close on the
+            # boss at its middle.  A whole near wall stands 4.5 mm from the
+            # grip point and the pads land on it before the boss -- which
+            # is what "jaws closed on nothing" was.
+            # THE GAP IS THE JAWS', NOT THE BOSS'S.  At the yaw the boss is
+            # taken at, the pads straddle it along x and reach JAW_OPEN/2 +
+            # PAD_T out either side; a wall inside that is a wall the
+            # gripper's stroke stalls against.
+            # ...and the two pieces go at the module's own CORNERS, not
+            # wherever is left over: that is as far from the grip point as
+            # the nest reaches, and it is where a tab holds a board best.
+            gap = Gripper.JAW_OPEN / 2.0 + Gripper.PAD_T + 1.0
+            hw = 3.0
+            out.append(box("nestw%d_a" % s.rod,
+                           base + look * (hy + wall / 2.0)
+                           - s.up * (Payload.BOX[2] / 4.0),
+                           (Payload.BOX[0] / 2.0 + wall, wall / 2.0,
+                            Payload.BOX[2] / 4.0),
+                           np.array([1.0, 0.0, 0.0]), look, C_RACK, CAGE, ROD))
+            for sx, tag in ((+1.0, "b"), (-1.0, "c")):
+                # ...and they stop BELOW the pads' own reach: a tab whose
+                # top is level with the boss's axis brushes the pad as it
+                # closes, and a contact on the jaws is a contact the grip
+                # sensor has to argue with.
+                out.append(box("nestw%d_%s" % (s.rod, tag),
+                               base - look * (hy + wall / 2.0)
+                               - s.up * (Payload.BOX[2] / 4.0 + Gripper.PAD_H / 2.0)
+                               + np.array([sx * (Payload.BOX[0] / 2.0 + wall - hw),
+                                           0.0, 0.0]),
+                               (hw, wall / 2.0, Payload.BOX[2] / 4.0),
+                               np.array([1.0, 0.0, 0.0]), look, C_RACK, CAGE, ROD))
+        for k, (off, bl) in enumerate(Magazine.blocks(L)):
+            centre = mid + u * off - s.up * drop
+            out += v_flanks("slot%d_%d" % (s.rod, k), centre, u, s.up, bl,
                             Magazine.SLOT_DEPTH, 1.0, Magazine.SLOT_ANGLE / 2.0, C_RACK, CAGE, ROD)
             # a bed under each block so a rod that misses cannot fall through
             out.append(box("slotbed%d_%d" % (s.rod, k), centre - s.up * 2.0,
-                           (Magazine.BLOCK_L / 2.0, 4.0, 1.0), u,
+                           (bl / 2.0, 4.0, 1.0), u,
                            np.cross(u, s.up) if abs(np.cross(u, s.up) @ s.up) < 0.5
                            else np.array([0, 1.0, 0]), C_RACK, CAGE, ROD))
     return out
@@ -256,7 +448,6 @@ def head_body(geom, fixture, z_lo, start=None):
     t = geom.t
     sx, sy, sz = start if start is not None else (-Cage.POST_OFF, 0.0, z_lo + Gantry.Z_TRAVEL - 5.0)
     r_in, r_out = ring_r_in(), ring_r_out()
-    sr, st, sxw = Ring.SPOOL
     hx, hy, hz0, hz1 = Ring.HEAD_BOX
     lo, hi = fixture.x_range()
     out = [
@@ -280,7 +471,10 @@ def head_body(geom, fixture, z_lo, start=None):
                        (1, 0, 0), (0, 1, 0), "0.35 0.35 0.38 0.35", HEAD_B, ROD | CAGE, mass=900.0),
         # ---- the ring ----
         '      <body name="ring" pos="0 0 0" gravcomp="1">',
-        '        <joint name="ring" type="hinge" axis="1 0 0" damping="1e-5" armature="1e-7"/>',
+        # the armature is the DRIVE's rotor reflected to this axis, not a
+        # numerical placeholder: see Ring.drive_armature
+        '        <joint name="ring" type="hinge" axis="1 0 0" damping="1e-5" armature="%.9f"/>'
+        % Ring.drive_armature(),
         '        <site name="ring_exit" pos="0 0 %.6f" size="0.0005"/>' % mm(Ring.EXIT_R),
         '        <site name="ring_fid" pos="0 0 %.6f" size="0.0005"/>' % mm(-r_out),
     ]
@@ -299,12 +493,43 @@ def head_body(geom, fixture, z_lo, start=None):
         out.append('        ' + box("ring%d" % i, c, (Ring.W / 2.0, arc * 0.55, (r_out - r_in) / 2.0),
                                     (1, 0, 0), tan_, C_RING, HEAD_B, ROD | CAGE,
                                     mass=Ring.MASS * 0.7 / (n * (360.0 - Ring.GAP) / 360.0)))
+    # the thread, wound into a groove in the ring's own web: a visual band
+    # inside the section, adding nothing to the envelope
+    out.append('        ' + cylinder("thread", (-Ring.GROOVE_W / 2.0, 0, 0),
+                                     (Ring.GROOVE_W / 2.0, 0, 0),
+                                     Ring.GROOVE_R + Ring.GROOVE_D / 2.0,
+                                     "0.90 0.80 0.20 0.35", 0, 0, mass=Ring.MASS * 0.1))
     out += [
-        # spool block on the rim, opposite the gap (up when the gap is down)
-        '        ' + box("spool", (0.0, 0.0, r_out + sr / 2.0), (sxw / 2.0, st / 2.0, sr / 2.0),
-                         (1, 0, 0), (0, 1, 0), "0.75 0.30 0.30 1", HEAD_B, ROD | CAGE,
-                         mass=Ring.MASS * 0.3),
         '      </body>',
+        # ---- the raceway: what carries the ring, and does not turn.  Open
+        # over the mouth, where the work comes in.
+    ]
+    M = Ring.mesh()
+    n_race = 20
+    r_race0, r_race1 = r_out + Ring.RACE_CLEAR, rail_r_out()
+    rr_mid = (r_race0 + r_race1) / 2.0
+    arc = 2 * pi * rr_mid / n_race
+    for i in range(n_race):
+        psi = 2 * pi * (i + 0.5) / n_race
+        if abs(((degrees(psi) + 180.0) % 360.0) - 180.0) < Ring.race_mouth() / 2.0:
+            continue
+        c = (0.0, rr_mid * sin(psi), -rr_mid * cos(psi))
+        tan_ = (0.0, cos(psi), sin(psi))
+        out.append('      ' + box("race%d" % i, c, (Ring.W / 2.0 + Ring.RACE_T, arc * 0.55,
+                                                    (r_race1 - r_race0) / 2.0),
+                                  (1, 0, 0), tan_, "0.35 0.35 0.40 1", HEAD_B, ROD | CAGE,
+                                  mass=6.0))
+    # THE PINIONS ARE COSMETIC HERE and their teeth are not drawn: in the
+    # cell the ring is a hinge on an actuator, so what the drive has to
+    # prove -- that it locates the ring and turns it without losing a tooth
+    # -- cannot be asked of a hinge.  truss.drive asks it, of real teeth.
+    for k, az in enumerate(Ring.pinion_az()):
+        a = radians(az)
+        c = np.array([0.0, M.centre * sin(a), -M.centre * cos(a)])
+        out.append('      ' + cylinder("pinion%d" % k, c - np.array([Ring.W / 2.0, 0, 0]),
+                                       c + np.array([Ring.W / 2.0, 0, 0]), M.r_pinion + M.m,
+                                       "0.85 0.55 0.15 1", HEAD_B, ROD | CAGE, mass=3.0))
+    out += [
         # ---- the dispenser on its stroke ----
         '      <body name="disp" pos="%.6f 0 %.6f" gravcomp="1">' % (mm(Head.disp_x()), mm(Head.TIP_PARK)),
         '        <joint name="gd" type="slide" axis="0 0 -1" range="0 %.6f" damping="2"/>'
@@ -385,9 +610,11 @@ def z_floor(geom, fixture):
     return geom.R - 15.0
 
 
-def scene_cell(geom, fixture, stage="empty", start=None, timestep=5e-4, n_drops=None):
+def scene_cell(geom, fixture, stage="empty", start=None, timestep=5e-4, n_drops=None,
+               mount=None):
     """The whole cell.  stage="empty": rods in their racks, welds off;
-    "loaded": rods in the fixture, welded to the cage."""
+    "loaded": rods in the fixture, welded to the cage.  Pass `mount` (a
+    truss.mount.Mount) to hang the finished camera nose on the cage."""
     t = geom.t
     n_drops = geom.t.n_joints if n_drops is None else n_drops
     z_lo = z_floor(geom, fixture)
@@ -396,7 +623,7 @@ def scene_cell(geom, fixture, stage="empty", start=None, timestep=5e-4, n_drops=
     parts.append('<geom name="floor" type="plane" pos="%.6f 0 %.6f" size="3 3 0.1" material="floor" '
                  'contype="%d" conaffinity="%d"/>' % (mm(t.length / 2.0), mm(floor_z), CAGE, ROD | DROP))
     parts += rack_geoms(geom, fixture)
-    parts += cage_body(geom, fixture)
+    parts += cage_body(geom, fixture, mount=mount)
     parts += rods_in_racks(geom, fixture) if stage == "empty" else rods_in_fixture(geom)
     parts += head_body(geom, fixture, z_lo, start=start)
     parts += drops(n_drops)
@@ -407,7 +634,17 @@ def scene_cell(geom, fixture, stage="empty", start=None, timestep=5e-4, n_drops=
           # a rigid coupling, not a shared tendon (with the tendon alone a
           # blocked pad let the other run past the rod)
           '    <joint name="jaws_sym" joint1="gf_l" joint2="gf_r" polycoef="0 1 0 0 0"/>']
-    for r in geom.rods:
+    for r in geom.all_rods:
+        if r.kind == "mcam" and stage == "empty":
+            # A DETENT IN THE NEST.  The carrier is a 24 mm slab on a 9 mm
+            # base with a 14 mm pin out of one side; sat loose in a pocket
+            # it walks under the gripper's own approach and ends up tilted
+            # across the grip point -- measured, twice.  A printed nest for
+            # a part like this has a snap detent, and this is it: released
+            # the instant the jaws close on the boss.
+            eq.append('    <weld name="rack%d" body1="world" body2="rod%d" '
+                      'active="true" solref="0.004 1" solimp="0.98 0.999 0.001"/>'
+                      % (r.index, r.index))
         eq.append('    <weld name="keep%d" body1="cage" body2="rod%d" active="%s" '
                   'solref="0.004 1" solimp="0.98 0.999 0.001"/>'
                   % (r.index, r.index, "true" if stage == "loaded" else "false"))
@@ -426,10 +663,11 @@ def scene_cell(geom, fixture, stage="empty", start=None, timestep=5e-4, n_drops=
     <position name="a_g" joint="gg" kp="3000" kv="40" forcerange="-30 30"/>
     <position name="a_w" joint="gw" kp="0.8" kv="0.01" forcerange="-0.3 0.3"/>
     <position name="a_f" tendon="jaws" kp="300" kv="3" forcerange="-15 15"/>
-    <velocity name="a_ring" joint="ring" kv="0.02" forcerange="-%g %g"/>
+    <position name="a_ring" joint="ring" kp="%.6f" kv="%.6f" forcerange="-%g %g"/>
     <position name="a_cage" joint="cage" kp="60" kv="2.5" forcerange="-6 6"/>
   </actuator>""" % (Gantry.STALL_N["x"], Gantry.STALL_N["x"], Gantry.STALL_N["y"], Gantry.STALL_N["y"],
-                    Gantry.STALL_N["z"], Gantry.STALL_N["z"], Ring.SLIP_TORQUE, Ring.SLIP_TORQUE)
+                    Gantry.STALL_N["z"], Gantry.STALL_N["z"], Ring.servo_kp(),
+                    Ring.servo_kv(), Ring.DRIVE_TORQUE, Ring.DRIVE_TORQUE)
     ten = """  <tendon>
     <fixed name="jaws">
       <joint joint="gf_l" coef="1"/>

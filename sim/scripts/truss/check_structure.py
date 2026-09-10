@@ -26,15 +26,24 @@ def check(name, ok, detail=""):
     return bool(ok)
 
 
-class _Load(Load):
-    pass
+class Brief(Load):
+    """The brief's own load case, which is a 50 g camera head.
+
+    Its published EI, slope, mass and 228 Hz were all worked against that
+    head, so reproducing them takes it: the checks below are checks of the
+    BRIEF's arithmetic.  The product's head is Load.tip_mass(), a tenth of
+    it, and the derived trusses further down are designed to that.
+    """
+    @classmethod
+    def tip_mass(cls):
+        return cls.BRIEF_TIP_MASS
 
 
 def main():
     # ------------------------------------------------ the brief's truss
     brief = Truss(length=1000.0, side=90.0, alpha=45.0, d_chord=3.0, d_diag=2.0,
                   name="brief")
-    m = structure.analyse(brief)
+    m = structure.analyse(brief, Brief)
     check("brief's truss: EI within 10% of 4.3e9 N.mm^2",
           abs(m["EI"] / 4.3e9 - 1.0) < 0.10, "%.3g" % m["EI"])
     check("brief's truss: I within 10% of 28,600 mm^4",
@@ -48,7 +57,10 @@ def main():
     # between them is the diagonals' contribution and it is real.
     l = structure.cantilever(brief)
     k_b = 3.0 * structure.EI(brief) / l ** 3 * 1000.0
-    m_eff = Load.TIP_MASS * 1e-3 + 0.2357 * brief.mass * 0.5 * 1e-3
+    # The brief's 228 Hz was computed with the brief's own 50 g head, so
+    # reproducing it takes that head.  This is a check OF THE BRIEF's
+    # arithmetic; the product's head mass lives in Load.tip_mass().
+    m_eff = Brief.tip_mass() * 1e-3 + 0.2357 * brief.mass * 0.5 * 1e-3
     f_bend = np.sqrt(k_b / m_eff) / (2 * np.pi)
     check("brief's truss: bending-only first mode within 15% of 228 Hz",
           abs(f_bend / 228.0 - 1.0) < 0.15, "%.0f Hz" % f_bend)
@@ -56,7 +68,8 @@ def main():
           m["f1"] < f_bend, "%.0f with shear" % m["f1"])
     # the tube the brief rejects: 20 x 1 roll-wrapped at 70 GPa, I 2701
     I_tube = np.pi / 64.0 * (20.0 ** 4 - 18.0 ** 4)
-    slope_tube = np.degrees(structure.tip_load() * 500.0 ** 2 / (2.0 * 70e3 * I_tube))
+    slope_tube = np.degrees(structure.tip_load(Brief) * 500.0 ** 2
+                            / (2.0 * 70e3 * I_tube))
     check("brief's tube: 0.056 deg, failing the budget 11x",
           abs(slope_tube / 0.056 - 1.0) < 0.10 and slope_tube / Load.SLOPE_BUDGET > 10.0,
           "%.4f deg" % slope_tube)
@@ -69,10 +82,18 @@ def main():
     # the band's sweep and the rim's corner are charged for
     # (spec.r_in_needed): the brief's own ring is a millimetre short for
     # the brief's own truss, which is why the optimiser lands at 40 degrees.
+    # ...AND SINCE THE CAMERA WENT IN THE CAGE, THE CELL CANNOT BUILD IT AT
+    # ALL.  Making room for the module past the chord ends pushed the end
+    # racks out 20 mm each, and the brief's 30 diagonals then want 1432 mm
+    # of a 1400 mm axis (1392 with the cage as first drawn).  That is a real
+    # cost of the mount and it is recorded here rather than rounded away:
+    # the chosen truss fits at 1399, and the brief's does not fit.
     check("brief's truss fails its own first-mode rule once the web's shear counts, "
-          "and is marginal at the rim's corner -- nothing else",
-          set(structure.violations(brief)) == {"f1", "ring rim"},
-          str(structure.violations(brief)))
+          "is marginal at the rim's corner, and no longer fits the cell at all "
+          "now that the cage makes room for a camera -- nothing else",
+          set(structure.violations(brief, load=Brief))
+          == {"f1", "ring rim", "longer than the gantry's X travel"},
+          str(structure.violations(brief, load=Brief)))
     check("...by about a millimetre",
           0.5 < spec.r_in_needed(brief) - ring_r_in() < 1.5,
           "%.3f mm" % (spec.r_in_needed(brief) - ring_r_in()))
@@ -84,15 +105,15 @@ def main():
     # the winder, not by the loads, and only the fabrication model sees it.
     brief_300 = Truss(length=300.0, side=40.0, alpha=45.0, d_chord=3.0, d_diag=2.0,
                       name="brief_300")
-    m3 = structure.analyse(brief_300)
+    m3 = structure.analyse(brief_300, Brief)
     check("brief's 300 mm truss is far stiffer than its budget",
           m3["slope_deg"] < Load.SLOPE_BUDGET / 4.0 and m3["f1"] > 2.0 * Load.F1_MIN,
           "%.4f deg, %.0f Hz" % (m3["slope_deg"], m3["f1"]))
     check("...and cannot be wound by the head the same brief specifies: the ring's sweep "
           "wants a section the loads never would",
-          set(structure.violations(brief_300)) == {"ring rim", "ring vs spine"},
+          set(structure.violations(brief_300, load=Brief)) == {"ring rim", "ring vs spine"},
           "fails %s; ring sweeps %.0f mm of radius into a %.0f mm circumradius"
-          % (structure.violations(brief_300), spec.ring_swept_r(), brief_300.R))
+          % (structure.violations(brief_300, load=Brief), spec.ring_swept_r(), brief_300.R))
     check("...which is why the derived 300 mm truss is the section it is",
           structure.TRUSS_300.R > spec.ring_swept_r() and not structure.violations(structure.TRUSS_300),
           "R %.1f against a %.1f mm sweep" % (structure.TRUSS_300.R, spec.ring_swept_r()))
@@ -115,9 +136,25 @@ def main():
               all(g[1]["mass"] >= mm["mass"] - 1e-9 for g in feas),
               "%d feasible of %d" % (len(feas), len(grid)))
     # ------------------------------------------------ what binds
+    # THE HEAD MASS MOVED WHAT BINDS.  At the brief's 50 g the metre truss
+    # was limited by its own stiffness -- the first mode and the slope were
+    # the two commonest reasons a candidate was rejected.  At the module's
+    # real 5 g neither is: three quarters of the grid is now thrown out
+    # because the CELL cannot reach the ends of the diagonal racks a fine
+    # web needs, and most of the rest because the ring will not pass the
+    # rim.  A truss that is no longer load-limited is fabrication-limited,
+    # and that is a different design problem: it is answered by a longer
+    # gantry or a coarser web, not by more carbon.
     rules = structure.binding_rules(structure._GRID_1M)
-    check("1m: the first mode and the slope are the binding rules",
-          "f1" in list(rules)[:3] and "slope" in list(rules)[:3], str(list(rules)[:4]))
+    check("1m: the MACHINE binds, not the load -- the gantry's reach and the ring's "
+          "rim reject more candidates than the first mode and the slope",
+          min(rules["longer than the gantry's X travel"], rules["ring rim"])
+          > max(rules.get("f1", 0), rules.get("slope", 0)), str(list(rules)[:4]))
+    brief_rules = structure.binding_rules(structure.design(1000.0, load=Brief)[1])
+    check("...and it is the head that moved it: put the brief's 50 g back and "
+          "the first mode returns to the top of the list",
+          list(brief_rules)[0] == "f1"
+          and brief_rules["f1"] > rules.get("f1", 0), str(list(brief_rules)[:3]))
     rules = structure.binding_rules(structure._GRID_300)
     check("300: the ring, not the load, is what binds a short truss",
           any(r.startswith("ring") for r in list(rules)[:3]), str(list(rules)[:4]))

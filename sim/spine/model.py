@@ -78,8 +78,30 @@ class Member:
 
 @dataclass
 class PointMass:
+    """A lumped mass at a node, kg, with its own ROTATIONAL inertia.
+
+    The inertia is not decoration.  A point mass contributes to three
+    translational freedoms and nothing else, so a node whose only members
+    are massless has no rotational inertia at all and the mass matrix is
+    singular -- Cholesky fails, with a message about positive definiteness
+    that says nothing about the cause.  That went unnoticed while every mass
+    sat on a node carrying real rods, whose consistent mass supplied it by
+    accident.  A camera on a massless housing does not, and a camera is a
+    box with a real inertia, so it is asked for.
+    """
     node: int
     m: float
+    inertia: tuple = (0.0, 0.0, 0.0)     # kg.m^2 about the node's own axes
+
+    @staticmethod
+    def box(node, mass_kg, sides_m):
+        """A cuboid's mass and its three principal inertias about its own
+        centre: m(b^2 + c^2)/12 and cyclic."""
+        a, b, c = (float(v) for v in sides_m)
+        m = float(mass_kg)
+        return PointMass(node, m, (m * (b * b + c * c) / 12.0,
+                                   m * (a * a + c * c) / 12.0,
+                                   m * (a * a + b * b) / 12.0))
 
 
 def _skew(r):
@@ -157,6 +179,7 @@ class Model:
             d = self.dofs(pm.node)
             for t in range(3):
                 M[d[t], d[t]] += pm.m
+                M[d[3 + t], d[3 + t]] += float(pm.inertia[t])
         K[np.diag_indices(nd)] += self.springs
         self._K, self._M = K, M
         return K, M
@@ -250,6 +273,14 @@ class Model:
         K, M = self.assemble()
         free = self.free()
         Kff, Mff = K[np.ix_(free, free)], M[np.ix_(free, free)]
+        # A NODE WITH MASS AND NO ROTATIONAL INERTIA makes this singular, and
+        # the message numpy gives for that says nothing about the cause.
+        bad = np.where(np.diag(Mff) <= 0.0)[0]
+        if len(bad):
+            raise ValueError(
+                "%d free degrees of freedom carry no inertia (first at index %d): a "
+                "PointMass with no `inertia` on a node whose members are massless "
+                "leaves its three rotations empty" % (len(bad), int(bad[0])))
         L = np.linalg.cholesky(Mff)
         Li = np.linalg.inv(L)
         A = Li @ Kff @ Li.T

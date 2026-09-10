@@ -37,6 +37,7 @@ class Executor:
         self.looks = {}                  # joint -> (dx, dy) measured
         self.released = {}               # rod -> clock time
         self.slow = []                   # ops that overran the plan
+        self.bonds = []                  # (rod, point, t) fillets laid
         self.direction = +1
 
     # ------------------------------------------------------------ waits
@@ -126,15 +127,24 @@ class Executor:
             axis = "g" if a["tool"] == "grip" else "d"
             yield from self._stroke(axis, 0.0)
         elif k == "grip":
+            if hasattr(self.grip, "free_from_rack"):
+                self.grip.free_from_rack(a["rod"])
             self.grip.close()
             yield from self._wait(Gripper.JAW_CLOSE_S)
             yield from self._until(self.grip.holding, 0.5, "grip rod %d" % a["rod"])
             if not self.grip.holding():
                 self.log("      rod %d: jaws closed on nothing" % a["rod"])
         elif k == "release":
-            self.grip.open()
-            yield from self._wait(Gripper.JAW_CLOSE_S + 0.4)   # let it settle in the V
-            self.cage.keep(a["rod"])
+            if a.get("tack"):
+                # nothing under it: the keeper takes it before the jaws move
+                self.cage.keep(a["rod"])
+                yield from self._wait(0.2)
+                self.grip.open()
+                yield from self._wait(Gripper.JAW_CLOSE_S + 0.2)
+            else:
+                self.grip.open()
+                yield from self._wait(Gripper.JAW_CLOSE_S + 0.4)  # settle in the V
+                self.cage.keep(a["rod"])
             self.released[a["rod"]] = self.clock.now()
         elif k == "look":
             self.corr[:] = 0.0
@@ -170,6 +180,15 @@ class Executor:
             mg = _band.resin_dose_mg(self.geom.t, st.thread)
             self.disp.dose(mg, joint=j)
             st.dosed += mg
+            yield from self._wait(Dispenser.DOSE_S + Process.DOSE_SETTLE_S)
+        elif k == "bond":
+            # A MOUNT JOINT: one epoxy fillet, from the same dispenser.
+            # It is not a band, so it has no BandState -- the joint states
+            # are the truss's, and a fillet on a strut is not one of them.
+            from . import mount as _mount
+            mg = _mount.fillet_mass_mg(2.0 * self.geom.all_rods[a["rod"]].r)
+            self.disp.dose(mg, joint=None)
+            self.bonds.append((a["rod"], tuple(a["at"]), self.clock.now()))
             yield from self._wait(Dispenser.DOSE_S + Process.DOSE_SETTLE_S)
         elif k == "anchor":
             chord, _end = a["post"]

@@ -33,6 +33,26 @@ def check(name, ok, detail=""):
     return bool(ok)
 
 
+def settle(c, clk, theta=None, gap=None, cap=2000):
+    """Index the cage and park the ring, and WAIT FOR BOTH -- a fixed 300
+    ticks covered any index the old 300 mm truss asked for and none of the
+    ones the redesigned one does, and a look taken before the cage arrives
+    photographs a joint that is not there (this suite read it as a pixel
+    path that could not find three of nine joints)."""
+    if theta is not None:
+        c.index(theta)
+    if gap is not None:
+        c.park(gap)
+    n = 0
+    while n < cap and not ((theta is None or c.indexed())
+                           and (gap is None or c.parked())):
+        clk.tick()
+        n += 1
+    for _ in range(20):        # and let the head stop ringing
+        clk.tick()
+    return n
+
+
 def main():
     t = structure.TRUSS_300
     g = TrussGeometry(t)
@@ -64,12 +84,7 @@ def main():
     direction = +1
     for k in range(t.n_chords):
         th, aps = st[k]
-        c.index(th)
-        for _ in range(300):
-            clk.tick()
-        c.park(0.0)
-        for _ in range(60):
-            clk.tick()
+        settle(c, clk, theta=th, gap=0.0)
         for j, a in zip(g.joints_on(k), aps):
             c.goto("x", schedule.look_x(t, j)); c.goto("y", a.centre[1]); c.goto("z", a.centre[2] + a.lift)
             for _ in range(120):
@@ -88,10 +103,13 @@ def main():
     ey = np.array([e[2] for e in errs]) if errs else np.array([9.9])
     check("the pixel path finds every joint at its look pose", not misses,
           "missed %s" % misses)
-    check("...within LOOK_SIGMA rms of the model camera along the chord, the constant the model "
+    sig = Vision.look_sigma(t.alpha)
+    check("...within the look_sigma this web asks for, rms, along the chord -- the law the "
           "camera draws its noise from (MEASURED here)",
-          np.sqrt(np.mean(ex ** 2)) <= Vision.LOOK_SIGMA and np.abs(ex).max() < 3.0 * Vision.LOOK_SIGMA,
-          "rms %.3f, worst %.2f mm vs %.2f" % (np.sqrt(np.mean(ex ** 2)), np.abs(ex).max(), Vision.LOOK_SIGMA))
+          np.sqrt(np.mean(ex ** 2)) <= sig and np.abs(ex).max() < 3.0 * sig,
+          "rms %.4f, worst %.3f mm vs %.4f at alpha %.0f (the 45-degree figure would be %.3f)"
+          % (np.sqrt(np.mean(ex ** 2)), np.abs(ex).max(), sig, t.alpha,
+             Vision.look_sigma(45.0)))
     check("...and to a tenth across it, where the chord's own centreline is the feature",
           np.abs(ey).max() < 0.15, "worst %.3f mm" % np.abs(ey).max())
     # the far side of the plate, for the record: the reason look_x exists
@@ -115,12 +133,7 @@ def main():
           max(jitter) < 0.05, "%s" % [round(v, 3) for v in jitter])
     # --------------------------------------------- a deliberate offset
     th, aps = st[0]
-    c.index(th)
-    for _ in range(300):
-        clk.tick()
-    c.park(0.0)
-    for _ in range(60):
-        clk.tick()
+    settle(c, clk, theta=th, gap=0.0)
     j, a = g.joints_on(0)[1], aps[1]
     xb = schedule.look_x(t, j)
     rows = []
@@ -131,7 +144,7 @@ def main():
         truth, got = mv.locate(j.index), pv.locate(j.index)
         rows.append((ox, oy, None if got is None else (got[0] - truth[0], got[1] - truth[1])))
     check("a head put down off the joint reads back the offset it was given",
-          all(r[2] is not None and abs(r[2][0]) < 3.0 * Vision.LOOK_SIGMA and abs(r[2][1]) < 0.15
+          all(r[2] is not None and abs(r[2][0]) < 3.0 * sig and abs(r[2][1]) < 0.15
               for r in rows),
           " ".join("(%+.1f,%+.1f)->%s" % (r[0], r[1], None if r[2] is None else
                                             "%+.2f/%+.2f" % r[2]) for r in rows))
@@ -142,7 +155,7 @@ def main():
         clk.tick()
     truth, got = mv.locate(j.index), pv.locate(j.index)
     check("the bracket's bias passes straight through the look, as the model camera assumes",
-          got is not None and abs((got[0] - truth[0]) - bias[0]) < 3.0 * Vision.LOOK_SIGMA
+          got is not None and abs((got[0] - truth[0]) - bias[0]) < 3.0 * sig
           and abs((got[1] - truth[1]) - bias[1]) < 0.15,
           "read %+.2f/%+.2f for a bias of %+.2f/%+.2f" % (got[0] - truth[0], got[1] - truth[1], bias[0], bias[1])
           if got else "no fix")

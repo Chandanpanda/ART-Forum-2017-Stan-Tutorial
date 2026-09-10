@@ -42,7 +42,8 @@ from math import radians, sin, cos, pi
 
 import numpy as np
 
-from .spec import Ring, Head, Process, ring_r_in, ring_r_out
+from .spec import (Ring, Head, Process, ring_r_in, ring_r_out, race_r_out, rail_r_out,
+                   head_lowest, gap_aim_limit)
 from .geometry import theta_chord_up
 
 
@@ -118,29 +119,44 @@ def _rot_x_pts(P, deg):
 def head_distance(P, rotating, gap_az=0.0):
     """Distance from points (ring frame) to the head's solids.
 
-    rotating=True is the seated case -- everything on the ring sweeps a
-    full circle, so the gap is gone and the spool is a torus.  Otherwise
-    the ring is parked with its gap at gap_az (0 = straight down) and the
-    spool at Ring.SPOOL_AZ from it, as a box on the rim.
+    THE HEAD IS TWO THINGS: a ring that turns, and a raceway that does not.
+    rotating=True is the seated case -- the gap sweeps a full circle over a
+    revolution, so the ring is an annulus and the gap is gone.  Otherwise
+    the ring is parked and the gap is open at gap_az, which is how the rod
+    gets in.  The thread is in a groove in the ring's own web, so nothing
+    stands on the rim and there is no spool to sweep.
+
+    The raceway does not turn: a rail outside the rim, open over
+    Ring.race_mouth() degrees straight down, where the chord comes in.
+    Being bolted to the carriage, its mouth does not follow the ring's gap,
+    and it does not have to contain it either (Ring.race_mouth).
+
+    THE PINIONS ARE THREE DISCS, NOT AN ANNULUS.  They stand further out
+    than the rail does, and the first version drew one annulus at the
+    widest of them over the whole non-mouth arc -- which is solid where
+    there is nothing, and the head pays for it on every approach.  Each
+    pinion is where it is: a disc of its tip radius at its own azimuth.
     """
     r_in, r_out = ring_r_in(), ring_r_out()
-    sr, st, sx = Ring.SPOOL
     hx, hy, z0, z1 = Ring.HEAD_BOX
+    M = Ring.mesh()
     d = _box_dist(P, np.array([-hx, -hy, z0]), np.array([hx, hy, z1]))
+    d = np.minimum(d, _annulus_dist(P, r_out + Ring.RACE_CLEAR, rail_r_out(),
+                                    Ring.W / 2.0 + Ring.RACE_T,
+                                    gap=(0.0, Ring.race_mouth() / 2.0)))
+    r_block = max(M.r_pinion + M.m, Ring.BEARING_OD / 2.0)
+    ax = Ring.W / 2.0 + Ring.RACE_T
+    for az in Ring.pinion_az():
+        a = radians(az)
+        c = np.array([0.0, M.centre * sin(a), -M.centre * cos(a)])
+        q = P - c[None, :]
+        rad = np.maximum(np.linalg.norm(q[:, 1:], axis=1) - r_block, 0.0)
+        axl = np.maximum(np.abs(q[:, 0]) - ax, 0.0)
+        d = np.minimum(d, np.sqrt(rad ** 2 + axl ** 2))
     if rotating:
-        d = np.minimum(d, _annulus_dist(P, r_in, r_out, Ring.W / 2.0))
-        d = np.minimum(d, _annulus_dist(P, r_out, r_out + sr, sx / 2.0))
-        return d
-    d = np.minimum(d, _annulus_dist(P, r_in, r_out, Ring.W / 2.0,
-                                    gap=(gap_az, Ring.GAP / 2.0)))
-    # the spool: a box standing on the rim at azimuth gap_az + SPOOL_AZ.
-    # Rotate the points so that azimuth is straight up, then box-test.
-    Q = _rot_x_pts(P, -(gap_az + Ring.SPOOL_AZ - 180.0))
-    d = np.minimum(d, _box_dist(Q, np.array([-sx / 2.0, -st / 2.0, r_out]),
-                                np.array([sx / 2.0, st / 2.0, r_out + sr])))
-    return d
-
-
+        return np.minimum(d, _annulus_dist(P, r_in, r_out, Ring.W / 2.0))
+    return np.minimum(d, _annulus_dist(P, r_in, r_out, Ring.W / 2.0,
+                                       gap=(gap_az, Ring.GAP / 2.0)))
 # ------------------------------------------------------------ the world
 class Obstacles:
     """Every capsule the head may not touch, at one cage angle, sampled
@@ -197,7 +213,7 @@ class Obstacles:
 # ----------------------------------------------------------- the solver
 def _reach(centre, dx=0.0):
     """x-extent the head can occupy around a station and its traverse."""
-    r = Ring.HEAD_BOX[0] + Ring.SPOOL[0] + 5.0
+    r = Ring.HEAD_BOX[0] + (race_r_out() - ring_r_out()) + 5.0   # noqa: E501
     return (float(centre[0]) + min(0.0, dx) - r, float(centre[0]) + max(0.0, dx) + r)
 
 
@@ -215,7 +231,9 @@ def gap_azimuth(n_face):
     the wrong number; station() measures the number.
     """
     psi = np.degrees(np.arctan2(n_face[1], -n_face[2]))
-    lim = Ring.GAP / 2.0 - 8.0
+    # the raceway's mouth is bolted to the carriage: the gap may only be
+    # aimed as far off it as the mouth is wider than the gate
+    lim = min(Ring.GAP / 2.0 - 8.0, gap_aim_limit())   # both are the gap's own
     return float(np.clip(psi / 2.0, -lim, lim))
 
 
@@ -350,9 +368,7 @@ def index_lift(geom, fixture):
     """How high the ring centre must be above the truss axis for the cage
     to turn under it: the cage's swept radius plus the head's lowest
     point, plus clearance."""
-    r_out = ring_r_out()
-    lowest = max(r_out, r_out + Ring.SPOOL[0])
-    return fixture.cage_swept_r() + lowest + Process.LIFT_CLEAR
+    return fixture.cage_swept_r() + head_lowest() + Process.LIFT_CLEAR
 
 
 # ------------------------------------------------------- the held rod
@@ -483,7 +499,6 @@ def head_points(rotating, gap_az_deg=0.0, n_az=36):
     rendering and for rigs that want to look at the envelope; the solver
     itself uses head_distance."""
     r_in, r_out = ring_r_in(), ring_r_out()
-    sr, st, sx = Ring.SPOOL
     pts = []
     rs = np.linspace(r_in, r_out, 4)
     xs = np.linspace(-Ring.W / 2.0, Ring.W / 2.0, 3)

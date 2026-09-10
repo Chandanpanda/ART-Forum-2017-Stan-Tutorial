@@ -24,11 +24,12 @@ Three things this module decides that the brief leaves open:
 numpy only.
 """
 from dataclasses import dataclass
+from functools import cached_property
 from math import pi, sin, cos, tan, radians, atan2, degrees, sqrt
 
 import numpy as np
 
-from .spec import (Cage, Magazine, Head, Gripper, Process,
+from .spec import (Cage, Carrier, Magazine, Head, Gripper, Process,
                    notch_mouth)
 from .geometry import (TrussGeometry, FACES, radial, chord_phi, rot_x,
                        theta_chord_up, theta_face_up)
@@ -70,13 +71,56 @@ class Slot:
 
 
 class Fixture:
+    # LAZY ON PURPOSE.  A fixture is cheap to name and expensive to lay
+    # out -- the pins alone are 24 ms, and the design optimiser wants the
+    # magazine's extent for ten thousand candidates.  Deferring each part
+    # until it is read keeps ONE implementation of the layout instead of a
+    # closed form beside it that can drift; a check pins the two together
+    # only when there is one to pin.
     def __init__(self, geom: TrussGeometry):
         self.g = geom
         self.t = geom.t
-        self.pins = self._pins()
-        self.cradles = self._cradles()
-        self.posts = self._posts()
-        self.slots = self._magazine()
+
+    @cached_property
+    def pins(self):
+        return self._pins()
+
+    @cached_property
+    def cradles(self):
+        return self._cradles()
+
+    @cached_property
+    def posts(self):
+        return self._posts()
+
+    @cached_property
+    def slots(self):
+        return self._magazine()
+
+    @cached_property
+    def collapse(self):
+        """The collapsing mandrel this fixture rides on.  Lazy: the layout
+        is what it needs, and the layout is lazy too."""
+        from . import collapse as _c
+        return _c.Collapse(self)
+
+    @cached_property
+    def nose_reach(self):
+        """How far past the chord ends this truss's loaded camera carrier
+        reaches -- what the cage's end freedom has to clear.
+
+        Solved from the section, because the standoff is: 21.4 mm at an
+        85 mm triangle, 35.7 at 140.  `end_free` is the CAGE's answer to
+        the worst of these across everything the cell builds; this is the
+        one truss's, and check_mount holds the first against the second.
+        """
+        from . import mount
+        return Carrier.reach(mount.fov_standoff(self.g, d_strut=self.t.d_diag))
+
+    def end_free(self):
+        """Axial room between the chord ends and the end plate, mm.  A
+        machine fact: the cage is built once (spec.Cage.END_FREE)."""
+        return Cage.END_FREE
 
     # ------------------------------------------------------------- pins
     def joint_exclusion(self):
@@ -89,14 +133,15 @@ class Fixture:
         return (Head.ring_axial_half() + self.t.band / 2.0
                 + max(Cage.PIN_T, Cage.ARM_W) / 2.0 + Process.SEAT_CLEAR)
 
-    def pin_xs(self, k):
-        """Pin stations along chord k.  Every free interval between two
-        forbidden zones -- a joint's exclusion, the gripper's footprint at
-        the chord's midpoint, the chord's ends -- gets pins at both ends
-        and evenly between, never further apart than PIN_PITCH: a chord is
-        supported within the exclusion distance of every joint and nowhere
-        is a span longer than the brief's 50 mm.  Overlapping zones are
-        merged first (the metre truss has a joint on its midpoint)."""
+    def free_spans(self, k):
+        """The stretches of chord k nothing fixed may cross, merged: between
+        one joint's exclusion zone and the next, and clear of the gripper's
+        footprint at the midpoint.
+
+        Pulled out of `pin_xs` because the COLLAPSING RAILS need the same
+        intervals -- a rail that filled the gaps would sit inside the ring's
+        bore at every joint on its chord -- and two copies of this would
+        drift apart."""
         t = self.t
         excl = self.joint_exclusion()
         gexcl = Gripper.PAD_L / 2.0 + Cage.PIN_T / 2.0 + 2.0
@@ -108,16 +153,23 @@ class Fixture:
                 merged[-1] = (merged[-1][0], max(merged[-1][1], b))
             else:
                 merged.append((a, b))
-        free = []
-        lo = Cage.PIN_T
+        free, lo = [], Cage.PIN_T
         for a, b in merged:
             free.append((lo, a))
             lo = b
         free.append((lo, t.length - Cage.PIN_T))
+        return [(a, b) for a, b in free if b - a >= Cage.PIN_T]
+
+    def pin_xs(self, k):
+        """Pin stations along chord k.  Every free interval between two
+        forbidden zones -- a joint's exclusion, the gripper's footprint at
+        the chord's midpoint, the chord's ends -- gets pins at both ends
+        and evenly between, never further apart than PIN_PITCH: a chord is
+        supported within the exclusion distance of every joint and nowhere
+        is a span longer than the brief's 50 mm.  Overlapping zones are
+        merged first (the metre truss has a joint on its midpoint)."""
         xs = []
-        for a, b in free:
-            if b - a < Cage.PIN_T:
-                continue
+        for a, b in self.free_spans(k):
             n = int(np.ceil((b - a) / Cage.PIN_PITCH)) + 1
             xs.extend(np.linspace(a, b, n).tolist())
         return xs
@@ -231,7 +283,7 @@ class Fixture:
         # one rack at each end, so a diagonal comes from the nearer one and
         # the mean fetch is a quarter of the truss, not half
         half = t.L_cut / 2.0
-        edge = Cage.END_FREE + Cage.END_PLATE_T + Magazine.END_CLEAR
+        edge = self.end_free() + Cage.END_PLATE_T + Magazine.END_CLEAR
         near = sorted(self.g.diags, key=lambda r: r.mid[0])
         n0 = len(near) // 2
         for i, r in enumerate(near[:n0]):
@@ -242,6 +294,36 @@ class Fixture:
             x = t.length + edge + i * Magazine.DIAG_PITCH
             out.append(Slot(r.index, np.array([x, -half, z]),
                             np.array([x, half, z]), np.array([0, 0, 1.0])))
+        # THE MOUNT'S OWN RACK, if a camera is being built onto this truss.
+        # Beyond the diagonal racks at each end, on the same pitch and the
+        # same height, laid along y like a diagonal -- the gripper's yaw is
+        # what turns a mount rod to the angle it is laid at, and a rod that
+        # starts parallel to y is the case the cell has already qualified.
+        # The rods are stubby (26 to 60 mm), so the rack is short.
+        mr = list(self.g.mount_rods)
+        if mr:
+            from .spec import Payload
+            n_end = max(1, len(near) - n0)
+            for end in (0, 1):
+                group = [r for r in mr if r.chord == end and r.kind != "mcam"]
+                cams = [r for r in mr if r.chord == end and r.kind == "mcam"]
+                sign = -1.0 if end == 0 else 1.0
+                x = sign * edge + (t.length if end else 0.0)
+                x += sign * (n_end + 1) * Magazine.DIAG_PITCH
+                for r in group:
+                    hl = r.length / 2.0
+                    out.append(Slot(r.index, np.array([x, -hl, z]),
+                                    np.array([x, hl, z]), np.array([0, 0, 1.0])))
+                    x += sign * Magazine.DIAG_PITCH
+                # THE CAMERA'S NEST IS AS WIDE AS THE MODULE, not as a rod.
+                # On the rods' own pitch its nest overlaps its neighbour's
+                # blocks and the sim throws it across the cell -- measured.
+                for r in cams:
+                    x += sign * (Payload.BOX[0] / 2.0 + Magazine.CLEAR)
+                    hl = r.length / 2.0
+                    out.append(Slot(r.index, np.array([x, -hl, z]),
+                                    np.array([x, hl, z]), np.array([0, 0, 1.0])))
+                    x += sign * (Payload.BOX[0] / 2.0 + Magazine.CLEAR)
         return out
 
     def x_range(self):
@@ -306,9 +388,20 @@ class Fixture:
             rr.append(self.cradle_r())
         for q in self.posts:
             p0.append(Rm @ q.p0); p1.append(Rm @ q.p1); rr.append(Cage.POST_R)
+        # THE COLLAPSING MANDREL'S OWN RAILS.  They are real solids under
+        # every chord and every face, and the head has to miss them --
+        # which is why the chord ones are broken on exactly the intervals
+        # this class already keeps clear of joints.  Left out of the
+        # obstacle set they would be a structure the path planner cannot
+        # see, which is how a fixture ends up unbuildable.
+        for kind, sh, phi, r, (xa, xb) in self.collapse.rails:
+            up = radial(phi)
+            p0.append(Rm @ (np.array([xa, 0.0, 0.0]) + up * r))
+            p1.append(Rm @ (np.array([xb, 0.0, 0.0]) + up * r))
+            rr.append(max(Cage.ARM_W, self.collapse.rail_h()) / 2.0)
         # the spine down the axis
-        x0 = -(Cage.END_FREE + Cage.END_PLATE_T)
-        x1 = self.t.length + Cage.END_FREE + Cage.END_PLATE_T
+        x0 = -(self.end_free() + Cage.END_PLATE_T)
+        x1 = self.t.length + self.end_free() + Cage.END_PLATE_T
         p0.append(np.array([x0, 0.0, 0.0])); p1.append(np.array([x1, 0.0, 0.0]))
         rr.append(self.spine_r())
         # THE END PLATES ARE DISCS, AND A CAPSULE CANNOT BE ONE.  Swept
@@ -319,7 +412,7 @@ class Fixture:
         # unseen; on a 115 mm section it forbids both end joints and the
         # whole truss becomes unplannable.  Spokes: radial capsules as
         # thick as the plate, which is the shape the plate actually has.
-        for xa in (x0, self.t.length + Cage.END_FREE):
+        for xa in (x0, self.t.length + self.end_free()):
             mid = xa + Cage.END_PLATE_T / 2.0
             for k in range(Cage.PLATE_SPOKES):
                 a = 2.0 * pi * k / Cage.PLATE_SPOKES

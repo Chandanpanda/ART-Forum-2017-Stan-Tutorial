@@ -125,26 +125,34 @@ optimiser making the lattice coarser still.
 Geometry is **derived, not tabulated**: `structure.design()` sweeps the
 triangle, the diagonal angle and the stock against the rules of §6 plus
 two the machine imposes (the ring must fit round a joint; the cage's spine
-must fit under the ring's spool). These are its answers.
+must fit under the ring). These are its answers.
 
 | Parameter | 300 mm truss | 1000 mm truss |
 |---|---|---|
-| Chord triangle side | 66 mm | 92 mm |
+| Chord triangle side | 62 mm | 92 mm |
 | Chord diameter | 2 mm pultruded | 3 mm pultruded |
 | Diagonal diameter | 1 mm pultruded | 2 mm pultruded |
-| Bay pitch | 64 mm | 106 mm |
-| Diagonal angle to chord | 45° | 40° |
-| Joints per truss | 12 | 27 |
-| Mass | 7.4 g | 54.9 g |
-| Tip slope at 3 g | 0.0009° | 0.0023° |
-| First mode / member mode | 377 / 454 Hz | 201 / 384 Hz |
+| Bay pitch | 86 mm | 106 mm |
+| Diagonal angle to chord | 35° | 40° |
+| Joints per truss | 9 | 27 |
+| Mass | 6.7 g | 54.9 g |
+| Tip slope at 3 g | 0.0010° | 0.0023° |
+| First mode / member mode | 380 / 338 Hz | 201 / 384 Hz |
+| Ring's bore margin at a joint | 2.28 mm | 0.12 mm |
 
 **The 40 mm section of revision 1 cannot be built by this machine.** It is
-stiff enough several times over — 0.0011°, 502 Hz — but the C-ring sweeps
-32 mm of radius about the chord it winds, and a 40 mm triangle puts the
+stiff enough several times over — 0.0011°, 502 Hz — but the ring sweeps
+20 mm of radius about the chord it winds, and a 40 mm triangle puts the
 cage's spine and the other two chords inside that. A short truss's section
 has a lower bound set by the winding head, not by the loads, and only a
 model of the fabrication finds it (`check_structure`).
+
+The 300 mm truss's numbers moved when the head did. Its section is bound by
+the machine, not the loads, so the head's swept radius falling from 32 mm to
+20 (the spool came off the rim, §4.5) let the optimiser take a smaller,
+shallower truss: side 62 at 35° instead of 66 at 45°, three bays instead of
+four, 9 joints instead of 12. The metre truss is load-bound and did not
+move.
 
 Chord stock: pultruded solid rod, 230 GPa fibre at ~65 % volume fraction, Tg 170 °C, 11.3 g/m for 3 mm. Axial CTE near zero.
 
@@ -253,7 +261,7 @@ The Warren geometry avoids this entirely:
 | **Y** | Cross-axis positioning, and reaching the magazines | **±150 mm** — visual centring needs ±2 mm, but the chord rack sits ±134 mm off the axis |
 | **Z** | Lowers ring onto joint, lifts clear | 150 mm travel is ample: the cage indexes under the head at 95 mm and the lift between joints is **13 mm**, the least that clears the next pin |
 | **W (gripper yaw)** | Turns a rod from the rack's orientation to its placing angle | **±95°; see below** |
-| **Ring rotation** | Continuous winding | Friction-driven, see §4.5 |
+| **Ring rotation** | Continuous winding | Toothed rim, three phased pinions on one belt, see §4.5 |
 
 **A yaw axis IS required, once rod loading is automated.** For winding the
 brief is right: chords are parallel to the axis and the ring plane never
@@ -287,11 +295,25 @@ Recommended for X/Y/Z: NEMA 17 direct-coupled to SFU1204 ballscrew on MGN12 line
 The critical subsystem. Everything else is conventional motion control.
 
 - C-ring, 40 mm outer diameter and 20 mm bore, with a **60° gap** in its circumference, on a **4 mm** plate (§4.2 — a 10 mm plate fits no truss the loads would choose)
-- Carries a thread spool and a passive tensioner (felt pad and spring is the standard solution). The spool block sweeps 32 mm of radius, and that — not the truss — is what sets how fat the cage's spine may be
-- Driven by **two friction wheels 90° apart** on the ring's outer edge, so one is always engaged when the gap passes the other
+- **Corrected: the ring is its own spool.** Revision 1 hung a spool block on the rim and paid 32 mm of swept radius for it — the number that set how fat the cage's spine could be. A whole metre truss is 7.8 m of 0.15 mm thread: 139 mm³, less than one epoxy drop. It winds into a **groove in the ring's own web** (mean radius 15 mm, 2 × 2 mm, 60 % packing → 10.7 m), the way a toroidal winder's shuttle carries its wire. Nothing protrudes, the rim is left for the drive, the swept radius is the rim itself, and the cage's spine grows from 3 mm to 8
+- **Corrected: driven on its teeth, not by friction.** Two friction wheels 90° apart were three faults at once: the orbiting spool struck each wheel once a revolution; two wheels are a drive and not a bearing, and nothing else located the ring; and the thread alone asks 0.022 N·m against a slip torque of 0.03 that was a guess — friction slips silently, which is why the turns had to be counted by watching a fiducial go past
+- **The tooth counts are solved, not chosen** (`Ring.mesh()`). The first toothed draft wrote 72 teeth on the rim and a 12-tooth pinion of 6 mm pitch radius: module 0.556 against module 1.0 — two gears that cannot mesh, and nothing caught it, because a tooth count can only ever be wrong silently. The solver takes the rim's tip circle as given (nothing may stand proud of the swept radius), requires a whole number of teeth on the rim **and in the gap** so the far side arrives in phase, takes the smallest pinion that neither undercuts (2/sin²α teeth) nor swallows its own bearing, checks Lewis at the root with a factor of 3, refuses any module whose pinion would hang below the rim, and of the survivors takes the coarsest. Answer: **module 0.8, 48 teeth on the rim, 8 of them in the gap, an 18-tooth pinion, 1:2.67, 6.0 MPa in the root**
+- **Three pinions on one belt, phased** (`Ring.pinion_az()`, `drive.pinion_phase()`). Placed by maximising the smaller of two margins in degrees — clear of the mouth, and further apart than a gap plus two contact arcs, so one gap cannot unmesh two: **66°/180°/294°, 18.6° in hand**. One motor and a belt, not three servos: three independently commanded shafts on a closed loop are over-constrained, and the rig jammed with all three saturated and the ring turning backwards
+- **The turns are known at the motor.** A toothed rim cannot slip, so the ring's angle is an encoder read on the pinion shaft and the only error left is quantisation: 4000 counts through 1:2.67 is **0.034° at the ring**. The fiducial is gone
+- **Corrected: the raceway's mouth is 60°, not 100°, and it is solved** (`Ring.race_mouth()`). It was sized to contain the ring's 60° gap. That is not the requirement: only the chord ever reaches the rail's radius, and only at one azimuth — at the ring's own x-window the diagonals are inside 5 mm of the chord's axis and never see the rail at 23 mm. What does pull the other way is depth, because the rail's lowest point sits at `rail·cos(mouth/2)` and a narrow mouth hangs it below the rim the head has to get down past. So the mouth is the narrowest that still costs no envelope, `2·acos(rim/rail)` = **59.6°**. §7 records what the 100° version did
 - **Corrected: it must stop with the gap toward the joint's face, not straight down.** "Gap down" is the right idea and the wrong number. The gap has to admit the whole cluster, and the two mitred ends lie against the chord along the face normal, 30° off vertical at a chord-up joint — exactly the edge of a 60° gap. Measured at the band's ends, where the descent is tightest: parked toward the face the ring clears by 1.9 mm, parked straight down by 0.6 mm. The angle is solved per joint and alternates in sign as the joints alternate faces
 
-Prior art: this is an orbital cable-wrapping head, scaled down. The mechanism is proven; the engineering is in miniaturisation and tension control.
+**What the drive is measured against** (`check_drive`, Tier 2): the ring is
+built as a **free body** — no hinge, no weld, six degrees of freedom — held
+by nothing but the C-channel raceway and three pinions with real involute
+teeth, and turned against the thread. One revolution: the ring arrives where
+the shaft says to **0.30° of a 7.50° tooth**, crossing a pinion with the gap
+costs **0.04°**, at least two pinions are engaged throughout, the steady
+demand is **0.028 N·m of a 0.120 rating** against a thread's own 0.022, and
+the ring's centre moves **0.072 mm**. Still true at RPM_MAX and twice the
+tension. Press one pinion on a quarter of a pitch out and it jams.
+
+Prior art: this is an orbital cable-wrapping head, scaled down. The mechanism is proven; the engineering is in miniaturisation, tension control and the fact that the drive has to survive the gap going past it.
 
 **Thread strategy:** do not cut between joints. Run one continuous thread per chord — tight bands at each joint, a single straight strand between. This reduces anchoring operations from 120 to 6 and the inter-joint strand is negligible in mass.
 
@@ -417,6 +439,143 @@ Flagged honestly rather than assumed solved:
 6. **The band binds over a fraction of its width** (§3.2). Whether 18 turns of which ~4 grip is the right recipe is a question for the pull-out test, not the simulation. If grip is what the joint needs, a narrower band at the same turn count is the change to try first.
 
 7. **Nothing in the model is a strength test.** The geometry, the reach, the clearances and the clock are simulated; the bond is not. §8 stands unchanged.
+
+8. **The drive torque and the rail's friction are still `[VERIFY]`.** `Ring.DRIVE_TORQUE` (0.12 N·m at the ring, a NEMA 8 through 4:1) and `Ring.RACE_MU` (0.15, a dry rail) are the two numbers `check_drive` measures a demand *against* rather than measures. The demand it does measure is 0.028 N·m steady, so there is room for both to be a good deal worse than assumed — but the raceway's own friction coefficient is the term the wedge multiplies, and a real rail on a film is nearer 0.05 than 0.15.
+
+9. **THE RING'S BORE IS NOW THE BINDING CONSTRAINT ON THE PRODUCT'S ACCURACY, and this is the open problem with the most at stake.** The bore a joint needs scales as `tan α`, so the winding head limits the **web angle** — and the web angle is what buys stereo accuracy. Swept over sides 80–180 mm and webs 35–55°, **not one design meets mass, first mode, the yaw budget and the bore together**; every design that holds the budget wants a 45° web or steeper, and none of those fits the 20 mm bore. Relaxing the bore by 1.5 mm (`Ring.ID` 20.0 → 21.5) unlocks 28 of them, the best being `warren 120/45/3.0/1.5` at 45.7 g, 0.88 of the budget and 0.77 m of range error at 100 m. Relaxing anything else unlocks nothing, except the first mode, which is not ours to trade away. What opening the bore costs is a re-check of the head: `EXIT_R` sits at 11.0 mm and would have 0.25 mm over a 10.75 mm bore, so the exit guide moves with it. **This trades the machine's head against the product's accuracy and it is a decision, not a derivation.** Until it is made, the chosen design (§3.1) sits at 0.94 of the budget and misses the 200 Hz mode by 1 Hz. `sweep.run` now takes the bore as a fourth constraint and `check_spine` asserts it is carried — without it the sweep named the best of a 28-strong field that the cell cannot build, with a straight face.
+
+10. **The ring's run-out is a raceway property nothing has built yet.** `Ring.RUN_OUT` = 0.08 mm is what `check_drive` measures with three pinions and a C-channel, and the spec charges it against both the ring's bore (which leaves the metre truss 0.12 mm) and its swept radius. It is a *calibration*, in the sense of §CLAUDE.md: a constant with a suite that re-measures it. A real raceway with a real bearing surface may do better or worse, and the metre truss's bore margin is thin enough that it matters which.
+
+11. ~~**The ring's bore binds the product's accuracy.**~~ **No longer true, and item 9 above is kept only as a record of how it read before the camera was weighed.** With a 4 g head the budget is met at an 85 mm section with +0.37 mm of bore to spare. What binds now is `MEMBER_F_MIN` — see §7.2.
+
+12. **The flat flex is an unmodelled load path into the camera.** A photograph of the part shows what no drawing does: a wide, stiff ribbon leaving the board's edge, and the board is the thing whose pose the whole structure exists to hold. A taut cable pulls; a cable clamped to the airframe pulls with every manoeuvre and every degree of temperature. Nothing in `sim/spine` carries it — the head is a point mass and an inertia — and `Payload.HEAD_EXTRA` charges its *mass* but not its *stiffness*. The mitigation is standard and cheap (a service loop, with the strain relief anchored to the truss's own end batten rather than to the camera or to the airframe), but it is a requirement on the harness that nobody has written down, and it belongs with the joint pull-out test in §8 rather than in the model.
+
+### 7.1 What the drive review changed, and what it cost
+
+Recorded because the mistake generalises. The head's drive was reviewed
+after a reader asked the obvious question — *where does the motor shaft go,
+if the rod is on the axis?* — and every step of the answer had already been
+written down wrongly:
+
+| written | actual | how it was found |
+|---|---|---|
+| two friction wheels on the rim | the spool orbited on the same rim and struck each wheel once a revolution | reading the two envelopes against each other; a head is not checked against itself |
+| a slip torque of 0.03 N·m | the thread alone asks 0.022, and friction slips silently | arithmetic |
+| a split gate to close the gap for winding | there is nowhere for a gate to park: aside it scrapes the chord, radial it fouls the pin arm | the clearance solver refused it |
+| 72 rim teeth, a 12-tooth pinion at 6 mm | module 0.556 against module 1.0 — the drive could not have turned | sizing the rig; nothing else would ever have said so |
+| three velocity servos, one per pinion | a closed loop over-constrained: all three saturated, the ring turned backwards | the rig |
+| pinions at 110/205/300 | 48° of mouth margin and 11 of spacing; the solver's 66/180/294 has 18.6 of each | the solver |
+| a raceway mouth of 100° | 160° of dead arc; the ring wedged and the drive jammed at every clearance under 0.12 mm | the rig, and only the rig |
+
+The last one is the one worth remembering. The 100° mouth was not a typo
+or a rounding — it was a **correct deduction from a false premise** (that
+the raceway's mouth must contain the ring's gap). It cost nothing visible:
+the design still turned, because the ring wandered far enough to be caught
+by a pinion instead of the rail. It would have been built, and it would
+have needed a deliberately sloppy raceway to work at all, and nobody would
+have known why.
+
+### 7.2 What the camera's own datasheet changed, and what it cost
+
+The same shape of mistake, one layer up. The load case in §2.3 is *camera
+head 50 g at each end* and every structural conclusion in this document
+descends from it. Nobody had weighed one. A Raspberry Pi Camera Module 3 —
+the part this rig is built around — is **4 g** on the vendor's own
+comparison table, and the modules it supersedes are 3 g. The tip mass was
+an order of magnitude out, and it sets the tip force, dominates the
+Rayleigh mass, and therefore fixes both the angular budget and the first
+mode.
+
+Re-swept with the real head, the mount modelled, and every rule the cell
+and the members impose applied together (1470 candidates, 60–160 mm
+sections, 30–60° webs):
+
+| said | is |
+|---|---|
+| the 0.005° budget cannot be met inside a 100 mm section | met at **85 mm** |
+| the winding head's **bore** is the binding constraint on accuracy | the chosen design clears it by +0.37 mm |
+| the design is **section-limited** | it is limited by the **diagonals' own first mode** |
+| 0 designs meet mass, f1, budget and bore together | **7** break no rule at all |
+| the answer is `115/40/3.0/1.5`, 0.82 m at 100 m | `85/40/3.0/1.5`, **0.56 m** |
+
+What binds now is `MEMBER_F_MIN`: 831 of the 1062 candidates that hold the
+accuracy budget are refused because a 1.0 mm web rings inside the
+propellers' 200–330 Hz band. Give up that one rule and the sweep reaches
+0.358 m at 46.5 g — 36% truer and six grams lighter. That rule is about
+fatigue at a bonded joint, not about the cameras, and **nobody has pulled a
+joint with a 1.0 mm diagonal at blade-pass.** It is now the most valuable
+bench test in the programme, worth more than any remaining geometric choice.
+
+Three second-order things fell out of the same re-run, each of which had
+been silently wrong:
+
+- **The mount was a placeholder, and a placeholder is not a bound.** A
+  massless rigid bracket charges nothing for the mount's own mass and
+  compliance, and hangs the payload on the chord ends 66 mm off the axis.
+  Between a 50 g head and a 4 g one its error changes *sign*. No margin
+  could have covered both.
+- **The web angle in a design's name is a request, not a fact.** The bay
+  pitch rounds to a whole number of bays, so at a 100 mm section 35° and
+  40° are the same truss, built at 38.66°. The bore rule scales as `tan α`
+  and was being asked about the requested angle: 40 candidates passed it
+  that the head cannot actually enter.
+- **The loader's reach was not a design rule and should always have been.**
+  A slenderer truss with a finer web needs *longer* diagonal racks, so the
+  gantry's X travel is not monotonic in anything the structural rules see.
+  With the light head the optimiser's first answer was a 58 mm section
+  needing 1425 mm of a 1400 mm axis.
+
+### 7.3 The camera's own datasheet, part two: the lens moves
+
+`RP-009992-DS-1` (the Module 3 sensor assembly) confirms every mechanical
+number that module's drawing gives — 10.8 ±0.15 square, 3.875 ±0.15 body
+height, a ⌀5.75 barrel. Then it says the thing neither the brief nor the
+mechanical drawing does.
+
+**Module 3 focuses with an open-loop voice coil, and its tolerances are
+larger than the whole structural budget.** In the units §2.2 writes the
+budget in — range error at 100 m on a 1 m baseline:
+
+| term | what it is | at 100 m |
+|---|---|---|
+| **the entire inter-camera budget** | 0.005° relative yaw | **0.84 m** |
+| AF postural difference ±50 µm | lens shift with **orientation**, at fixed drive | **1.06 m** |
+| AF hysteresis 8 µm | | 0.17 m |
+| AF dynamic tilt 8′ | lens axis against the sensor, over the stroke | 1.7 px of principal point per mm of lever — **5–14 m** |
+
+An axial lens shift changes the image distance, which is what a calibration
+measures as the focal length. Stereo reads `Z = f B / d`, so a fractional
+error in `f` is the same fractional error in `Z`, and unlike a relative yaw
+it does **not** cancel between the two cameras: both focal lengths enter the
+same way. This is an *intrinsic*, and no amount of structural rigidity
+touches it.
+
+**So the product uses Camera Module 2, which has no lens actuator at all.**
+Its focus is set on a thread and then stays where it is put. That is the
+decision this section exists to record, and it is a swap of parts rather
+than a mitigation: locking a voice coil by holding its drive current does
+not remove the postural term, because the postural term *is* what the coil
+does at a fixed current.
+
+**What the swap costs, and it is not nothing.** Module 2 has a shorter focal
+length on bigger pixels — 3.04 mm and 1.12 µm against 4.74 and 1.4 — so a
+pixel subtends 0.368 mrad instead of 0.295. Depth precision is proportional
+to that, so the stochastic floor goes from 0.28 m to 0.35 m at 100 m. Seven
+centimetres given up to remove a metre and six: a fifteen-to-one trade, and
+`check_geometry` asserts the arithmetic rather than the conclusion.
+
+Module 2 also brings a **plastic** lens housing where Module 3 had a
+load-bearing metal can, which is the surface the six mount struts bond to.
+It is not the soft part — a stubby block in the weakest plastic it could be
+is 2.7× the axial stiffness of the 1.5 mm struts it carries — and
+`check_mount` asserts the modulus at which that would flip (1.1 GPa, below
+any engineering thermoplastic) rather than a margin somebody chose.
+
+Recorded here because it is the same failure as §7.1 and §7.2 one layer
+further out: a number nobody had looked up, quietly setting the answer.
+`Module2` and `Module3` both live in `spec.py` — the rejected part kept
+beside the chosen one, because the next person to compare 11.9 megapixels
+against 8 will want to know what it cost.
 
 ---
 

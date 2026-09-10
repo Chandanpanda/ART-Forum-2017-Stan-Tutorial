@@ -99,6 +99,9 @@ class Joint:
         return len(self.diags) == 2
 
 
+_N_BETWEEN = {}
+
+
 # ----------------------------------------------------------------- the truss
 class TrussGeometry:
     def __init__(self, truss: Truss):
@@ -144,6 +147,14 @@ class TrussGeometry:
                        for j in self.joints]
         self.chords = [r for r in self.rods if r.kind == "chord"]
         self.diags = [r for r in self.rods if r.kind == "diag"]
+        # THE MOUNT'S OWN RODS, when a camera is being built onto this
+        # truss.  Kept SEPARATE from `rods` on purpose: everything that
+        # reasons about the truss -- the joint list, the winding order, the
+        # structural model -- counts the truss's rods, and a camera mount is
+        # not one of them.  What the CELL handles, though, is every rod it
+        # has to pick up, so the magazine, the scene and the executor all
+        # read `all_rods`.
+        self.mount_rods = ()
 
     # ------------------------------------------------------------ helpers
     def chord_point(self, k, x):
@@ -151,9 +162,17 @@ class TrussGeometry:
         return p0 + np.array([x, 0.0, 0.0])
 
     def n_between(self, k, m):
-        """Unit y-z vector from chord k's axis toward chord m's."""
-        v = radial(chord_phi(m)) - radial(chord_phi(k))
-        return v / np.linalg.norm(v)
+        """Unit y-z vector from chord k's axis toward chord m's.
+
+        Cached on the pair, which is exact: it depends on the section's
+        three chord azimuths and on nothing about the truss.  It was 45%
+        of building a geometry, and the design optimiser builds ten
+        thousand of them."""
+        v = _N_BETWEEN.get((k, m))
+        if v is None:
+            v = radial(chord_phi(m)) - radial(chord_phi(k))
+            v = _N_BETWEEN[(k, m)] = v / np.linalg.norm(v)
+        return v
 
     def joints_on(self, k):
         """The joints of chord k, in x order."""
@@ -178,6 +197,44 @@ class TrussGeometry:
         return rod.p0 + u * e, rod.p1 - u * e
 
     # ----------------------------------------------------- rotated frames
+    @property
+    def all_rods(self):
+        """Every rod the CELL must pick up and lay: the truss's, then the
+        mount's, in one index space."""
+        return list(self.rods) + list(self.mount_rods)
+
+    def attach_mount(self, mount):
+        """Give this geometry the mount's rods, indexed on from the truss's.
+
+        The mount's own `Strut` records carry the same fields a Rod does
+        plus a kind the cell does not know; this converts them once, so
+        there is one rod type in the machine and one index space in the
+        scene, the magazine and the executor."""
+        n = len(self.rods)
+        out = []
+        for st in mount.rods:
+            if st.kind == "collar":
+                continue                 # a machined part, not a laid rod
+            out.append(Rod("m" + st.kind, n + len(out),
+                           np.asarray(st.p0, float), np.asarray(st.p1, float),
+                           st.r, chord=st.end))
+        # THE CAMERA RIDES THE SAME PATH AS A ROD.  Its carrier presents a
+        # boss of the largest stock diameter, coaxial with the spine, so
+        # the jaws already span it and the loader already knows how to pick
+        # it up -- that is what the carrier is FOR.  Given to the cell as
+        # one more thing to fetch, place and keep, it needs no new machine
+        # step and no new op.
+        from .spec import Carrier, Payload
+        for end, (centre, look, _lr) in enumerate(mount.payload):
+            look = np.asarray(look, float) / float(np.linalg.norm(look))
+            ax = np.asarray(Carrier.boss_axis(look), float)
+            b0 = np.asarray(centre, float) + ax * (Payload.BOX[1] / 2.0)
+            out.append(Rod("mcam", n + len(out), b0,
+                           b0 + ax * Carrier.boss_l(), Carrier.boss_d() / 2.0,
+                           chord=end))
+        self.mount_rods = tuple(out)
+        return self.mount_rods
+
     def rods_at(self, theta):
         """(p0 [N,3], p1 [N,3], r [N]) of every rod at cage angle theta."""
         Rm = rot_x(theta)

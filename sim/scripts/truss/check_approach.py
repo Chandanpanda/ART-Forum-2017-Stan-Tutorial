@@ -148,7 +148,7 @@ def main():
     g = TrussGeometry(deep)
     fx = fixture.Fixture(g)
     f0, f1, fr = fx.obstacles(0.0)
-    x0 = -(Cage.END_FREE + Cage.END_PLATE_T)
+    x0 = -(fx.end_free() + Cage.END_PLATE_T)
     near = [(a, b, r) for a, b, r in zip(f0, f1, fr)
             if abs(a[0] - (x0 + Cage.END_PLATE_T / 2.0)) < 1e-6]
     check("the end plate is modelled by samples no thicker than the plate",

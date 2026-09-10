@@ -32,12 +32,28 @@ import numpy as np
 
 @dataclass
 class Pose:
-    """One load case's effect on the pair, SI (radians, metres)."""
+    """One load case's effect on the pair, SI (radians, metres).
+
+    ALL SIX DEGREES OF FREEDOM, not just the two that cost range.  The
+    first version kept the baseline component of the translation and threw
+    the other two away, because only yaw and scale convert into metres of
+    range error.  That made the model unable to answer the question anyone
+    asks first -- which of the six moved? -- and the honest answer to "the
+    other two do not move" is a measurement, not an assumption.
+
+    The three translations are along the baseline, across it horizontally,
+    and vertically.  Only `d_baseline` enters range_error: a cross-baseline
+    shift shows up as vertical disparity, which a stereo pair can see and
+    correct without a calibration target, so it does not bias depth.
+    """
     yaw:   float
     pitch: float
     roll:  float
     d_baseline: float
     baseline:   float
+    # the two that do not cost range, so a synthetic Pose may omit them
+    d_lateral:  float = 0.0
+    d_vertical: float = 0.0
 
     def range_error(self, Z):
         """Metres of range error at range Z, from yaw and from scale."""
@@ -56,8 +72,16 @@ def relative_pose(model, u):
     B = float(np.linalg.norm(axis))
     axis = axis / B
     d = rr - rl
+    dt = tr - tl
+    # a frame on the baseline: along it, across it in the horizontal plane,
+    # and up.  The optical axes lie along the model's y.
+    up = np.array([0.0, 0.0, 1.0])
+    lat = np.cross(up, axis)
+    n = np.linalg.norm(lat)
+    lat = lat / n if n > 1e-12 else np.array([0.0, 1.0, 0.0])
     return Pose(yaw=float(d[2]), pitch=float(d[0]), roll=float(d[1]),
-                d_baseline=float((tr - tl) @ axis), baseline=B)
+                d_baseline=float(dt @ axis), d_lateral=float(dt @ lat),
+                d_vertical=float(dt @ up), baseline=B)
 
 
 # ------------------------------------------------------------ load cases

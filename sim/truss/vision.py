@@ -31,7 +31,11 @@ class ModelVision(hal.VisionHAL):
         self.cell = cell
         self.rng = rng or np.random.default_rng(1)
         self.bias = self.rng.normal(0.0, Vision.EXT_SIGMA, 2)
-        self.sigma = Vision.LOOK_SIGMA
+        # the look's noise follows the WEB's angle (Vision.look_sigma): the
+        # joint's x comes from the diagonals' lines, with 1/sin(alpha) on
+        # their fit, so a model camera with one fixed sigma is only right
+        # for the truss it was measured on
+        self.sigma = Vision.look_sigma(cell.geom.t.alpha)
 
     def locate(self, joint_index):
         j = self.cell.geom.joints[joint_index]

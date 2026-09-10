@@ -242,10 +242,17 @@ def rod_body(geom, rod, p0, p1):
     """A free rod at world endpoints p0, p1 (its centreline)."""
     t = geom.t
     if rod.kind == "mcam":
-        # THE CAMERA AND ITS COLLAR, as one part on a carrier boss.  Drawn
-        # where the boss is, so the loader picks it up exactly where the
-        # jaws will be: everything else about the module hangs off that.
+        # THE WHOLE HEAD KIT, as one part on a carrier boss: the module, the
+        # COLLAR bonded round its lens housing, and the four GRID rods wound
+        # to each other at four crossings.  All of it arrives from station B
+        # already made -- this cell cannot wind those crossings -- so to the
+        # loader it is one rigid thing to fetch, and it must be DRAWN as the
+        # thing that arrives.  Drawn as a module with a solid plate on it,
+        # the cell was planning against a part that does not exist: no grid
+        # to land the struts on, and a plate over the lens.
         from .spec import Payload, Bracket, Carrier
+        from .mount import collar_segments, payload_solid
+        d = t.d_diag
         c = (p0 + p1) / 2.0
         look = -(p1 - p0) / float(np.linalg.norm(p1 - p0))
         xh = np.array([1.0, 0.0, 0.0])
@@ -254,20 +261,51 @@ def rod_body(geom, rod, p0, p1):
             up = np.array([0.0, 0.0, 1.0])
         up = up / np.linalg.norm(up)
         base = p0 + look * (Payload.BOX[1] / 2.0)      # the module's centre
+
+        def at(dx, dl, du):
+            """A point in the CAMERA's own frame -- the frame mount.solve
+            builds every part of the mount in."""
+            return base - c + dx * xh + dl * look + du * up
+
         gs = [cylinder("rod%d_g" % rod.index, p0 - c, p1 - c, rod.r,
                        C_ALU, ROD, ROD | CAGE | HEAD_B | DROP,
-                       mass=Carrier.MASS, extra=' class="rod"'),
-              box("rod%d_b" % rod.index, base - c,
-                  (Payload.BOX[0] / 2.0, Payload.BOX[1] / 2.0, Payload.BOX[2] / 2.0),
-                  xh, look, C_CAM, ROD, ROD | CAGE | HEAD_B | DROP,
-                  mass=Payload.MASS),
-              box("rod%d_p" % rod.index,
-                  base - c + look * (0.5 * sum(Bracket.seat_l())),
-                  (Bracket.plate_half(None, 2.0 * rod.r * 0.0 + 1.5)[0],
-                   Bracket.SHEET / 2.0,
-                   Bracket.plate_half(None, 1.5)[1]),
-                  xh, look, C_ALU, ROD, ROD | CAGE | HEAD_B | DROP,
-                  mass=Bracket.mass())]
+                       mass=Carrier.MASS, extra=' class="rod"')]
+        # the module, as the two boxes it really occupies -- the collar
+        # seats on the board's FRONT FACE with the housing standing through
+        # its aperture, which one 9 mm slab cannot say
+        for k, e in enumerate(payload_solid(Payload)):
+            gs.append(box("rod%d_b%d" % (rod.index, k),
+                          at(*(0.5 * (a[0] + a[1]) for a in e)),
+                          tuple(0.5 * (a[1] - a[0]) for a in e),
+                          xh, look, C_CAM if k == 0 else "0.10 0.10 0.12 1",
+                          ROD, ROD | CAGE | HEAD_B | DROP,
+                          mass=Payload.MASS if k == 0 else 0.3))
+        # the collar: four bands, the ring round the aperture, four ribs
+        segs = collar_segments(Payload, d)
+        lc = 0.5 * sum(Bracket.seat_l())
+        for k, (s0, s1, sw) in enumerate(segs):
+            gs.append(box("rod%d_p%d" % (rod.index, k),
+                          at(0.5 * (s0[0] + s1[0]), lc, 0.5 * (s0[1] + s1[1])),
+                          (max(abs(s1[0] - s0[0]) / 2.0, sw / 2.0),
+                           Bracket.SHEET / 2.0,
+                           max(abs(s1[1] - s0[1]) / 2.0, sw / 2.0)),
+                          xh, look, C_ALU, ROD, ROD | CAGE | HEAD_B | DROP,
+                          mass=Bracket.mass(Payload, d) / len(segs)))
+        # the tic-tac-toe, wound and bonded at station B
+        gx, gu = Bracket.grid_half(Payload, d)
+        over = Bracket.OVERRUN
+        grid = ([((-gx - over, Bracket.layer_l(0, Payload, d), su * gu),
+                  (+gx + over, Bracket.layer_l(0, Payload, d), su * gu))
+                 for su in (+1.0, -1.0)]
+                + [((sx * gx, Bracket.layer_l(1, Payload, d), -gu - over),
+                    (sx * gx, Bracket.layer_l(1, Payload, d), +gu + over))
+                   for sx in (+1.0, -1.0)])
+        for k, (a, b) in enumerate(grid):
+            qa, qb = at(*a), at(*b)
+            gs.append(cylinder("rod%d_q%d" % (rod.index, k), qa, qb, d / 2.0,
+                               C_ROD, ROD, ROD | CAGE | HEAD_B | DROP,
+                               mass=Stock.rho_lin(d)
+                               * float(np.linalg.norm(qb - qa)) / 1000.0))
         return ('<body name="rod%d" pos="%s"><freejoint name="rod%d_f"/>%s</body>'
                 % (rod.index, _v(c), rod.index, "".join(gs)))
     if rod.kind.startswith("m"):
@@ -300,9 +338,22 @@ def rods_in_racks(geom, fixture):
     return out
 
 
-def rods_in_fixture(geom):
+def rods_in_fixture(geom, fixture=None, racked=()):
+    """Every rod where the fixture holds it -- except the kinds named in
+    `racked`, which start in their rack slots instead.
+
+    WHY THE EXCEPTION EXISTS.  `rig_mount` wants a truss that is already
+    built and a mount that is not, so that the mount phase has something to
+    fetch.  Given "loaded" as it stood, the mount rods started welded at
+    their nominal poses, every grip in the phase closed on nothing, and the
+    rig reported the mount built to 0.44 mm without having laid any of it.
+    A rig that cannot fail is not a measurement."""
     out = []
     for rod in geom.all_rods:
+        if rod.kind in racked and fixture is not None:
+            s = fixture.slot_of(rod.index)
+            out.append(rod_body(geom, rod, s.p0, s.p1))
+            continue
         p0, p1 = (rod.p0, rod.p1) if rod.kind != "diag" else geom.diag_body_ends(rod)
         out.append(rod_body(geom, rod, p0, p1))
     return out
@@ -379,7 +430,7 @@ def rack_geoms(geom, fixture):
             # a nest under the module's own body, with the boss standing
             # free for the jaws.  Held on V-blocks under the boss alone it
             # is a 4 g overhang on a 3 mm pin, and it rolls off.
-            from .spec import Payload, Carrier
+            from .spec import Payload, Carrier, Process, Bracket
             look = -u
             base = s.p0 + look * (Payload.BOX[1] / 2.0)
             # A POCKET, NOT A SHELF.  The module is 24 mm tall on a 9 mm
@@ -394,8 +445,39 @@ def rack_geoms(geom, fixture):
             # printed to the part, so it is the carrier's own FIT.
             wall = 2.0
             hy = Payload.BOX[1] / 2.0 + Carrier.FIT
-            out.append(box("nest%d" % s.rod, base - s.up * (Payload.BOX[2] / 2.0 + 4.5),
-                           (Payload.BOX[0] / 2.0 + wall, hy + wall, 4.0),
+            # ...AND THE FIT IS ON THE BACK FACE ONLY, because the front is
+            # where the product is.  The kit stands `kit_proud` in front of
+            # the board with a collar and a wound tic-tac-toe on it; a wall
+            # a fit's interference from the board's front face is a wall
+            # inside the grid.  Sized against the module it cleared the
+            # part that actually arrives by a tenth of a millimetre.
+            fy = (Payload.BOX[1] / 2.0 - Payload.CASE_PROUD
+                  + Carrier.kit_proud(Payload, geom.t.d_diag)
+                  + Process.SEAT_CLEAR)
+            kx, ku = Carrier.kit_half(Payload, geom.t.d_diag)
+            # THE FLOOR IS A PAD UNDER THE BOARD, not a plate under the kit.
+            # The grid hangs BELOW the module -- its layer-1 rods reach
+            # 18.4 mm down where the board reaches 11.9 -- so a floor that
+            # takes the module's own weight is a floor those rods stand in.
+            # Measured on the built scene: 3.55 mm inside it.  The pad
+            # therefore stops inboard of the grid in x and behind it in
+            # look, and carries the board's underside where nothing else of
+            # the kit reaches.
+            gx, _gu = Bracket.grid_half(Payload, geom.t.d_diag)
+            hx = min(Payload.BOX[0] / 2.0,
+                     gx - geom.t.d_diag / 2.0 - Process.SEAT_CLEAR)
+            back = Payload.BOX[1] / 2.0 + wall
+            # ...and it stops BEHIND THE COLLAR, not at the board's front
+            # face.  The collar overhangs the board by 2.5 mm on every side,
+            # so under the module its own bands hang lower than the board
+            # does and a pad flush with the board's face is a pad against
+            # them -- measured on the built scene, touching at 0.00 mm.
+            front = Bracket.seat_l(Payload)[0] - Process.SEAT_CLEAR
+            pt = 4.0                                             # pad thickness
+            out.append(box("nest%d" % s.rod,
+                           base + look * (0.5 * (front - back))
+                           - s.up * (Payload.BOX[2] / 2.0 + pt / 2.0),
+                           (hx, 0.5 * (front + back), pt / 2.0),
                            np.array([1.0, 0.0, 0.0]), look, C_RACK, CAGE, ROD))
             # The FAR wall is whole; the NEAR one is SPLIT, because the
             # carrier's boss comes out through it and the jaws close on the
@@ -411,11 +493,16 @@ def rack_geoms(geom, fixture):
             # the nest reaches, and it is where a tab holds a board best.
             gap = Gripper.JAW_OPEN / 2.0 + Gripper.PAD_T + 1.0
             hw = 3.0
+            # THE FRONT WALL IS A KEEPER, NOT A BEARING.  It stands one
+            # process clearance in front of the whole kit -- the grid, not
+            # the housing -- and touches nothing; what actually retains the
+            # module is the carrier it is pressed into, which is a printed
+            # part and not modelled here.  The BACK tabs keep the fit, and
+            # the back is the direction the module was measured sliding.
             out.append(box("nestw%d_a" % s.rod,
-                           base + look * (hy + wall / 2.0)
+                           base + look * (fy + wall / 2.0)
                            - s.up * (Payload.BOX[2] / 4.0),
-                           (Payload.BOX[0] / 2.0 + wall, wall / 2.0,
-                            Payload.BOX[2] / 4.0),
+                           (kx + wall, wall / 2.0, Payload.BOX[2] / 4.0),
                            np.array([1.0, 0.0, 0.0]), look, C_RACK, CAGE, ROD))
             for sx, tag in ((+1.0, "b"), (-1.0, "c")):
                 # ...and they stop BELOW the pads' own reach: a tab whose
@@ -951,6 +1038,8 @@ def z_floor(geom, fixture):
 def scene_cell(geom, fixture, stage="empty", start=None, timestep=5e-4, n_drops=None,
                mount=None, kit=None):
     """The whole cell.  stage="empty": rods in their racks, welds off;
+    stage="truss": the TRUSS built and welded to the cage, the MOUNT still in
+    its racks -- what `rig_mount` runs against;
     "loaded": rods in the fixture, welded to the cage.  Pass `mount` (a
     truss.mount.Mount) to hang the finished camera nose on the cage."""
     t = geom.t
@@ -962,7 +1051,10 @@ def scene_cell(geom, fixture, stage="empty", start=None, timestep=5e-4, n_drops=
                  'contype="%d" conaffinity="%d"/>' % (mm(t.length / 2.0), mm(floor_z), CAGE, ROD | DROP))
     parts += rack_geoms(geom, fixture)
     parts += cage_body(geom, fixture, mount=mount)
-    parts += rods_in_racks(geom, fixture) if stage == "empty" else rods_in_fixture(geom)
+    racked = tuple(k for k in ("mbatten", "mcam", "mstrut", "mgrid")) \
+        if stage == "truss" else ()
+    parts += (rods_in_racks(geom, fixture) if stage == "empty"
+              else rods_in_fixture(geom, fixture, racked))
     parts += head_body(geom, fixture, z_lo, start=start)
     parts += drops(n_drops)
     b_eq, b_act, b_ten = [], [], None
@@ -977,7 +1069,7 @@ def scene_cell(geom, fixture, stage="empty", start=None, timestep=5e-4, n_drops=
           # blocked pad let the other run past the rod)
           '    <joint name="jaws_sym" joint1="gf_l" joint2="gf_r" polycoef="0 1 0 0 0"/>']
     for r in geom.all_rods:
-        if r.kind == "mcam" and stage == "empty":
+        if r.kind == "mcam" and (stage == "empty" or r.kind in racked):
             # A DETENT IN THE NEST.  The carrier is a 24 mm slab on a 9 mm
             # base with a 14 mm pin out of one side; sat loose in a pocket
             # it walks under the gripper's own approach and ends up tilted
@@ -989,7 +1081,9 @@ def scene_cell(geom, fixture, stage="empty", start=None, timestep=5e-4, n_drops=
                       % (r.index, r.index))
         eq.append('    <weld name="keep%d" body1="cage" body2="rod%d" active="%s" '
                   'solref="0.004 1" solimp="0.98 0.999 0.001"/>'
-                  % (r.index, r.index, "true" if stage == "loaded" else "false"))
+                  % (r.index, r.index,
+                     "true" if stage in ("loaded", "truss")
+                     and r.kind not in racked else "false"))
         eq.append('    <weld name="hold%d" body1="gripw" body2="rod%d" active="false" '
                   'solref="0.004 1" solimp="0.98 0.999 0.001"/>' % (r.index, r.index))
     for i in range(n_drops):

@@ -31,10 +31,13 @@ truss with a camera on each end:
     wind    every joint, the ring turning round the chord, the band laid
             where the fiducial says the turns went
     dose    resin onto every band
-    mount   thirteen rods an end plus the camera on its carrier, at cage
-            angles the same worm indexes and gripper yaws the same servo
-            turns -- the mount was solved for poses the machine already has
-    bond    an epoxy fillet at every mount rod end
+    mount   three battens and six struts an end, plus the HEAD KIT on its
+            carrier -- module, collar and the wound tic-tac-toe, made
+            whole at station B because this cell cannot wind those four
+            crossings (see stationb.py) -- at cage angles the same worm
+            indexes and gripper yaws the same servo turns
+    bond    an epoxy fillet at every mount rod end, the six struts landing
+            on crossings that arrived already wound
 
 Nothing here is a scripted animation.  Every pose comes from the same
 `schedule.plan` the checks run, executed by the same `process.Executor`
@@ -230,6 +233,29 @@ def main():
             for r in g.rods}
     rep = inspector.inspect_truss(g, ex.states, seated=errs, cycle_s=d.time)
     print(inspector.report(rep) if hasattr(inspector, "report") else rep)
+    # WHERE THE MOUNT ACTUALLY ENDED UP, against `mount.solve`'s own drawing.
+    # NOT THE MACHINE AGAINST ITSELF.  The mount phase once reported every
+    # rod placed within 0.45 mm and 0.0 degrees of plan while building a
+    # mess: that number was the tracker measured against its own target.
+    # This one is the built part, in the cage's frame, against the geometry
+    # the struts and the camera and the truss all have to agree about -- and
+    # it is measured at the rods' ENDS, because a rod rolled about its own
+    # axis has a centre error of zero.
+    if g.mount_rods:
+        Rb = geometry.rot_x(-c.cage_truth())
+        worst, who = 0.0, ""
+        for r in g.mount_rods:
+            q0, q1 = c.rod_pose(r.index)
+            a0, a1 = Rb @ np.asarray(q0, float), Rb @ np.asarray(q1, float)
+            e = min(max(float(np.linalg.norm(a0 - r.p0)),
+                        float(np.linalg.norm(a1 - r.p1))),
+                    max(float(np.linalg.norm(a0 - r.p1)),
+                        float(np.linalg.norm(a1 - r.p0))))
+            if e > worst:
+                worst, who = e, "%s%d" % (r.kind, r.index)
+        print("mount built within %.2f mm of its own geometry (worst %s of %d "
+              "parts; the head kit arrives whole from station B)"
+              % (worst, who, len(g.mount_rods)))
     if msgs:
         print("%d warnings" % len(msgs))
     if ex.slow:

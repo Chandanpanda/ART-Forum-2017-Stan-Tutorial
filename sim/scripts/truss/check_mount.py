@@ -148,6 +148,47 @@ def main():
     check("...and being radial rather than axial it costs the cage no room at all",
           abs(Carrier.reach(so) - (so + Payload.BOX[0] / 2.0)) < 1e-9,
           "reach %.2f mm is the module's own outer face" % Carrier.reach(so))
+    # EVERY MOUNT ROD HAS TO BE LAYABLE WITH THE YAW THE MACHINE HAS.  The
+    # servo has a stop; asked past it, it clamps and answers "settled", and
+    # the rod goes down off its own line with nothing reporting anything.
+    # Two struts an end wanted 142.3 degrees against a 95 degree stop and
+    # were laid 47 degrees out -- 27.7 mm at their ends, and it took a
+    # picture and then rig_mount to find, because the plan, the tracker and
+    # the inspector all agreed the op had succeeded.
+    for T in (structure.TRUSS_300, structure.TRUSS_1M):
+        gg = geometry.TrussGeometry(T)
+        MM = mount.solve(gg, d_strut=T.d_diag,
+                         standoff_mm=mount.fov_standoff(gg, d_strut=T.d_diag))
+        gg.attach_mount(MM)
+        bad = []
+        for r in gg.mount_rods:
+            offer = mount.poses_for(r.axis, reversible=(r.kind != "mcam"))
+            if not [p for p in offer if abs(p[1]) <= Head.GRIP_YAW]:
+                bad.append((r.kind, r.index,
+                            [round(p[1], 1) for p in offer]))
+        check("[%s] every mount rod can be laid within the yaw servo's own stop "
+              "-- a rod has no head or tail, so the cage's symmetry and the "
+              "ROD'S give four poses, not two" % T.name,
+              not bad, "%s" % (bad or "all %d parts" % len(gg.mount_rods)))
+        # ...and the one part that is not a rod is never offered the flip
+        cam = [r for r in gg.mount_rods if r.kind == "mcam"][0]
+        check("[%s] ...and the camera is not offered the end-for-end flip: it is "
+              "on a carrier with a boss out of one side, and reversed it is a "
+              "boss where the lens goes" % T.name,
+              len(mount.poses_for(cam.axis, reversible=False)) == 2
+              and len(mount.poses_for(cam.axis)) == 4,
+              "%d poses for a rod, %d for the camera"
+              % (len(mount.poses_for(cam.axis)),
+                 len(mount.poses_for(cam.axis, reversible=False))))
+        # all four really are the same line
+        for r in gg.mount_rods[:6]:
+            got = [mount.axis_from(th, y) for th, y in mount.poses_for(r.axis)]
+            check("[%s] ...and all four poses lay %s%d on its own line"
+                  % (T.name, r.kind, r.index),
+                  all(abs(abs(float(np.asarray(v) @ r.axis)) - 1.0) < 1e-6
+                      for v in got),
+                  "%d poses" % len(got))
+
     check("the cage can turn the boss under the jaws with the axes it has",
           np.linalg.norm(mount.axis_from(*mount.pose_for(axis)) - axis) < 1e-9)
 

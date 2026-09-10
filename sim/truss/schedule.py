@@ -284,18 +284,26 @@ def theta_up(p):
 
 
 def mount_phase(P, hs, move, index, yaw_to, geom, fixture, cruise):
-    """Both noses: the camera on its carrier, thirteen rods an end, a
-    fillet at every rod end, and a wound joint at every grid crossing.
+    """Both noses: three battens, the HEAD KIT on its carrier, six struts,
+    and a fillet at every rod end.
+
+    THE GRID IS NOT LAID HERE.  Its four crossings are wound to each other
+    with the same thread the truss's joints use, and this cell cannot make
+    that joint: its ring is 40 mm across in a raceway 54 across, and by the
+    time the mount goes on, the crossings are inside the end triangle with
+    the camera behind them.  Station B makes the sub-assembly on its own
+    jig and it arrives wound, bonded and seated on the module -- so what
+    this phase fetches is one part, and the crossings are already there
+    when the struts reach for them.
 
     ORDER IS MECHANICAL, not arbitrary.  The battens close the chord
-    triangle first, because everything else is measured from it.  The
-    CAMERA goes on next -- the grid is laid ON its collar, so the collar
-    has to be there.  Then the grid, then the struts, which land where two
-    grid rods already cross.  A strut laid before its crossing exists would
-    be a rod bonded to air.
+    triangle first, because everything else is measured from it.  The KIT
+    goes on next, because it carries the crossings.  Then the struts, which
+    land where two grid rods already cross: a strut laid before its
+    crossing exists would be a rod bonded to air.
     """
     from . import mount as _mount
-    order = {"mbatten": 0, "mcam": 1, "mgrid": 2, "mstrut": 3}
+    order = {"mbatten": 0, "mcam": 1, "mstrut": 2}
     gx = Head.grip_x()
     for end in (0, 1):
         rods = sorted([r for r in geom.mount_rods if r.chord == end],
@@ -307,9 +315,20 @@ def mount_phase(P, hs, move, index, yaw_to, geom, fixture, cruise):
             # POSITION flips with it, and the three end battens came out
             # 4.7 mm below the z axis's own floor at the first solution.
             # Take the one that holds the rod higher.
-            poses = _mount.poses_for(r.axis)
+            # ...AND ONLY THE ONES THE YAW SERVO CAN ACTUALLY REACH.  It has
+            # a stop at +-GRIP_YAW; asked for more it clamps, lays the rod
+            # off its own line, and answers "settled" -- which is how four
+            # struts a truss came out 27.7 mm out at their ends while every
+            # op reported success.  A pose outside the stop is not a pose.
+            # THE CAMERA IS NOT REVERSIBLE.  A rod laid end-for-end is the
+            # same rod; a camera laid end-for-end is a boss where the lens
+            # goes.  Only the cage's own symmetry is on offer for it.
+            offer = _mount.poses_for(r.axis, reversible=(r.kind != "mcam"))
+            poses = [p for p in offer if abs(p[1]) <= Head.GRIP_YAW]
             if not poses:
-                raise ValueError("mount rod %d has no cage pose" % r.index)
+                raise ValueError(
+                    "mount rod %d wants a gripper yaw outside +-%.0f deg: %s"
+                    % (r.index, Head.GRIP_YAW, [round(p[1], 1) for p in offer]))
             theta, yaw = max(poses, key=lambda p: float((rot_x(p[0]) @ r.mid)[2]))
             index("mount", theta)
             s = fixture.slot_of(r.index)

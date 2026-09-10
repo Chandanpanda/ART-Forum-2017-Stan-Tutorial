@@ -111,19 +111,24 @@ class Carrier:
         return max(Stock.DIAMETERS)
 
     @classmethod
-    def boss_l(cls, payload=None):
+    def boss_l(cls, payload=None, d_rod=1.5):
         """How long the boss has to be, mm.
 
         TWO RULES, and the second is the one that bites.  The pads have to
         take it with clearance either side -- and the HEAD has to be able to
-        come down over it.  A camera module is not a rod: it is a 25 x 24 mm
-        board with a collar on it, standing in the rack perpendicular to the
-        boss, so it reaches 15 mm above the grip point and 14 mm to one side
-        of it.  The ring's raceway comes down to within 14.3 mm of the grip
-        point at that offset, and the collar's own top is 14.9 above it --
-        so at a boss the pads alone would size, the head lands on the plate
-        before the jaws reach the boss.  Measured, in the assembly run, as
-        `rod35_p` against `race17`.
+        come down over it.  A head kit is not a rod: it is a 25 x 24 mm
+        board with a collar on it and a tic-tac-toe of rods wound on that,
+        standing in the rack perpendicular to the boss, so it reaches 18 mm
+        above the grip point and 18 mm to one side of it.  The ring's
+        raceway comes down to within 14.3 mm of the grip point at that
+        offset -- so at a boss the pads alone would size, the head lands on
+        the kit before the jaws reach the boss.  Measured, in the assembly
+        run, as `rod35_p` against `race17`.
+
+        WHAT IT IS MEASURED AGAINST IS THE WHOLE KIT.  The grid overhangs
+        the collar by OVERRUN on all four sides and stands a layer above
+        it; sized against the plate alone the boss is 4 mm short of what
+        the part that actually arrives needs.
 
         The boss therefore reaches until the whole carrier is outside the
         head's static envelope: nothing of it within race_r_out() of the
@@ -136,12 +141,35 @@ class Carrier:
         R = race_r_out() + Process.SEAT_CLEAR
         # the carrier's nearest corner to the ring's axis, as a function of
         # how far the module's face is from the grip point
-        half_z = max(p.BOX[2] / 2.0, Bracket.plate_half(p)[1])
+        half_z = max(p.BOX[2] / 2.0, Bracket.plate_half(p, d_rod)[1],
+                     cls.kit_half(p, d_rod)[1])
         # the carrier's nearest corner to the ring's axis is its top edge at
         # the module's near face; push that face out until it clears
         gap = abs(H - half_z)
         need = 2.0 * sqrt(R * R - gap * gap) if gap < R else 0.0
         return max(pads, need)
+
+    @classmethod
+    def kit_half(cls, payload=None, d_rod=1.5):
+        """(across the spine, across `up`) half-extents of the head kit as
+        it arrives from station B, mm -- module, collar and the wound grid.
+
+        WHAT THE CELL ACTUALLY HANDLES.  The grid overhangs everything else
+        on the part, so the plate's outline is no longer the silhouette;
+        the rack's pitch, the nest and the boss are all sized off this."""
+        p = Payload if payload is None else payload
+        gx, gu = Bracket.grid_half(p, d_rod)
+        o = Bracket.OVERRUN + d_rod / 2.0
+        px, pu = Bracket.plate_half(p, d_rod)
+        return (max(p.BOX[0] / 2.0, px, gx + o),
+                max(p.BOX[2] / 2.0, pu, gu + o))
+
+    @classmethod
+    def kit_proud(cls, payload=None, d_rod=1.5):
+        """How far the kit stands in front of the board's own face, mm --
+        the collar's seat plus the two layers of grid on it."""
+        return (Bracket.layer_l(1, payload, d_rod) + d_rod / 2.0
+                - Bracket.seat_l(payload)[0])
 
     @classmethod
     def span(cls, payload=None):

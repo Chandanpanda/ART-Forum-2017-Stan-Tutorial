@@ -315,15 +315,20 @@ class Fixture:
                     out.append(Slot(r.index, np.array([x, -hl, z]),
                                     np.array([x, hl, z]), np.array([0, 0, 1.0])))
                     x += sign * Magazine.DIAG_PITCH
-                # THE CAMERA'S NEST IS AS WIDE AS THE MODULE, not as a rod.
+                # THE CAMERA'S NEST IS AS WIDE AS THE KIT, not as a rod and
+                # no longer as the module: what arrives from station B is
+                # the module with the collar and the wound tic-tac-toe on
+                # it, and the grid overhangs everything else on the part.
                 # On the rods' own pitch its nest overlaps its neighbour's
                 # blocks and the sim throws it across the cell -- measured.
+                from .spec import Carrier
                 for r in cams:
-                    x += sign * (Payload.BOX[0] / 2.0 + Magazine.CLEAR)
+                    half = Carrier.kit_half(Payload, self.g.t.d_diag)[0]
+                    x += sign * (half + Magazine.CLEAR)
                     hl = r.length / 2.0
                     out.append(Slot(r.index, np.array([x, -hl, z]),
                                     np.array([x, hl, z]), np.array([0, 0, 1.0])))
-                    x += sign * (Payload.BOX[0] / 2.0 + Magazine.CLEAR)
+                    x += sign * (half + Magazine.CLEAR)
         return out
 
     def x_range(self):

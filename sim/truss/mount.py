@@ -607,21 +607,42 @@ def pose_for(axis, tol=1e-9):
     return theta % 360.0, psi
 
 
-def poses_for(axis, tol=1e-9):
-    """BOTH (cage theta, gripper yaw) pairs that lay a rod along `axis`.
+def poses_for(axis, tol=1e-9, reversible=True):
+    """ALL FOUR (cage theta, gripper yaw) pairs that lay a rod along `axis`.
 
-    The mapping is two-to-one: rot_x(theta+180) flips both transverse
-    components, so a yaw of -psi puts the rod back on the same cage-frame
-    line.  Which of the two to use is not a geometric question -- it is
-    whether the gantry can REACH the rod once the cage has turned, and the
-    three end battens came out 4.7 mm below the z axis's own floor at the
-    first solution.  The caller picks; this offers.
+    TWO SYMMETRIES, and leaving out the second cost 47 degrees on four rods
+    of every truss.  The first is the cage's: rot_x(theta+180) flips both
+    transverse components, so a yaw of -psi puts the rod back on the same
+    cage-frame line.  The second is the ROD'S OWN -- a rod has no head and
+    no tail, so laying it end-for-end is the same rod, and that is a yaw of
+    psi +- 180 at the same cage angle.
+
+    It matters because the gripper's yaw is a servo with a stop.  Two
+    struts an end want 142.3 degrees, the axis reaches 95, and with only
+    the cage's symmetry on offer BOTH candidates were out of range: the
+    servo clamped, the plan never noticed, and the rod was laid 47 degrees
+    off its own line -- 27.7 mm at its ends, measured by rig_mount.  With
+    the rod's own symmetry the same line is available at -37.7 degrees.
+
+    Which to use is not a geometric question -- it is whether the gantry
+    can reach the rod once the cage has turned, and whether the yaw is
+    inside the stop.  The caller picks; this offers.
+
+    `reversible` is FALSE for a part that is not a rod.  The camera is on a
+    carrier with a boss out of one side; laid end-for-end it is the same
+    LINE and the wrong part, boss where the lens goes.  Only the cage's
+    symmetry applies to it.
     """
     p = pose_for(axis, tol)
     if p is None:
         return ()
     th, psi = p
-    return ((th, psi), ((th + 180.0) % 360.0, -psi))
+    wrap = lambda a: (a + 180.0) % 360.0 - 180.0
+    other = (th + 180.0) % 360.0
+    out = ((th, wrap(psi)), (other, wrap(-psi)))
+    if not reversible:
+        return out
+    return out + ((th, wrap(psi + 180.0)), (other, wrap(180.0 - psi)))
 
 
 def axis_from(theta_deg, yaw_deg):

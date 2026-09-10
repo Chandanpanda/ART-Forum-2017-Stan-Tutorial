@@ -20,7 +20,7 @@ import numpy as np
 
 from truss import structure, geometry, fixture, mjcf, mount, stationb
 from truss.spec import (StationB, Bracket, Payload, Gripper, Stock, Process,
-                        Magazine, Head)
+                        Magazine, Head, Carrier)
 
 RESULTS = []
 VERBOSE = "-v" in sys.argv
@@ -193,8 +193,130 @@ def main():
               % (kit.gx, kit.gu, Bracket.aperture()[0] / 2.0,
                  Bracket.aperture()[1] / 2.0))
 
+    # =============================================== WHAT A HANDS OVER
+    # THE HAND-OVER IS THE OTHER HALF OF THE CONTRACT.  B makes the kit; the
+    # cell must not also try to make it, and must not plan against a part
+    # different from the one that arrives.  Both were true at once for a
+    # while: the cell laid its own four grid rods AND drew the camera with a
+    # solid plate where the grid goes.
+    for T in (structure.TRUSS_300, structure.TRUSS_1M):
+        tag = "[%s] " % T.name
+        g = geometry.TrussGeometry(T)
+        M = mount.solve(g, d_strut=T.d_diag,
+                        standoff_mm=mount.fov_standoff(g, d_strut=T.d_diag))
+        g.attach_mount(M)
+        kit = stationb.Kit(d_rod=T.d_diag)
+        kinds = {r.kind for r in g.mount_rods}
+        check(tag + "the cell lays no grid rod: the tic-tac-toe arrives wound on "
+              "the kit, because this cell cannot wind it",
+              "mgrid" not in kinds and "mcollar" not in kinds
+              and len(M.by_kind("grid")) == 8,
+              "the cell lays %s; the mount still HAS %d grid rods, made at B"
+              % (sorted(kinds), len(M.by_kind("grid"))))
+        # ...and every strut still lands on a crossing, which is now a point
+        # on a part the cell only fetches
+        xh, look, up = mount.landing_frame(g)
+        c = np.asarray(M.payload[0][0], float)
+        cross = list(kit.crossings())
+        lands = []
+        for r in M.of(0):
+            if r.kind != "strut":
+                continue
+            v = np.asarray(r.p1, float) - c
+            lands.append(np.array([float(v @ xh), float(v @ up), float(v @ look)]))
+        check(tag + "...and all six struts still land on crossings that arrive with "
+              "the kit, so nothing is bonded to air",
+              len(lands) == 6
+              and max(min(float(np.linalg.norm(p - q)) for q in cross)
+                      for p in lands) < 1e-6,
+              "%d landings on %d crossings" % (len(lands), len(cross)))
+        # THE KIT IS BIGGER THAN THE MODULE and everything sized off the
+        # module has to be re-sized off the kit
+        kx, ku = Carrier.kit_half(Payload, T.d_diag)
+        # THE RULE THE BOSS IMPLEMENTS, checked as the rule and not as the
+        # number: with the gripper down on the boss, nothing of the kit is
+        # inside the head's static envelope.  Measured against the plate
+        # alone the boss is 6 mm short of what the part that arrives needs,
+        # and the head lands on the grid before the jaws reach the boss.
+        from truss.spec import race_r_out
+        bl = Carrier.boss_l(Payload, T.d_diag)
+        H = Head.GRIP_STROKE - Head.TIP_PARK          # ring centre over the grip
+        R = race_r_out() + Process.SEAT_CLEAR
+        corner = sqrt((bl / 2.0) ** 2 + (H - ku) ** 2)
+        check(tag + "the carrier's boss reaches until the WHOLE kit is outside the "
+              "head's envelope -- the grid overhangs the collar, so a boss sized "
+              "against the plate is short",
+              corner >= R - 1e-6 and ku > Bracket.plate_half(Payload, T.d_diag)[1],
+              "the kit's nearest corner is %.2f mm from the ring's axis against a "
+              "rim at %.2f; boss %.1f mm for a kit %.2f to its edge (the plate is "
+              "%.2f)" % (corner, R, bl, ku,
+                         Bracket.plate_half(Payload, T.d_diag)[1]))
+        fx = fixture.Fixture(g)
+        cam = [r for r in g.mount_rods if r.kind == "mcam"]
+        others = [r for r in g.mount_rods if r.kind != "mcam" and r.chord == 0]
+        sc = fx.slot_of(cam[0].index)
+        gap = min(abs(float(sc.p0[0]) - float(fx.slot_of(r.index).p0[0]))
+                  for r in others)
+        check(tag + "...and its rack slot is pitched off the KIT's width, so its "
+              "nest cannot overlap its neighbour's blocks",
+              gap >= kx,
+              "%.1f mm to the nearest slot, kit half-width %.1f" % (gap, kx))
+
     # ------------------------------------------- IT IS IN THE SCENE
     import mujoco
+
+    # THE KIT HAS TO FIT ITS OWN RECEPTACLE, measured on the built scene and
+    # not on the drawing.  Sized against the module, the nest's front wall
+    # cleared the part that actually arrives by 0.10 mm -- an accident, not
+    # a clearance, and nothing in the suite was looking at it.
+    T = structure.TRUSS_300
+    g = geometry.TrussGeometry(T)
+    M = mount.solve(g, d_strut=T.d_diag,
+                    standoff_mm=mount.fov_standoff(g, d_strut=T.d_diag))
+    g.attach_mount(M)
+    fx = fixture.Fixture(g)
+    mk = mujoco.MjModel.from_xml_string(mjcf.scene_cell(g, fx, n_drops=80))
+    dk = mujoco.MjData(mk)
+    mujoco.mj_forward(mk, dk)
+    cam = [r for r in g.mount_rods if r.kind == "mcam"][0]
+    gid = lambda n: mujoco.mj_name2id(mk, mujoco.mjtObj.mjOBJ_GEOM, n)
+    kit_g = [i for i in range(mk.ngeom)
+             if (mujoco.mj_id2name(mk, mujoco.mjtObj.mjOBJ_GEOM, i) or "")
+             .startswith("rod%d_" % cam.index)]
+    nest_g = [i for i in range(mk.ngeom)
+              if (mujoco.mj_id2name(mk, mujoco.mjtObj.mjOBJ_GEOM, i) or "")
+              .startswith(("nest%d" % cam.index, "nestw%d" % cam.index))]
+    # THE NEST BEARS ON THE BOARD AND ON NOTHING ELSE.  The board's
+    # underside and its back face are what a kitting nest is allowed to
+    # touch; the collar, the grid and the boss are the product and the
+    # nest has to stand off them.  Measured pairwise on the built scene.
+    nm = lambda i: mujoco.mj_id2name(mk, mujoco.mjtObj.mjOBJ_GEOM, i) or ""
+    bearing, clear_ = 1e9, 1e9
+    pair_b, pair_c = ("", ""), ("", "")
+    for a in kit_g:
+        for b in nest_g:
+            e = mujoco.mj_geomDistance(mk, dk, a, b, 0.05, None) * 1000.0
+            if nm(a).endswith("_b0"):
+                if e < bearing:
+                    bearing, pair_b = e, (nm(a), nm(b))
+            elif e < clear_:
+                clear_, pair_c = e, (nm(a), nm(b))
+    check("the nest bears on the board's own faces and does not dig into it",
+          bearing >= -1e-6,
+          "%.2f mm at %s / %s" % (bearing, pair_b[0], pair_b[1]))
+    check("...and it stands off everything else on the kit -- the collar hangs "
+          "2.5 mm below the board on every side and the grid 6.5 below that",
+          clear_ >= Process.SEAT_CLEAR - 1e-6,
+          "%.2f mm at %s / %s, against a process clearance of %.2f"
+          % (clear_, pair_c[0], pair_c[1], Process.SEAT_CLEAR))
+    check("...and the kit is DRAWN as the part that arrives: a collar of bands, a "
+          "ring and ribs, and four grid rods -- not a slab",
+          len([i for i in kit_g
+               if "_q" in (mujoco.mj_id2name(mk, mujoco.mjtObj.mjOBJ_GEOM, i) or "")]) == 4
+          and len([i for i in kit_g
+                   if "_p" in (mujoco.mj_id2name(mk, mujoco.mjtObj.mjOBJ_GEOM, i) or "")])
+          == len(mount.collar_segments(Payload, T.d_diag)),
+          "%d geoms in the kit" % len(kit_g))
     T = structure.TRUSS_300
     g = geometry.TrussGeometry(T)
     M = mount.solve(g, d_strut=T.d_diag,

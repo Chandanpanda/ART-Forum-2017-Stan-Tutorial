@@ -213,25 +213,38 @@ class TrussGeometry:
         n = len(self.rods)
         out = []
         for st in mount.rods:
-            if st.kind == "collar":
-                continue                 # a machined part, not a laid rod
+            if st.kind in ("collar", "grid"):
+                # NEITHER OF THESE IS LAID HERE.  The collar is a machined
+                # part, and the four GRID rods are wound to each other at
+                # four crossings with the same thread the truss's joints
+                # use -- which this cell cannot do.  Its ring is 40 mm
+                # across in a raceway 54 across, and by the time the mount
+                # goes on, the crossings are inside the end triangle with
+                # the camera behind them: there is no approach, and no
+                # clearance argument produces one.  So station B makes that
+                # sub-assembly on its own jig and it arrives HERE already
+                # wound, bonded and seated on the module.  See stationb.Kit;
+                # check_stationb holds its crossings against this mount's
+                # own landings.
+                continue
             out.append(Rod("m" + st.kind, n + len(out),
                            np.asarray(st.p0, float), np.asarray(st.p1, float),
                            st.r, chord=st.end))
-        # THE CAMERA RIDES THE SAME PATH AS A ROD.  Its carrier presents a
-        # boss of the largest stock diameter, coaxial with the spine, so
-        # the jaws already span it and the loader already knows how to pick
-        # it up -- that is what the carrier is FOR.  Given to the cell as
-        # one more thing to fetch, place and keep, it needs no new machine
-        # step and no new op.
+        # THE CAMERA RIDES THE SAME PATH AS A ROD, and it is the whole head
+        # kit now: module, collar and the wound tic-tac-toe, one rigid part
+        # off station B.  Its carrier presents a boss of the largest stock
+        # diameter, coaxial with the spine, so the jaws already span it and
+        # the loader already knows how to pick it up -- that is what the
+        # carrier is FOR.  Given to the cell as one more thing to fetch,
+        # place and keep, it needs no new machine step and no new op.
         from .spec import Carrier, Payload
         for end, (centre, look, _lr) in enumerate(mount.payload):
             look = np.asarray(look, float) / float(np.linalg.norm(look))
             ax = np.asarray(Carrier.boss_axis(look), float)
             b0 = np.asarray(centre, float) + ax * (Payload.BOX[1] / 2.0)
             out.append(Rod("mcam", n + len(out), b0,
-                           b0 + ax * Carrier.boss_l(), Carrier.boss_d() / 2.0,
-                           chord=end))
+                           b0 + ax * Carrier.boss_l(Payload, mount.d_strut),
+                           Carrier.boss_d() / 2.0, chord=end))
         self.mount_rods = tuple(out)
         return self.mount_rods
 

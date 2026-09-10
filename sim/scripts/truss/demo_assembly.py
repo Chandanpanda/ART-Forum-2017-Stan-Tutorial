@@ -58,7 +58,8 @@ import numpy as np                       # noqa: E402
 import mujoco                            # noqa: E402
 
 from truss import (structure, geometry, fixture, mjcf, cell, approach,   # noqa: E402
-                   schedule, process, vision, inspector, mount, view)
+                   schedule, process, vision, inspector, mount, view,
+                   filmstrip)
 from truss.spec import Vision            # noqa: E402
 from truss.geometry import TrussGeometry  # noqa: E402
 
@@ -94,6 +95,15 @@ def main():
     ap.add_argument("--seed", type=int, default=3)
     ap.add_argument("--stalls", action="store_true",
                     help="list the ops whose sensor did not answer in time")
+    ap.add_argument("--sweep", metavar="DIR",
+                    help="frames at 0.1 fps over the whole run, tiled into one "
+                         "contact sheet -- READ IT, this is the review")
+    ap.add_argument("--sweep-fps", type=float, default=0.1)
+    ap.add_argument("--window", nargs=2, type=float, metavar=("T0", "T1"),
+                    help="with --sweep, capture only this stretch of simulated "
+                         "time, and at --sweep-fps 1 by default")
+    ap.add_argument("--nose", action="store_true",
+                    help="frame the sweep on the x=0 nose instead of the cell")
     a = ap.parse_args()
 
     t, g, fx, P, xml, n_drops = build(a.metre, a.seed)
@@ -141,6 +151,23 @@ def main():
         cam.lookat[:] = [t.length / 2.0 * 1e-3, 0.0, 0.0]
         cam.distance = max(0.6, t.length * 2.2e-3)
         cam.azimuth, cam.elevation = 135.0, -18.0
+    strip = None
+    if a.sweep:
+        # A SEPARATE CAMERA AND RENDERER: the sweep is the review, and it
+        # has to keep working when nothing else is being recorded.
+        srend = mujoco.Renderer(m, height=480, width=640)
+        scam = mujoco.MjvCamera()
+        mujoco.mjv_defaultCamera(scam)
+        if a.nose:
+            scam.lookat[:] = [-0.010, 0.0, 0.0]
+            scam.distance, scam.azimuth, scam.elevation = 0.22, 125.0, -12.0
+        else:
+            scam.lookat[:] = [t.length / 2.0 * 1e-3, 0.0, 0.0]
+            scam.distance = max(0.6, t.length * 2.2e-3)
+            scam.azimuth, scam.elevation = 135.0, -18.0
+        fps = a.sweep_fps if a.window is None or a.sweep_fps != 0.1 else 1.0
+        strip = filmstrip.Filmstrip(srend, scam, fps=fps,
+                                    window=tuple(a.window) if a.window else None)
     if a.video:
         # A SEPARATE, SMALLER RENDERER FOR THE FILM.  A twenty-minute build
         # at twenty frames a second is six hundred frames, and six hundred
@@ -172,6 +199,8 @@ def main():
             vid.update_scene(d, cam)
             frames.append(vid.render().copy())
             next_frame[0] = d.time + period
+        if strip is not None:
+            strip.maybe(d.time, d)
         if a.shots and nonlocal_phase != phase[0] and rend is not None:
             rend.update_scene(d, cam)
             shots[nonlocal_phase] = rend.render().copy()
@@ -233,6 +262,16 @@ def main():
             Image.fromarray(rend.render()).save(
                 os.path.join(a.shots, "nose_end%d.png" % end))
         print("wrote %d stills to %s" % (len(shots) + 3, a.shots))
+    if strip is not None:
+        strip.maybe(d.time + 1e9, d)          # one last frame, whatever the rate
+        sheet = filmstrip.contact_sheet(
+            strip.frames, os.path.join(a.sweep, "sweep.png"),
+            labels=["%.0fs" % v for v in strip.times])
+        for i, f in enumerate(strip.frames):
+            from PIL import Image
+            Image.fromarray(f).save(os.path.join(a.sweep, "s%03d.png" % i))
+        print("wrote %d sweep frames and %s -- READ THE SHEET"
+              % (len(strip.frames), sheet))
     if a.video and frames:
         got = write_video(a.video, frames, a.fps)
         print("wrote %s: %d frames at %d fps" % (got, len(frames), a.fps))

@@ -170,7 +170,7 @@ def cage_body(geom, fixture, mount=None):
     # over-centre brace per shaft.  Drawn erect and locked, which is how it
     # spends the whole build; collapsing it is a manual step afterwards.
     col = fixture.collapse
-    sx0, sx1 = x0 + Cage.END_PLATE_T, t.length + ef
+    sx0, sx1 = col.shaft_span()
     for sh, (kind, kk, phi) in enumerate(col.shafts):
         up = radial(phi)
         a = np.array([sx0, 0.0, 0.0]) + up * col.shaft_r()

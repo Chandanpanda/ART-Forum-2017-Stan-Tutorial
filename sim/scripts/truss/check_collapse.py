@@ -19,7 +19,7 @@ from math import degrees, radians, sin, sqrt
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 import numpy as np
 
-from truss import geometry, fixture, collapse
+from truss import geometry, fixture, collapse, mount as _mount
 from truss.spec import Truss, Cage, Process, Stock, Load, Gripper
 from spine.chosen import OPTIMAL_1M, OPTIMAL_300
 
@@ -161,6 +161,49 @@ def main():
                   "which is what the offset cannot go below" % b.shaft,
                   sig <= Cage.PIVOT_SIGMA,
                   "%.1f N/mm2 of %.0f" % (sig, Cage.PIVOT_SIGMA))
+
+        # ------------------------------- AND CLEAR OF THE CAMERA
+        # THE CHECK THAT WAS MISSING, and it is missing in a specific way:
+        # check_collapse asked whether the mandrel cleared the TRUSS, and
+        # check_mount asked whether the mount cleared the MODULE.  Neither
+        # asked whether the CAGE cleared the CAMERA, so six torsion shafts
+        # ran the length of the cell -- four of them through the module, and
+        # the one at the face the camera looks out of straight down the
+        # optical axis, 9.5 mm in front of the lens.  Found by looking at a
+        # frame, which is why there is now a rule about looking at frames.
+        M = _mount.solve(g, d_strut=t.d_diag,
+                         standoff_mm=_mount.fov_standoff(g, d_strut=t.d_diag))
+        for e in (0, 1):
+            parts = _mount.Mount(c.parts(e), M.platform_r, M.standoff,
+                                 t.d_diag, M.payload)
+            pen, who = _mount.payload_clearance(parts, g, end=e, aperture=False)
+            check(tag + "nothing of the collapsing mandrel is inside the camera at "
+                  "end %d -- not a shaft, not a rail, not an arm" % e,
+                  pen <= 0.0,
+                  "worst %+.2f mm (%s %s)" % (pen, who[0], who[1]) if who else "clear")
+            fov = _mount.fov_clear(parts, end=e)
+            check(tag + "...and none of it is in the camera's own picture at end %d" % e,
+                  fov > 0.0, "%.2f mm to spare" % fov)
+        check(tag + "a shaft reaches only as far as the rails it turns",
+              c.shaft_span()[0] >= min(s2[0] for *_x, s2 in c.rails) - 2.0 * Cage.PIVOT_D
+              and c.shaft_span()[1] <= max(s2[1] for *_x, s2 in c.rails)
+              + 2.0 * Cage.PIVOT_D,
+              "shafts %.1f..%.1f, rails %.1f..%.1f"
+              % (c.shaft_span()[0], c.shaft_span()[1],
+                 min(s2[0] for *_x, s2 in c.rails), max(s2[1] for *_x, s2 in c.rails)))
+        # and it has teeth: run them cage-length again and the camera is hit
+        long_parts = tuple(
+            _mount.Strut(r.kind, r.index,
+                         np.array([-(f.end_free() + Cage.END_PLATE_T), r.p0[1], r.p0[2]]),
+                         np.array([t.length + f.end_free(), r.p1[1], r.p1[2]]),
+                         r.r, 0)
+            if r.kind == "shaft" else r for r in c.parts(0))
+        pen0, _w = _mount.payload_clearance(
+            _mount.Mount(long_parts, M.platform_r, M.standoff, t.d_diag, M.payload),
+            g, end=0, aperture=False)
+        check(tag + "...and the check has teeth: run cage-length, as they were, the "
+              "shafts read as inside the module",
+              pen0 > 0.0, "%+.2f mm inside" % pen0)
 
         # ---------------------------------------------- ONE PULL
         check(tag + "one draw rod trips all six shafts: the stroke is the worst "

@@ -194,6 +194,35 @@ Every time a fault is found by staring at a match, ask what static or
 one-second check would have found it, and add that instead of a comment.
 A suite that takes a minute is free; a board that takes forty is not.
 
+## LOOK AT IT. Every simulation review includes frames.
+
+**A simulation is not reviewed until frames from it have been rendered and
+read.** Not the log, not the inspector's verdict, not a pass/fail count —
+the pictures.
+
+This rule exists because of a specific, expensive failure. The mount phase
+reported every rod placed within **0.45 mm and 0.0 degrees** of plan, the
+inspector passed the truss, 955 of 955 ops ran, and the thing it built was
+a mess — rods at wild angles, nothing resembling the design. The numbers
+were all measuring the model against *itself*. A number can only ever say
+that the machine went where the plan said; it cannot say the plan was the
+design.
+
+**The procedure, every time:**
+
+1. **Sweep the whole run at 0.1 fps** — one frame per ten seconds of
+   simulated time. Tile them into a contact sheet and read every one. This
+   is cheap and it is not optional.
+2. **Then 1 fps into any section that looks wrong**, and read those.
+3. Only then quote numbers.
+
+`truss/filmstrip.py` does the capture and the contact sheet;
+`demo_assembly.py --sweep` and `--window T0 T1` drive it.
+
+**What the frames are for is the thing the numbers cannot see:** geometry
+that is placed perfectly and is the wrong geometry, parts intersecting,
+something quietly on the floor, a phase that ran and achieved nothing.
+
 ## Measurement discipline
 
 - **Boards do not steer.** A 24-seed board has a standard error of ±7

@@ -1,10 +1,27 @@
 """The whole build, end to end, in MuJoCo: rods, thread, glue, cameras.
 
     python3 sim/scripts/truss/demo_assembly.py                  # 300 mm, headless
-    python3 sim/scripts/truss/demo_assembly.py --1m             # the metre truss
-    python3 sim/scripts/truss/demo_assembly.py --video out.mp4  # record it
     python3 sim/scripts/truss/demo_assembly.py --gui            # watch it live
+    python3 sim/scripts/truss/demo_assembly.py --gui --speed 20 # 20x real time
+    python3 sim/scripts/truss/demo_assembly.py --gui --1m       # the metre truss
+    python3 sim/scripts/truss/demo_assembly.py --video out.mp4  # record it
     python3 sim/scripts/truss/demo_assembly.py --shots DIR      # stills per phase
+
+ON WINDOWS the interpreter is `python`, not `python3`, and the path is
+relative to where you are; from the `sim` directory:
+
+    python scripts\truss\demo_assembly.py --gui --speed 20
+
+Forward slashes work too.  Do NOT set MUJOCO_GL -- truss/glenv.py picks one
+per platform, and `osmesa` is a name that only exists on Linux.  The window
+opens on the FREE camera framed on the cell, so the mouse is live from the
+first frame: left-drag orbits, right-drag pans, scroll zooms; truss/view.py
+adds arrows to pan, Home/End to orbit, - and = to zoom, 1/2/3 preset views,
+4 close on the head, . to follow it, 0 back to the whole cell.  The window
+stays open when the build is finished.
+
+At --speed 1 the film is as long as the build (about twenty minutes of
+simulated time); --speed 20 is the one to watch.
 
 WHAT IT RUNS.  One plan, from racks that a person has filled by hand, to a
 truss with a camera on each end:
@@ -70,8 +87,10 @@ def main():
     ap.add_argument("--video")
     ap.add_argument("--shots")
     ap.add_argument("--fps", type=int, default=20)
-    ap.add_argument("--speed", type=float, default=40.0,
-                    help="simulated seconds per recorded second")
+    ap.add_argument("--speed", type=float, default=1.0,
+                    help="wall-clock pacing under --gui; 0 = unpaced")
+    ap.add_argument("--vspeed", type=float, default=40.0,
+                    help="simulated seconds per recorded second, for --video")
     ap.add_argument("--seed", type=int, default=3)
     ap.add_argument("--stalls", action="store_true",
                     help="list the ops whose sensor did not answer in time")
@@ -96,6 +115,22 @@ def main():
     ex = process.Executor(c, c, c, c, c, c, clk, g, fx, P, vision=vis,
                           log=lambda s2: (msgs.append(s2), print("   ", s2)))
 
+    band_ids = {j.index: mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_GEOM,
+                                           "band%d" % j.index)
+                for j in g.joints}
+
+    def show_bands():
+        """The wound band as a sleeve that grows with the turns the fiducial
+        counted -- the only part of the build that has no geometry of its
+        own until it is made."""
+        for jix, stt in ex.states.items():
+            gid = band_ids[jix]
+            if gid < 0 or stt.turns <= 0:
+                continue
+            m.geom_size[gid][1] = max(stt.width, 0.2) / 2000.0
+            m.geom_pos[gid] = g.chord_point(g.joints[jix].chord, stt.centre) / 1000.0
+            m.geom_rgba[gid][3] = min(1.0, 0.2 + stt.turns / t.turns)
+
     frames, shots = [], {}
     rend = None
     vid = None
@@ -112,27 +147,46 @@ def main():
         # frames of 1280x720 is 1.7 GB held in RAM before anything is
         # written.  The stills stay full size; the film does not need to be.
         vid = mujoco.Renderer(m, height=360, width=640)
-    period = a.speed / max(a.fps, 1)
-    next_frame, phase = 0.0, None
+    period = a.vspeed / max(a.fps, 1)
+    next_frame, phase = [0.0], [None]
     t0 = time.time()
 
     gen = ex.run()
+    last_op = [0]
+
+    def step():
+        """One control tick.  False when the plan is finished."""
+        clk.tick()
+        try:
+            next(gen)
+        except StopIteration:
+            return False
+        if len(ex.timeline) > last_op[0]:
+            last_op[0] = len(ex.timeline)
+            op = ex.timeline[-1][0]
+            if op.kind in ("wind", "release", "index", "dose", "bond", "cut"):
+                print("%7.1f  %s" % (d.time, op))
+            show_bands()
+        nonlocal_phase = ex.timeline[-1][0].phase if ex.timeline else "load"
+        if vid is not None and d.time >= next_frame[0]:
+            vid.update_scene(d, cam)
+            frames.append(vid.render().copy())
+            next_frame[0] = d.time + period
+        if a.shots and nonlocal_phase != phase[0] and rend is not None:
+            rend.update_scene(d, cam)
+            shots[nonlocal_phase] = rend.render().copy()
+            phase[0] = nonlocal_phase
+        return True
+
+    if a.gui and not glenv.windowed():
+        print("--gui needs a display; this session has none.  Run without it.")
+        a.gui = False
     try:
-        while True:
-            clk.tick()
-            try:
-                next(gen)
-            except StopIteration:
-                break
-            ph = ex.timeline[-1][0].phase if ex.timeline else "load"
-            if vid is not None and d.time >= next_frame:
-                vid.update_scene(d, cam)
-                frames.append(vid.render().copy())
-                next_frame = d.time + period
-            if a.shots and ph != phase and rend is not None:
-                rend.update_scene(d, cam)
-                shots[ph] = rend.render().copy()
-                phase = ph
+        if a.gui:
+            run_windowed(m, d, c, g, fx, step, a.speed)
+        else:
+            while step():
+                pass
     except KeyboardInterrupt:
         print("interrupted")
     wall = time.time() - t0
@@ -183,6 +237,46 @@ def main():
         got = write_video(a.video, frames, a.fps)
         print("wrote %s: %d frames at %d fps" % (got, len(frames), a.fps))
     return 0
+
+
+def run_windowed(m, d, c, g, fx, step, speed):
+    """Drive the same `step` under MuJoCo's passive viewer.
+
+    THE WINDOW OUTLIVES THE CYCLE.  What the demo is for is the thing it
+    made, and closing on the last op leaves nothing to look at."""
+    from mujoco import viewer as mjviewer
+    from truss.spec import ring_swept_r
+    rig = {"cam": None}
+
+    def on_key(code):
+        # the camera keys are all non-letters (truss/view.py says why), so
+        # they cannot collide with the viewer's own visualisation flags
+        if rig["cam"] is not None:
+            rig["cam"].key(code)
+
+    with mjviewer.launch_passive(m, d, key_callback=on_key) as v:
+        rig["cam"] = view.CameraRig(v, m, view.cell_frame(g, fx),
+                                    follow=lambda: c.ring_centre() / 1000.0,
+                                    close=view.close_frame(ring_swept_r()))
+        print(view.HELP)
+        # the clock starts when the window is up: framing the camera and
+        # compiling the first frame takes a moment, and pacing from before
+        # that makes the demo sprint to catch up
+        t_wall = time.time()
+        while v.is_running():
+            if not step():
+                break
+            rig["cam"].tick()
+            v.sync()
+            if speed > 0:
+                lag = d.time / speed - (time.time() - t_wall)
+                if lag > 0:
+                    time.sleep(min(lag, 0.05))
+        print("\n  the build is finished; the window is yours.  Close it to exit.")
+        while v.is_running():
+            rig["cam"].tick()
+            v.sync()
+            time.sleep(0.02)
 
 
 def write_video(path, frames, fps):

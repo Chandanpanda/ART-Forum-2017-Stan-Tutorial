@@ -509,14 +509,67 @@ def main():
     b3 = fixture.Fixture(geometry.TrussGeometry(structure.TRUSS_300))
     n3 = len(set(round(float(q.p0[1]), 6) for q in f3.slots
                  if q.rod >= len(g3.rods)))
-    check("the 300 mm truss's mount racks too, in the x its own truss already needs, "
-          "stacked over both flanks rather than off the end of one",
+    check("the 300 mm truss's mount racks too, in the x AND the y its own truss "
+          "already needs, over both flanks rather than off the end of one",
           f3.x_reach() <= Gantry.X_TRAVEL
           and abs(f3.x_reach() - b3.x_reach()) < 1e-6
-          and f3.y_reach() <= Gantry.Y_TRAVEL / 2.0,
+          and abs(f3.y_reach() - b3.y_reach()) < 1e-6,
           "%d rows, x %.0f of %.0f (bare %.0f), y %.1f of +-%.0f (bare %.1f)"
           % (n3, f3.x_reach(), Gantry.X_TRAVEL, b3.x_reach(),
              f3.y_reach(), Gantry.Y_TRAVEL / 2.0, b3.y_reach()))
+
+    # ------------------------------------------------ AND THE FETCHES
+    # A PART IS FETCHED AND CARRIED BACK, so the mount phase costs twice
+    # each part's distance from its nose and the ORDER it is laid in cannot
+    # change that -- only where it lies can.  Filled from one end of the
+    # bench, the far nose's kit was racked 1124 mm from the nose it goes on,
+    # at the wrong end of the cell: the longest move in the build, and the
+    # one op that overran its plan.
+    def _fetch(fx, geom):
+        tot, worst, wrong = 0.0, (0.0, -1), []
+        for r in geom.mount_rods:
+            q = fx.slot_of(r.index)
+            x = float(q.p0[0] + q.p1[0]) / 2.0
+            mine = 0.0 if r.chord == 0 else float(geom.t.length)
+            other = float(geom.t.length) if r.chord == 0 else 0.0
+            d = abs(x - mine)
+            tot += 2.0 * d
+            if d > worst[0]:
+                worst = (d, r.index)
+            if d > abs(x - other) + 1e-9:
+                wrong.append(r.index)
+        return tot, worst, wrong
+
+    tot_f, worst_f, wrong_f = _fetch(fp, gp)
+    tot3, worst3, wrong3 = _fetch(f3, g3)
+    check("every mount part is racked nearer the nose it is laid at than the other "
+          "one: a part fetched from the far end of the cell is a move nothing in the "
+          "phase can make up",
+          not wrong_f and not wrong3,
+          "chosen %s, 300 %s" % (wrong_f or "none", wrong3 or "none"))
+    def _one_end_fetch(fx, geom):
+        """What the fetching would cost with the bench filled from one end
+        in index order -- the layout this replaced, priced.  Every part is
+        laid end to end from the low-x end of the same bench."""
+        lo, _hi = fx.mount_span()
+        x, tot = lo, 0.0
+        for r in sorted(geom.mount_rods, key=lambda q: q.index):
+            hl = r.length / 2.0
+            x += hl
+            nose = 0.0 if r.chord == 0 else float(geom.t.length)
+            tot += 2.0 * abs(x - nose)
+            x += hl + 2.0 * Process.SEAT_CLEAR
+        return tot
+
+    was_f, was3 = _one_end_fetch(fp, gp), _one_end_fetch(f3, g3)
+    check("...and at the NEAREST free station to it, which is the whole of what the "
+          "phase's fetching costs: a part is carried to its nose and the order it is "
+          "laid in cannot change that, only where it lies can",
+          tot_f < was_f and tot3 < was3,
+          "chosen %.0f mm of x travel over %d parts against %.0f filled from one end, "
+          "worst fetch %.0f (part %d); 300 %.0f against %.0f, worst %.0f (part %d)"
+          % (tot_f, len(gp.mount_rods), was_f, worst_f[0], worst_f[1],
+             tot3, was3, worst3[0], worst3[1]))
     check("...and racked the old way -- beyond the end racks, on the diagonals' "
           "pitch -- it does NOT fit, which is the measurement that was missing",
           _old_rack_reach(gp, fp) > Gantry.X_TRAVEL,

@@ -29,7 +29,7 @@ from math import pi, sin, cos, tan, radians, atan2, degrees, sqrt
 
 import numpy as np
 
-from .spec import (Cage, Carrier, Magazine, Head, Gripper, Process,
+from .spec import (Cage, Carrier, Gantry, Magazine, Head, Gripper, Process,
                    notch_mouth)
 from .geometry import (TrussGeometry, FACES, radial, chord_phi, rot_x,
                        theta_chord_up, theta_face_up)
@@ -383,41 +383,205 @@ class Fixture:
             x = t.length + edge + i * Magazine.DIAG_PITCH
             out.append(Slot(r.index, np.array([x, -half, z]),
                             np.array([x, half, z]), np.array([0, 0, 1.0])))
-        # THE MOUNT'S OWN RACK, if a camera is being built onto this truss.
-        # Beyond the diagonal racks at each end, on the same pitch and the
-        # same height, laid along y like a diagonal -- the gripper's yaw is
-        # what turns a mount rod to the angle it is laid at, and a rod that
-        # starts parallel to y is the case the cell has already qualified.
-        # The rods are stubby (26 to 60 mm), so the rack is short.
-        mr = list(self.g.mount_rods)
+        # THE MOUNT'S OWN RACK GOES BESIDE THE CAGE, and `_mount_rack` is
+        # what places it.  Racked beyond the end racks -- on the diagonals'
+        # own pitch, which is where it started -- the chosen truss wanted
+        # 1766 mm of a 1400 mm X axis.
+        mr = [r for r in self.g.mount_rods]
         if mr:
-            from .spec import Payload
-            n_end = max(1, len(near) - n0)
-            for end in (0, 1):
-                group = [r for r in mr if r.chord == end and r.kind != "mcam"]
-                cams = [r for r in mr if r.chord == end and r.kind == "mcam"]
-                sign = -1.0 if end == 0 else 1.0
-                x = sign * edge + (t.length if end else 0.0)
-                x += sign * (n_end + 1) * Magazine.DIAG_PITCH
-                for r in group:
-                    hl = r.length / 2.0
-                    out.append(Slot(r.index, np.array([x, -hl, z]),
-                                    np.array([x, hl, z]), np.array([0, 0, 1.0])))
-                    x += sign * Magazine.DIAG_PITCH
-                # THE CAMERA'S NEST IS AS WIDE AS THE KIT, not as a rod and
-                # no longer as the module: what arrives from station B is
-                # the module with the collar and the wound tic-tac-toe on
-                # it, and the grid overhangs everything else on the part.
-                # On the rods' own pitch its nest overlaps its neighbour's
-                # blocks and the sim throws it across the cell -- measured.
-                from .spec import Carrier
-                for r in cams:
-                    half = Carrier.kit_half(Payload, self.g.t.d_diag)[0]
-                    x += sign * (half + Magazine.CLEAR)
-                    hl = r.length / 2.0
-                    out.append(Slot(r.index, np.array([x, -hl, z]),
-                                    np.array([x, hl, z]), np.array([0, 0, 1.0])))
-                    x += sign * (half + Magazine.CLEAR)
+            out += self._mount_rack(mr, out, z)
+        return out
+
+    @staticmethod
+    def _x_span(slots, posts_at):
+        xs = list(posts_at)
+        for s in slots:
+            xs += [float(s.p0[0]), float(s.p1[0])]
+        return min(xs), max(xs)
+
+    def mount_span(self):
+        """(lo, hi) the mount's rack may use in x, mm.
+
+        EXACTLY THE X THE CELL ALREADY HAS TO REACH FOR THE TRUSS, and not
+        a millimetre more -- so the mount costs no gantry.  The truss's own
+        racks and thread posts set it; whether the mount then fits inside
+        it is a question with an answer, which is the point.  Racked beyond
+        the end racks instead, on the diagonals' pitch with each kit's nest
+        padded by hand, the chosen truss wanted 1766 mm of a 1400 mm axis
+        and nothing measured it: check_mount built its X-travel fixture
+        with no camera on the truss.
+        """
+        truss = [s for s in self.slots if s.rod < len(self.g.rods)]
+        return self._x_span(truss, (-self.post_off,
+                                    self.t.length + self.post_off))
+
+    def _mount_rack(self, mr, truss_slots, z):
+        """Every mount part on the cage's flanks, inside the x the truss's
+        own racks already need.
+
+        WHY THERE.  The -y flank carries the chord rack and the two ends
+        carry the diagonals; the flanks are otherwise empty for the truss's
+        whole length, and a part laid there costs no X travel at all.  The
+        parts are stubby enough for it -- 35 to 85 mm against a diagonal's
+        130.  Racked beyond the end racks instead, on the diagonals' own
+        pitch, the chosen truss wanted 1766 mm of a 1400 mm axis.
+
+        TWO KINDS OF PART, and which kind a part is comes out of the head,
+        not out of its name.  A part the gripper can TURN below the head is
+        racked along x, pitched in a row -- the chord rack's own pattern,
+        and `pick_pose` reads the yaw off the slot so the mount phase turns
+        to whatever the rack gives it.  A part it CANNOT turn is racked at
+        the yaw `mount.lay_pose` says it is laid at, so that it never has
+        to be: the head kit's module, collar and grid stand 17.5 mm above
+        the boss the jaws hold and want 51 mm of a 40 mm stroke.  Racked
+        square and turned anyway it came out 31.3 mm and 75.5 degrees off.
+
+        THE BENCH IS NOT FREE AT THE SAME RADIUS EVERYWHERE.  Over the cage
+        a rack has to clear the cage; past its end plates there is nothing
+        there but the diagonal rack, 26 mm nearer the axis.  The kit is 61
+        mm deep lying along y and that difference is the whole of whether
+        the mount costs Y travel or none.
+        """
+        from .spec import Carrier, Payload
+        from . import mount as _mount
+        lo, hi = self._x_span(truss_slots, (-self.post_off,
+                                            self.t.length + self.post_off))
+        y_max = Gantry.Y_TRAVEL / 2.0 - Gripper.PAD_L
+        cage_x = (-(self.end_free() + Cage.END_PLATE_T),
+                  self.t.length + self.end_free() + Cage.END_PLATE_T)
+
+        def floor_at(sgn, x0, x1):
+            """How near the axis this flank is free, over the x it is asked
+            about: the cage's own swept radius where the cage is, and
+            whatever the truss's racks reach where they reach."""
+            f = 0.0
+            if x1 > cage_x[0] and x0 < cage_x[1]:
+                f = self.cage_swept_r() + Magazine.CLEAR
+            for q in truss_slots:
+                qx = sorted((float(q.p0[0]), float(q.p1[0])))
+                if qx[1] < x0 or qx[0] > x1:
+                    continue
+                f = max(f, max(sgn * float(q.p0[1]), sgn * float(q.p1[1]))
+                        + Magazine.DIAG_PITCH / 2.0)
+            return f
+
+        def over_of(r):
+            """(past the slot's p0, half across the slot) -- how far the
+            PART reaches beyond the slot the magazine is racking.
+
+            THE SLOT IS THE BOSS AND THE KIT IS NOT: the module, its collar
+            and the wound grid hang off the boss's ROOT inside a printed
+            pocket, 14 mm past it and 20 across.  Racked as if the boss
+            were the part, a kit's grid stood 1.30 mm inside the strut in
+            the next slot -- measured on the built scene."""
+            if r.kind == "mcam":
+                return Carrier.nest_over(Payload, self.t.d_diag)
+            return 0.0, Magazine.DIAG_PITCH / 2.0
+
+        def turnable(r):
+            return (_mount.yaw_stroke_for(r, self.t.d_diag)
+                    <= Head.GRIP_STROKE + 1e-9)
+
+        def gap(ha, hb):
+            """Between two slots end to end.  THE GRIPPER NEVER REACHES
+            PAST THE PART IT TAKES -- it grips at the middle and is BODY_W
+            wide along the carriage -- so this is the seating clearance,
+            plus whatever a part shorter than the gripper's own body would
+            need on top of it."""
+            return (2.0 * Process.SEAT_CLEAR
+                    + max(0.0, Gripper.BODY_W / 2.0 - ha)
+                    + max(0.0, Gripper.BODY_W / 2.0 - hb))
+
+        out = []
+        # ---- the parts that cannot be turned, at the yaw they are laid at,
+        # in their own bay at the low-x end of the bench: they are deep, and
+        # that is the end where the cage is not in the way.
+        bay = lo
+        for r in sorted([q for q in mr if not turnable(q)],
+                        key=lambda q: (-q.length, q.chord, q.index)):
+            over, wide = over_of(r)
+            hl = r.length / 2.0
+            yaw = _mount.lay_pose(r)[1]
+            ay = sin(radians(yaw))
+            if abs(ay) < 1e-6:
+                raise ValueError(
+                    "mount part %d cannot be turned below the head and is "
+                    "laid at %.1f degrees, which is along the row it would "
+                    "have to be racked in" % (r.index, yaw))
+            x0 = bay + (0.0 if bay == lo else 2.0 * Process.SEAT_CLEAR) + wide
+            ends = [-hl * ay, hl * ay, -(hl + over) * ay]
+            best = None
+            for sgn in (1.0, -1.0):
+                f = floor_at(sgn, x0 - wide, x0 + wide)
+                near = min(sgn * e for e in ends)     # toward the axis
+                yc = f - near                         # the slot's own line
+                # WHAT THE AXIS HAS TO REACH IS THE SLOT.  The jaws close on
+                # the boss at the slot's middle; the nest behind it stands
+                # further out and nothing has to reach that.
+                if yc > y_max + 1e-9:
+                    continue
+                if best is None or yc < best[0]:
+                    best = (yc, sgn)
+            if best is None:
+                raise ValueError(
+                    "the mount's rack cannot stand part %d on either flank: "
+                    "the bench is free from %.1f mm off the axis and the "
+                    "part wants its slot %.1f mm out, against %.1f"
+                    % (r.index, floor_at(1.0, x0 - wide, x0 + wide),
+                       floor_at(1.0, x0 - wide, x0 + wide)
+                       - min(e for e in ends), y_max))
+            yc, sgn = best
+            out.append(Slot(r.index,
+                            np.array([x0, sgn * yc - hl * ay, z]),
+                            np.array([x0, sgn * yc + hl * ay, z]),
+                            np.array([0, 0, 1.0])))
+            bay = x0 + wide
+        # ---- everything else, along x, in rows stacked outward from
+        # whichever flank's next free station is nearer the axis
+        rows = []
+        start = bay if bay == lo else bay + 2.0 * Process.SEAT_CLEAR
+        tops = {sgn: floor_at(sgn, start, hi) for sgn in (1.0, -1.0)}
+
+        def fresh():
+            sgn = min(tops, key=lambda q: tops[q])
+            rows.append({"sgn": sgn, "floor": tops[sgn], "top": tops[sgn],
+                         "cursor": start, "last": None})
+            return rows[-1]
+
+        fresh()
+        for r in sorted([q for q in mr if turnable(q)],
+                        key=lambda q: (-over_of(q)[1], q.chord, q.index)):
+            _over, wide = over_of(r)
+            hl = r.length / 2.0
+            row, g = None, 0.0
+            for cand in rows:
+                if cand["floor"] + wide > y_max:
+                    continue
+                g = 0.0 if cand["last"] is None else gap(cand["last"], hl)
+                if cand["cursor"] + g + 2.0 * hl <= hi:
+                    row = cand
+                    break
+            if row is None:
+                row, g = fresh(), 0.0
+                if row["floor"] + wide > y_max:
+                    raise ValueError(
+                        "the mount's rack does not fit beside the cage: part "
+                        "%d wants its slot %.1f mm off the axis against a "
+                        "%.1f mm reach, in x %.1f..%.1f"
+                        % (r.index, row["floor"] + wide + Gripper.PAD_L,
+                           Gantry.Y_TRAVEL / 2.0, start, hi))
+            # ONE CURSOR PER ROW, not one per end.  Filled from both ends of
+            # a row at once, two parts meet in the middle and neither knows
+            # about the other.
+            x0 = row["cursor"] + g + hl
+            row["cursor"] = x0 + hl
+            row["last"] = hl
+            row["top"] = max(row["top"], row["floor"] + 2.0 * wide)
+            tops[row["sgn"]] = row["top"] + Process.SEAT_CLEAR
+            y = row["sgn"] * (row["floor"] + wide)
+            out.append(Slot(r.index, np.array([x0 - hl, y, z]),
+                            np.array([x0 + hl, y, z]),
+                            np.array([0, 0, 1.0])))
         return out
 
     def x_range(self):
@@ -438,9 +602,22 @@ class Fixture:
         return next(s for s in self.slots if s.rod == rod_index)
 
     def y_reach(self):
-        """Y travel the loader needs, either side of the truss axis."""
-        ys = [abs(float(s.p0[1])) for s in self.slots] + \
-             [abs(float(s.p1[1])) for s in self.slots]
+        """Y travel the loader needs, either side of the truss axis.
+
+        AT THE GRIP POINT, NOT AT THE ROD'S FAR END.  Every rod is taken at
+        its MIDDLE -- that is the whole reason the racks leave the middle
+        free and the pins keep off it -- so a 130 mm diagonal lying across
+        the axis costs the Y axis nothing at all, and this used to charge it
+        65 mm plus a pad.  On the 300 mm truss that was the number: 116.3 mm
+        of Y demanded to reach a point the gripper never goes to.
+
+        A bench is not a travel.  It cost nothing to be wrong about until
+        the head kit had to be racked along y -- it cannot be turned below
+        the head, so it is racked at the yaw it is laid at -- and a part
+        61 mm deep read as 167 mm of a 150 mm axis while its boss, which is
+        what the jaws close on, sat at 133.
+        """
+        ys = [abs(float(s.p0[1] + s.p1[1]) / 2.0) for s in self.slots]
         return max(ys) + Gripper.PAD_L
 
     # ------------------------------------------------------ orientation

@@ -30,6 +30,38 @@ def check(name, ok, detail=""):
     RESULTS.append((name, bool(ok), detail))
 
 
+def _foot_gap(fx, geom, a, b):
+    """Least gap between two racked parts' own footprints in the bench
+    plane, mm.  Negative is an overlap.
+
+    A rod's footprint is its slot; a KIT'S IS NOT -- the module, its collar
+    and the wound grid hang off the boss's root inside a printed pocket,
+    `Carrier.nest_over` past it and across it.  Every mount slot lies along
+    one world axis or the other, so both footprints are axis-aligned boxes
+    and the gap is the larger of the two separations.
+    """
+    def box(rod):
+        s = fx.slot_of(rod.index)
+        p0 = np.asarray(s.p0, float)[:2]
+        p1 = np.asarray(s.p1, float)[:2]
+        L = float(np.linalg.norm(p1 - p0))
+        u = (p1 - p0) / L
+        n = np.array([-u[1], u[0]])
+        if rod.kind == "mcam":
+            over, w = Carrier.nest_over(Payload, geom.t.d_diag)
+        else:
+            over, w = 0.0, rod.r
+        mid = 0.5 * (p0 + p1)
+        cs = [mid + su * u * (L / 2.0 + (over if su < 0 else 0.0)) + sn * n * w
+              for su in (-1.0, 1.0) for sn in (-1.0, 1.0)]
+        cs = np.array(cs)
+        return cs.min(axis=0), cs.max(axis=0)
+
+    lo_a, hi_a = box(a)
+    lo_b, hi_b = box(b)
+    return float(max(np.maximum(lo_b - hi_a, lo_a - hi_b)))
+
+
 def main():
     for T in (structure.TRUSS_300, structure.TRUSS_1M):
         tag = "[%s] " % T.name
@@ -253,14 +285,25 @@ def main():
                          Bracket.plate_half(Payload, T.d_diag)[1]))
         fx = fixture.Fixture(g)
         cam = [r for r in g.mount_rods if r.kind == "mcam"]
-        others = [r for r in g.mount_rods if r.kind != "mcam" and r.chord == 0]
-        sc = fx.slot_of(cam[0].index)
-        gap = min(abs(float(sc.p0[0]) - float(fx.slot_of(r.index).p0[0]))
-                  for r in others)
-        check(tag + "...and its rack slot is pitched off the KIT's width, so its "
-              "nest cannot overlap its neighbour's blocks",
-              gap >= kx,
-              "%.1f mm to the nearest slot, kit half-width %.1f" % (gap, kx))
+        others = [r for r in g.mount_rods if r.kind != "mcam"]
+        # THE KIT'S FOOTPRINT AGAINST ITS NEIGHBOURS', not a pitch in x.
+        # This compared two slot origins along the truss axis, which said
+        # something only while every slot lay across it at a fixed pitch;
+        # the magazine packs the mount's parts along x on the cage's flanks
+        # now, and the same 13 mm that is plenty along a kit's own axis is
+        # nothing across it.  What the rule was always about is whether the
+        # nest can reach a neighbour, and that is a footprint.
+        worst, who = 1e9, -1
+        for c in cam:
+            for r in others:
+                gp_ = _foot_gap(fx, g, c, r)
+                if gp_ < worst:
+                    worst, who = gp_, r.index
+        check(tag + "...and the magazine gives that nest its own room: the kit's "
+              "footprint clears every other racked part, which a slot pitch cannot "
+              "say once the parts stop lying parallel",
+              worst >= 0.0,
+              "%.1f mm to part %d, kit half-width %.1f" % (worst, who, kx))
 
     # ------------------------------------------- IT IS IN THE SCENE
     import mujoco

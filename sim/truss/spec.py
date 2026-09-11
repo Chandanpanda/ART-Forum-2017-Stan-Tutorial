@@ -99,9 +99,36 @@ class Carrier:
     in.
     """
     WALL        = 1.5          # mm, printed
+    NEST_WALL   = 2.0          # mm, the kitting nest's pocket walls
     FIT         = 0.10         # mm interference on the board's edges
     MASS        = 2.0          # g [VERIFY: print one and weigh it]
     GRIP_CLEAR  = 4.0          # mm of boss beyond the pads, both ends
+
+    @classmethod
+    def nest_front(cls, payload=None, d_rod=1.5):
+        """Where the nest's front wall stands from the module's centre, mm:
+        one process clearance in front of the whole kit -- the grid, not the
+        housing."""
+        p = Payload if payload is None else payload
+        return (p.BOX[1] / 2.0 - p.CASE_PROUD + cls.kit_proud(p, d_rod)
+                + Process.SEAT_CLEAR)
+
+    @classmethod
+    def nest_over(cls, payload=None, d_rod=1.5):
+        """(past the boss's root, across the boss) how far the NESTED kit
+        reaches beyond the slot the magazine thinks it is racking, mm.
+
+        THE SLOT IS THE BOSS AND THE PART IS NOT.  Off the boss's root hang
+        the module, the collar and the wound grid, inside a printed pocket
+        whose walls are outside those again -- 14.0 mm past the root and
+        20.05 across it, against a boss of 3.  Racked as if the boss were
+        the part, a kit's grid stood 1.30 mm inside the strut in the next
+        slot: measured on the built scene, by the check that measures every
+        racked part against everything it does not own.
+        """
+        p = Payload if payload is None else payload
+        return (p.BOX[1] / 2.0 + cls.nest_front(p, d_rod) + cls.NEST_WALL,
+                cls.kit_half(p, d_rod)[0] + cls.NEST_WALL)
 
     @classmethod
     def boss_d(cls):

@@ -268,12 +268,24 @@ def rod_body(geom, rod, p0, p1):
         from .mount import collar_segments, payload_solid
         d = t.d_diag
         c = (p0 + p1) / 2.0
+        # THE KIT'S OWN FRAME, and it has to close on itself.  The design
+        # builds every part of the mount in (spine, look, up) with `up`
+        # square to both, so the drawing reads `up` off the world's x -- and
+        # when the part lies ALONG x, in the rack beside the cage, that
+        # cross product is zero.  The old guard fixed `up` and left the
+        # boxes on the world's x, which is a box whose two axes are the
+        # same axis: MuJoCo refuses to load it.  Take `up` from the world's
+        # z in that case and re-derive the spine from the pair, so the
+        # frame is orthonormal whichever way the part is lying and is the
+        # design's own everywhere it was before.
         look = -(p1 - p0) / float(np.linalg.norm(p1 - p0))
         xh = np.array([1.0, 0.0, 0.0])
         up = np.cross(look, xh)
         if np.linalg.norm(up) < 1e-9:
             up = np.array([0.0, 0.0, 1.0])
+            xh = np.cross(up, look)
         up = up / np.linalg.norm(up)
+        xh = xh / float(np.linalg.norm(xh))
         base = p0 + look * (Payload.BOX[1] / 2.0)      # the module's centre
 
         def at(dx, dl, du):
@@ -446,6 +458,13 @@ def rack_geoms(geom, fixture):
             # is a 4 g overhang on a 3 mm pin, and it rolls off.
             from .spec import Payload, Carrier, Process, Bracket
             look = -u
+            # THE NEST'S OWN FRAME, not the world's.  `look` runs from the
+            # boss's free end into the module and `across` is square to it
+            # on the bench; both were the world's y and x while the slot
+            # could only lie along y.  Beside the cage it lies along x, and
+            # a nest built on world axes there is a box whose y axis is its
+            # own x -- MuJoCo will not even load it.
+            across = _unit(np.cross(s.up, look))
             base = s.p0 + look * (Payload.BOX[1] / 2.0)
             # A POCKET, NOT A SHELF.  The module is 24 mm tall on a 9 mm
             # base; stood on a flat nest it topples the moment the sim
@@ -457,7 +476,7 @@ def rack_geoms(geom, fixture):
             # its near face ends up 0.3 mm inside where the pads close --
             # measured, as a stalled stroke on the board.  The nest is
             # printed to the part, so it is the carrier's own FIT.
-            wall = 2.0
+            wall = Carrier.NEST_WALL
             hy = Payload.BOX[1] / 2.0 + Carrier.FIT
             # ...AND THE FIT IS ON THE BACK FACE ONLY, because the front is
             # where the product is.  The kit stands `kit_proud` in front of
@@ -465,9 +484,7 @@ def rack_geoms(geom, fixture):
             # a fit's interference from the board's front face is a wall
             # inside the grid.  Sized against the module it cleared the
             # part that actually arrives by a tenth of a millimetre.
-            fy = (Payload.BOX[1] / 2.0 - Payload.CASE_PROUD
-                  + Carrier.kit_proud(Payload, geom.t.d_diag)
-                  + Process.SEAT_CLEAR)
+            fy = Carrier.nest_front(Payload, geom.t.d_diag)
             kx, ku = Carrier.kit_half(Payload, geom.t.d_diag)
             # THE FLOOR IS A PAD UNDER THE BOARD, not a plate under the kit.
             # The grid hangs BELOW the module -- its layer-1 rods reach
@@ -492,7 +509,7 @@ def rack_geoms(geom, fixture):
                            base + look * (0.5 * (front - back))
                            - s.up * (Payload.BOX[2] / 2.0 + pt / 2.0),
                            (hx, 0.5 * (front + back), pt / 2.0),
-                           np.array([1.0, 0.0, 0.0]), look, C_RACK, CAGE, ROD))
+                           across, look, C_RACK, CAGE, ROD))
             # The FAR wall is whole; the NEAR one is SPLIT, because the
             # carrier's boss comes out through it and the jaws close on the
             # boss at its middle.  A whole near wall stands 4.5 mm from the
@@ -517,7 +534,7 @@ def rack_geoms(geom, fixture):
                            base + look * (fy + wall / 2.0)
                            - s.up * (Payload.BOX[2] / 4.0),
                            (kx + wall, wall / 2.0, Payload.BOX[2] / 4.0),
-                           np.array([1.0, 0.0, 0.0]), look, C_RACK, CAGE, ROD))
+                           across, look, C_RACK, CAGE, ROD))
             for sx, tag in ((+1.0, "b"), (-1.0, "c")):
                 # ...and they stop BELOW the pads' own reach: a tab whose
                 # top is level with the boss's axis brushes the pad as it
@@ -526,10 +543,9 @@ def rack_geoms(geom, fixture):
                 out.append(box("nestw%d_%s" % (s.rod, tag),
                                base - look * (hy + wall / 2.0)
                                - s.up * (Payload.BOX[2] / 4.0 + Gripper.PAD_H / 2.0)
-                               + np.array([sx * (Payload.BOX[0] / 2.0 + wall - hw),
-                                           0.0, 0.0]),
+                               + across * (sx * (Payload.BOX[0] / 2.0 + wall - hw)),
                                (hw, wall / 2.0, Payload.BOX[2] / 4.0),
-                               np.array([1.0, 0.0, 0.0]), look, C_RACK, CAGE, ROD))
+                               across, look, C_RACK, CAGE, ROD))
         for k, (off, bl) in enumerate(Magazine.blocks(L)):
             centre = mid + u * off - s.up * drop
             out += v_flanks("slot%d_%d" % (s.rod, k), centre, u, s.up, bl,

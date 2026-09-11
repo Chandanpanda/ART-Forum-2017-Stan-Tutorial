@@ -317,33 +317,22 @@ def mount_phase(P, hs, move, index, yaw_to, geom, fixture, cruise):
         rods = sorted([r for r in geom.mount_rods if r.chord == end],
                       key=lambda r: (order[r.kind], r.index))
         for r in rods:
-            # EITHER CAGE ANGLE LAYS THE ROD; only one of them puts it
-            # where the gantry can reach.  rot_x(theta+180) with the yaw
-            # negated is the same line in the cage's frame, but the rod's
-            # POSITION flips with it, and the three end battens came out
-            # 4.7 mm below the z axis's own floor at the first solution.
-            # Take the one that holds the rod higher.
-            # ...AND ONLY THE ONES THE YAW SERVO CAN ACTUALLY REACH.  It has
-            # a stop at +-GRIP_YAW; asked for more it clamps, lays the rod
-            # off its own line, and answers "settled" -- which is how four
-            # struts a truss came out 27.7 mm out at their ends while every
-            # op reported success.  A pose outside the stop is not a pose.
-            # THE CAMERA IS NOT REVERSIBLE.  A rod laid end-for-end is the
-            # same rod; a camera laid end-for-end is a boss where the lens
-            # goes.  Only the cage's own symmetry is on offer for it.
-            offer = _mount.poses_for(r.axis, reversible=(r.kind != "mcam"))
-            poses = [p for p in offer if abs(p[1]) <= Head.GRIP_YAW]
-            if not poses:
-                raise ValueError(
-                    "mount rod %d wants a gripper yaw outside +-%.0f deg: %s"
-                    % (r.index, Head.GRIP_YAW, [round(p[1], 1) for p in offer]))
-            theta, yaw = max(poses, key=lambda p: float((rot_x(p[0]) @ r.mid)[2]))
+            # WHICH CAGE ANGLE AND WHICH YAW is `mount.lay_pose`'s, and it
+            # is there rather than here because the MAGAZINE has to know:
+            # a part it racks at a yaw the head cannot turn from is a part
+            # that never arrives.
+            theta, yaw = _mount.lay_pose(r)
             index("mount", theta)
-            s = fixture.slot_of(r.index)
-            pick = (s.p0 + s.p1) / 2.0
+            # THE RACK SAYS WHICH WAY IT IS LYING, not a typed 90.  The
+            # mount's parts moved off the end racks and onto the cage's
+            # flanks, where most of them lie along x like the chords and
+            # the kit lies across them at the yaw it is laid at.
+            # `pick_pose` is what the load phase has always read, and
+            # reading it here is what let them move at all.
+            pick, pick_yaw = fixture.pick_pose(r)
             place = rot_x(theta) @ r.mid
             move("mount", x=float(pick[0]) - gx, y=float(pick[1]), z=cruise)
-            yaw_to("mount", 90.0)
+            yaw_to("mount", pick_yaw)
             move("mount", z=grip_z(float(pick[2])))
             P.add("extend", stroke_time(Head.GRIP_STROKE), "mount", tool="grip")
             P.add("grip", Gripper.JAW_CLOSE_S, "mount", rod=r.index)
@@ -361,6 +350,25 @@ def mount_phase(P, hs, move, index, yaw_to, geom, fixture, cruise):
             # air at any yaw, which is why this is a stroke and not a filter
             # on the poses: filtered, two struts an end have no pose left.
             sw = Head.yaw_stroke(r.r)
+            if abs(((yaw - pick_yaw) + 180.0) % 360.0 - 180.0) > Gripper.YAW_TOL:
+                # ...AND WHAT SWEEPS THE RIM IS THE PART, not a rod.  A part
+                # turned below the head sweeps its own height above the grip
+                # axis round the race's whole outer radius, and on the HEAD
+                # KIT that height is the module, its collar and the wound
+                # grid: 17.5 mm against a rod's 0.75, which wants 51 mm of a
+                # 40 mm stroke.  So the kit is not turned at all -- the
+                # magazine racks it at the yaw `mount.lay_pose` says it is
+                # laid at, and this is the guard that says so if it stops.
+                # Racked square to that and turned anyway it came out 31.3
+                # mm and 75.5 degrees off, measured on rig_mount and plain
+                # in the frames as a board lying flat across the nose.
+                sw = Head.yaw_stroke(_mount.swing_r(r, d_strut=geom.t.d_diag))
+                if sw > Head.GRIP_STROKE:
+                    raise ValueError(
+                        "mount part %d cannot be turned below the head: it "
+                        "wants %.1f mm of a %.1f mm stroke, so the rack has "
+                        "to present it at the %.1f degrees it is laid at"
+                        % (r.index, sw, Head.GRIP_STROKE, yaw))
             move("mount", z=float(swing_z))
             P.add("extend", stroke_time(sw), "mount", tool="grip", mm=float(sw))
             yaw_to("mount", yaw)

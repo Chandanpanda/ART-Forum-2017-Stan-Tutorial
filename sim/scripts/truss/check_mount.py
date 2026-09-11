@@ -65,6 +65,36 @@ def _post_gap(geom, m, off):
     return worst, who[0], who[1]
 
 
+def _old_rack_reach(geom, fx):
+    """What the gantry would need if the mount's parts went back beyond the
+    end racks, on the diagonals' pitch with each kit's nest padded by the
+    chord rack's clearance -- the layout this replaced, priced."""
+    t = geom.t
+    edge = fx.end_free() + Cage.END_PLATE_T + Magazine.END_CLEAR
+    n_end = max(1, sum(1 for r in geom.diags) - len(geom.diags) // 2)
+    xs = [-fx.post_off, t.length + fx.post_off]
+    for s in fx.slots:
+        if s.rod < len(geom.rods):
+            xs += [float(s.p0[0]), float(s.p1[0])]
+    kx = Carrier.kit_half(Payload, t.d_diag)[0]
+    for end in (0, 1):
+        sign = -1.0 if end == 0 else 1.0
+        x = sign * edge + (t.length if end else 0.0)
+        x += sign * (n_end + 1) * Magazine.DIAG_PITCH
+        for _r in [q for q in geom.mount_rods
+                   if q.chord == end and q.kind != "mcam"]:
+            xs.append(x)
+            x += sign * Magazine.DIAG_PITCH
+        for _r in [q for q in geom.mount_rods
+                   if q.chord == end and q.kind == "mcam"]:
+            x += sign * (kx + Magazine.CLEAR)
+            xs.append(x)
+            x += sign * (kx + Magazine.CLEAR)
+    lo = min(xs) - Head.grip_x() - Gripper.BODY_W / 2.0
+    hi = max(xs) - Head.grip_x() + Gripper.BODY_W / 2.0
+    return hi - lo
+
+
 def reach_with(t, diag_pitch, chord_pitch, end_free):
     """The gantry travel a fixture wants with the magazine and the cage at
     the given pitches -- measured by building one, not re-derived."""
@@ -334,8 +364,11 @@ def main():
                       key=lambda p: float((geometry.rot_x(p[0]) @ r.mid)[2]))
         b = mujoco.mj_name2id(mk, mujoco.mjtObj.mjOBJ_BODY, "rod%d" % r.index)
         adr = mk.jnt_qposadr[mk.body_jntadr[b]]
-        # the part is PICKED at yaw 90, so only the change in yaw turns it
-        R = _rz(yaw - 90.0)
+        # the part is PICKED at whatever yaw its slot lies at, so only the
+        # CHANGE in yaw turns it -- typed as 90 here, this check read every
+        # part 90 degrees out the moment the rack moved
+        _pick, pick_yaw = fk.pick_pose(r)
+        R = _rz(yaw - pick_yaw)
         q = np.empty(4)
         mujoco.mju_mat2Quat(q, R.flatten())
         dk.qpos[adr:adr + 3] = (geometry.rot_x(th) @ r.mid) / 1000.0
@@ -370,6 +403,46 @@ def main():
           worst_k >= Process.SEAT_CLEAR - 1e-6,
           "%.2f mm at %s / %s (a %s), against a process clearance of %.2f"
           % (worst_k, pair_k[0], pair_k[1], kind_k, Process.SEAT_CLEAR))
+    # ---------------------------------------- AND THE RACK ITSELF HOLDS
+    # A LAYOUT THAT COMPUTES ITS OWN STATIONS CAN OVERLAP THEM, which a
+    # hand-laid one at a fixed pitch cannot -- so the magazine is measured
+    # on the BUILT scene, every part and every V-block against everything
+    # it does not own.  It is how the kit's nest was found overlapping its
+    # neighbour's blocks the first time, when the sim threw the camera
+    # across the cell.
+    import re as _re
+    mr_ = mujoco.MjModel.from_xml_string(
+        _mjcf.scene_cell(gp, fp, stage="empty"))
+    dr_ = mujoco.MjData(mr_)
+    mujoco.mj_forward(mr_, dr_)
+    own = {}
+    for i in range(mr_.ngeom):
+        nm = mujoco.mj_id2name(mr_, mujoco.mjtObj.mjOBJ_GEOM, i) or ""
+        mt = _re.match(r"(?:rod|slotbed|slot|nestw|nest)(\d+)", nm)
+        own[i] = int(mt.group(1)) if mt else -1
+    pos = dr_.geom_xpos
+    rb = mr_.geom_rbound
+    worst_r, pair_r = 1e9, ("", "")
+    ft2 = np.zeros(6)
+    for i in range(mr_.ngeom):
+        if own[i] < 0:
+            continue
+        d2 = np.linalg.norm(pos - pos[i], axis=1) - rb - rb[i]
+        for j2 in np.nonzero(d2 < 0.02)[0]:
+            j2 = int(j2)
+            if j2 == i or own[j2] == own[i]:
+                continue
+            e = mujoco.mj_geomDistance(mr_, dr_, i, j2, 0.02, ft2) * 1000.0
+            if e < worst_r:
+                worst_r = e
+                pair_r = (mujoco.mj_id2name(mr_, mujoco.mjtObj.mjOBJ_GEOM, i),
+                          mujoco.mj_id2name(mr_, mujoco.mjtObj.mjOBJ_GEOM, j2))
+    check("nothing in the magazine is inside anything it does not own: every racked "
+          "part, V-block, bed and nest against every geom of another part or of the "
+          "cell, on the built scene",
+          worst_r >= 0.0,
+          "%.2f mm at %s / %s" % (worst_r, pair_r[0], pair_r[1]))
+
     check("making that room is NOT free: it pushes the end racks out with it, and the "
           "chosen truss is inside the gantry's X travel with 17 mm to spare",
           x_now <= Gantry.X_TRAVEL
@@ -378,6 +451,83 @@ def main():
           "%.0f mm of %.0f now, %.0f with the old 20 mm cage"
           % (x_now, Gantry.X_TRAVEL,
              reach_with(t, Magazine.DIAG_PITCH, Magazine.CHORD_PITCH, 20.0)[0]))
+
+    # ------------------------------------ WITH THE CAMERA ON THE TRUSS
+    # THE X-TRAVEL CHECK ABOVE MEASURED A FIXTURE WITH NO MOUNT ON IT, and
+    # that is the whole of why nobody noticed.  The mount's parts were
+    # racked beyond the end racks on the diagonals' own pitch, with each
+    # kit's nest padded by a constant borrowed from the chord rack: the
+    # chosen truss wanted 1766 mm of a 1400 mm axis, TRUSS_1M 1722.  Every
+    # simulation this project has run was the 300, which fits.
+    check("the gantry's X travel is measured WITH the camera on the truss, and the "
+          "mount's rack costs none of it",
+          fp.x_reach() <= Gantry.X_TRAVEL
+          and abs(fp.x_reach() - bare.x_reach()) < 1e-6,
+          "%.0f mm of %.0f with the mount, %.0f without"
+          % (fp.x_reach(), Gantry.X_TRAVEL, bare.x_reach()))
+    check("...and on the chosen truss none of the Y travel either: the parts go where "
+          "the bench is free nearer the axis than the chord rack already reaches",
+          fp.y_reach() <= Gantry.Y_TRAVEL / 2.0
+          and abs(fp.y_reach() - bare.y_reach()) < 1e-6,
+          "%.1f of +-%.0f with the mount, %.1f without"
+          % (fp.y_reach(), Gantry.Y_TRAVEL / 2.0, bare.y_reach()))
+    # EVERY PART HAS TO BE TURNABLE FROM WHERE IT IS RACKED, and that is the
+    # rule the magazine implements rather than a fact about the kit: a part
+    # turned below the head sweeps whatever stands above its grip axis round
+    # the race's outer radius, and the kit's module, collar and grid want
+    # 51 mm of a 40 mm stroke.  Racked square to its lay angle and turned
+    # anyway, it came out 31.3 mm and 75.5 degrees off.
+    worst_t, who_t = 0.0, -1
+    for r in gp.mount_rods:
+        _p, py = fp.pick_pose(r)
+        _th, ly = mount.lay_pose(r)
+        if abs(((ly - py) + 180.0) % 360.0 - 180.0) <= Gripper.YAW_TOL:
+            continue                              # racked at its lay angle
+        need = mount.yaw_stroke_for(r, t.d_diag)
+        if need > worst_t:
+            worst_t, who_t = need, r.index
+    check("every mount part is racked at a yaw the head can turn it FROM: what sweeps "
+          "the rim is the part, not a rod, and the kit is 17.5 mm above its own boss",
+          worst_t <= Head.GRIP_STROKE,
+          "worst turn wants %.2f mm of a %.0f mm stroke (part %d); the kit would want "
+          "%.2f and is racked at the %.0f degrees it is laid at"
+          % (worst_t, Head.GRIP_STROKE, who_t,
+             mount.yaw_stroke_for(
+                 [r for r in gp.mount_rods if r.kind == "mcam"][0], t.d_diag),
+             mount.lay_pose(
+                 [r for r in gp.mount_rods if r.kind == "mcam"][0])[1]))
+    # ...AND ON THE 300, WHICH IS THE ONE EVERY SIMULATION RUNS.  Its rack
+    # span is 454 mm against the metre's 1385, so its mount does not lie in
+    # one row and the stack is what has to fit.  On the +y flank alone it
+    # went to 149.9 of 150.
+    g3 = geometry.TrussGeometry(structure.TRUSS_300)
+    M3 = mount.solve(g3, d_strut=structure.TRUSS_300.d_diag,
+                     standoff_mm=mount.fov_standoff(
+                         g3, d_strut=structure.TRUSS_300.d_diag))
+    g3.attach_mount(M3)
+    f3 = fixture.Fixture(g3)
+    b3 = fixture.Fixture(geometry.TrussGeometry(structure.TRUSS_300))
+    n3 = len(set(round(float(q.p0[1]), 6) for q in f3.slots
+                 if q.rod >= len(g3.rods)))
+    check("the 300 mm truss's mount racks too, in the x its own truss already needs, "
+          "stacked over both flanks rather than off the end of one",
+          f3.x_reach() <= Gantry.X_TRAVEL
+          and abs(f3.x_reach() - b3.x_reach()) < 1e-6
+          and f3.y_reach() <= Gantry.Y_TRAVEL / 2.0,
+          "%d rows, x %.0f of %.0f (bare %.0f), y %.1f of +-%.0f (bare %.1f)"
+          % (n3, f3.x_reach(), Gantry.X_TRAVEL, b3.x_reach(),
+             f3.y_reach(), Gantry.Y_TRAVEL / 2.0, b3.y_reach()))
+    check("...and racked the old way -- beyond the end racks, on the diagonals' "
+          "pitch -- it does NOT fit, which is the measurement that was missing",
+          _old_rack_reach(gp, fp) > Gantry.X_TRAVEL,
+          "%.0f mm of %.0f" % (_old_rack_reach(gp, fp), Gantry.X_TRAVEL))
+    check("every mount part is inside the x the truss's own racks already need, and "
+          "its whole slot is, not just the point the jaws take it at",
+          all(fp.mount_span()[0] - 1e-6 <= float(v) <= fp.mount_span()[1] + 1e-6
+              for s_ in fp.slots if s_.rod >= len(gp.rods)
+              for v in (s_.p0[0], s_.p1[0])),
+          "%d parts in x %.1f..%.1f"
+          % (len(gp.mount_rods), fp.mount_span()[0], fp.mount_span()[1]))
 
     # ---------------------------------------------- THE RODS THEMSELVES
     # the CARBON RODS only: the bracket's arms are a machined part and are

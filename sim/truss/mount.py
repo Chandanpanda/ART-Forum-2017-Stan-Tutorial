@@ -236,6 +236,60 @@ def payload_clearance(mount, geom, end=0, payload=Payload, aperture=True):
     return worst, who
 
 
+def swing_r(rod, payload=Payload, d_strut=1.5):
+    """How far a part held in the jaws reaches above its own grip axis, mm.
+
+    WHAT HAS TO CLEAR THE HEAD'S RIM when the part is turned below it.  For
+    a rod it is the rod's radius; for the HEAD KIT it is the module, the
+    collar and the wound grid standing off the boss the jaws have hold of,
+    which is twelve times that.
+    """
+    if getattr(rod, "kind", "") == "mcam":
+        from .spec import Carrier
+        return max(payload.BOX[2] / 2.0,
+                   Carrier.kit_half(payload, d_strut)[1])
+    return rod.r
+
+
+def yaw_stroke_for(rod, d_strut=1.5, payload=Payload):
+    """The gripper stroke it takes to turn this part below the head, mm."""
+    from .spec import Head
+    return Head.yaw_stroke(swing_r(rod, payload, d_strut))
+
+
+def lay_pose(rod, reversible=None):
+    """(cage angle, gripper yaw) a mount part is laid at.
+
+    ONE PLACE, because the magazine has to rack a part at a yaw the head
+    can turn it FROM, and only this knows what it will be turned TO.
+
+    EITHER CAGE ANGLE LAYS THE ROD; only one of them puts it where the
+    gantry can reach.  rot_x(theta+180) with the yaw negated is the same
+    line in the cage's frame, but the rod's POSITION flips with it, and the
+    three end battens came out 4.7 mm below the z axis's own floor at the
+    first solution -- so take the one that holds the part higher.
+
+    ...AND ONLY THE ONES THE YAW SERVO CAN REACH.  It has a stop at
+    +-GRIP_YAW; asked for more it clamps, lays the rod off its own line and
+    answers "settled", which is how four struts a truss came out 27.7 mm
+    out at their ends while every op reported success.
+
+    THE CAMERA IS NOT REVERSIBLE.  A rod laid end for end is the same rod;
+    a camera laid end for end is a boss where the lens goes.  Only the
+    cage's own symmetry is on offer for it.
+    """
+    from .spec import Head
+    if reversible is None:
+        reversible = getattr(rod, "kind", "") != "mcam"
+    offer = poses_for(rod.axis, reversible=reversible)
+    poses = [p for p in offer if abs(p[1]) <= Head.GRIP_YAW]
+    if not poses:
+        raise ValueError(
+            "mount rod %d wants a gripper yaw outside +-%.0f deg: %s"
+            % (rod.index, Head.GRIP_YAW, [round(p[1], 1) for p in offer]))
+    return max(poses, key=lambda p: float((rot_x(p[0]) @ rod.mid)[2]))
+
+
 def post_station(geom, mount, post_r, post_l, clear=None, lo=None, hi=None,
                  coarse=0.5, step=0.05):
     """How far outboard of the chord ends a thread post can stand, mm.

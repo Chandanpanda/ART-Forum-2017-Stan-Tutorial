@@ -250,5 +250,12 @@ something quietly on the floor, a phase that ran and achieved nothing.
 
 ## Commits
 
-Commit and push to `master` directly. Write what was measured and what it
-means, not what was changed — the diff already says that.
+Commit and push to `master` directly. **No feature branches and no pull
+requests.** This repository is a fork whose upstream belongs to somebody
+else, so GitHub offers to open every pull request against *their* master;
+the work lives here, on this fork's `master`, and the only step after a
+push should be Fetch/Pull in GitHub Desktop. If a session is handed a
+branch name to develop on, this instruction is the one that governs.
+
+Write what was measured and what it means, not what was changed — the diff
+already says that.

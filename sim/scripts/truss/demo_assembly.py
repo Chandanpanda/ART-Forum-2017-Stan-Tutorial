@@ -31,10 +31,13 @@ truss with a camera on each end:
     wind    every joint, the ring turning round the chord, the band laid
             where the fiducial says the turns went
     dose    resin onto every band
-    mount   thirteen rods an end plus the camera on its carrier, at cage
-            angles the same worm indexes and gripper yaws the same servo
-            turns -- the mount was solved for poses the machine already has
-    bond    an epoxy fillet at every mount rod end
+    mount   three battens and six struts an end, plus the HEAD KIT on its
+            carrier -- module, collar and the wound tic-tac-toe, made
+            whole at station B because this cell cannot wind those four
+            crossings (see stationb.py) -- at cage angles the same worm
+            indexes and gripper yaws the same servo turns
+    bond    an epoxy fillet at every mount rod end, the six struts landing
+            on crossings that arrived already wound
 
 Nothing here is a scripted animation.  Every pose comes from the same
 `schedule.plan` the checks run, executed by the same `process.Executor`
@@ -58,7 +61,8 @@ import numpy as np                       # noqa: E402
 import mujoco                            # noqa: E402
 
 from truss import (structure, geometry, fixture, mjcf, cell, approach,   # noqa: E402
-                   schedule, process, vision, inspector, mount, view)
+                   schedule, process, vision, inspector, mount, view,
+                   filmstrip)
 from truss.spec import Vision            # noqa: E402
 from truss.geometry import TrussGeometry  # noqa: E402
 
@@ -94,6 +98,15 @@ def main():
     ap.add_argument("--seed", type=int, default=3)
     ap.add_argument("--stalls", action="store_true",
                     help="list the ops whose sensor did not answer in time")
+    ap.add_argument("--sweep", metavar="DIR",
+                    help="frames at 0.1 fps over the whole run, tiled into one "
+                         "contact sheet -- READ IT, this is the review")
+    ap.add_argument("--sweep-fps", type=float, default=0.1)
+    ap.add_argument("--window", nargs=2, type=float, metavar=("T0", "T1"),
+                    help="with --sweep, capture only this stretch of simulated "
+                         "time, and at --sweep-fps 1 by default")
+    ap.add_argument("--nose", action="store_true",
+                    help="frame the sweep on the x=0 nose instead of the cell")
     a = ap.parse_args()
 
     t, g, fx, P, xml, n_drops = build(a.metre, a.seed)
@@ -141,6 +154,23 @@ def main():
         cam.lookat[:] = [t.length / 2.0 * 1e-3, 0.0, 0.0]
         cam.distance = max(0.6, t.length * 2.2e-3)
         cam.azimuth, cam.elevation = 135.0, -18.0
+    strip = None
+    if a.sweep:
+        # A SEPARATE CAMERA AND RENDERER: the sweep is the review, and it
+        # has to keep working when nothing else is being recorded.
+        srend = mujoco.Renderer(m, height=480, width=640)
+        scam = mujoco.MjvCamera()
+        mujoco.mjv_defaultCamera(scam)
+        if a.nose:
+            scam.lookat[:] = [-0.010, 0.0, 0.0]
+            scam.distance, scam.azimuth, scam.elevation = 0.22, 125.0, -12.0
+        else:
+            scam.lookat[:] = [t.length / 2.0 * 1e-3, 0.0, 0.0]
+            scam.distance = max(0.6, t.length * 2.2e-3)
+            scam.azimuth, scam.elevation = 135.0, -18.0
+        fps = a.sweep_fps if a.window is None or a.sweep_fps != 0.1 else 1.0
+        strip = filmstrip.Filmstrip(srend, scam, fps=fps,
+                                    window=tuple(a.window) if a.window else None)
     if a.video:
         # A SEPARATE, SMALLER RENDERER FOR THE FILM.  A twenty-minute build
         # at twenty frames a second is six hundred frames, and six hundred
@@ -172,6 +202,8 @@ def main():
             vid.update_scene(d, cam)
             frames.append(vid.render().copy())
             next_frame[0] = d.time + period
+        if strip is not None:
+            strip.maybe(d.time, d)
         if a.shots and nonlocal_phase != phase[0] and rend is not None:
             rend.update_scene(d, cam)
             shots[nonlocal_phase] = rend.render().copy()
@@ -201,6 +233,29 @@ def main():
             for r in g.rods}
     rep = inspector.inspect_truss(g, ex.states, seated=errs, cycle_s=d.time)
     print(inspector.report(rep) if hasattr(inspector, "report") else rep)
+    # WHERE THE MOUNT ACTUALLY ENDED UP, against `mount.solve`'s own drawing.
+    # NOT THE MACHINE AGAINST ITSELF.  The mount phase once reported every
+    # rod placed within 0.45 mm and 0.0 degrees of plan while building a
+    # mess: that number was the tracker measured against its own target.
+    # This one is the built part, in the cage's frame, against the geometry
+    # the struts and the camera and the truss all have to agree about -- and
+    # it is measured at the rods' ENDS, because a rod rolled about its own
+    # axis has a centre error of zero.
+    if g.mount_rods:
+        Rb = geometry.rot_x(-c.cage_truth())
+        worst, who = 0.0, ""
+        for r in g.mount_rods:
+            q0, q1 = c.rod_pose(r.index)
+            a0, a1 = Rb @ np.asarray(q0, float), Rb @ np.asarray(q1, float)
+            e = min(max(float(np.linalg.norm(a0 - r.p0)),
+                        float(np.linalg.norm(a1 - r.p1))),
+                    max(float(np.linalg.norm(a0 - r.p1)),
+                        float(np.linalg.norm(a1 - r.p0))))
+            if e > worst:
+                worst, who = e, "%s%d" % (r.kind, r.index)
+        print("mount built within %.2f mm of its own geometry (worst %s of %d "
+              "parts; the head kit arrives whole from station B)"
+              % (worst, who, len(g.mount_rods)))
     if msgs:
         print("%d warnings" % len(msgs))
     if ex.slow:
@@ -233,6 +288,16 @@ def main():
             Image.fromarray(rend.render()).save(
                 os.path.join(a.shots, "nose_end%d.png" % end))
         print("wrote %d stills to %s" % (len(shots) + 3, a.shots))
+    if strip is not None:
+        strip.maybe(d.time + 1e9, d)          # one last frame, whatever the rate
+        sheet = filmstrip.contact_sheet(
+            strip.frames, os.path.join(a.sweep, "sweep.png"),
+            labels=["%.0fs" % v for v in strip.times])
+        for i, f in enumerate(strip.frames):
+            from PIL import Image
+            Image.fromarray(f).save(os.path.join(a.sweep, "s%03d.png" % i))
+        print("wrote %d sweep frames and %s -- READ THE SHEET"
+              % (len(strip.frames), sheet))
     if a.video and frames:
         got = write_video(a.video, frames, a.fps)
         print("wrote %s: %d frames at %d fps" % (got, len(frames), a.fps))

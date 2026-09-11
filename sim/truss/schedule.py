@@ -133,7 +133,9 @@ def plan(geom, fixture, stations, interleave=True, start=None):
     t = geom.t
     P = Plan()
     cruise = _approach.index_lift(geom, fixture)
-    hs = HeadState(*(start or (-Cage.POST_OFF, 0.0, cruise)), theta=0.0)
+    # the same home the scene puts the carriage at: over the first post it
+    # anchors at, at whatever station this truss's mount leaves for it
+    hs = HeadState(*(start or (-fixture.post_off, 0.0, cruise)), theta=0.0)
     obstacles = {}
 
     def obs_at(theta):
@@ -284,48 +286,108 @@ def theta_up(p):
 
 
 def mount_phase(P, hs, move, index, yaw_to, geom, fixture, cruise):
-    """Both noses: the camera on its carrier, thirteen rods an end, a
-    fillet at every rod end, and a wound joint at every grid crossing.
+    """Both noses: three battens, the HEAD KIT on its carrier, six struts,
+    and a fillet at every rod end.
+
+    THE GRID IS NOT LAID HERE.  Its four crossings are wound to each other
+    with the same thread the truss's joints use, and this cell cannot make
+    that joint: its ring is 40 mm across in a raceway 54 across, and by the
+    time the mount goes on, the crossings are inside the end triangle with
+    the camera behind them.  Station B makes the sub-assembly on its own
+    jig and it arrives wound, bonded and seated on the module -- so what
+    this phase fetches is one part, and the crossings are already there
+    when the struts reach for them.
 
     ORDER IS MECHANICAL, not arbitrary.  The battens close the chord
-    triangle first, because everything else is measured from it.  The
-    CAMERA goes on next -- the grid is laid ON its collar, so the collar
-    has to be there.  Then the grid, then the struts, which land where two
-    grid rods already cross.  A strut laid before its crossing exists would
-    be a rod bonded to air.
+    triangle first, because everything else is measured from it.  The KIT
+    goes on next, because it carries the crossings.  Then the struts, which
+    land where two grid rods already cross: a strut laid before its
+    crossing exists would be a rod bonded to air.
     """
     from . import mount as _mount
-    order = {"mbatten": 0, "mcam": 1, "mgrid": 2, "mstrut": 3}
+    order = {"mbatten": 0, "mcam": 1, "mstrut": 2}
     gx = Head.grip_x()
+    # ...AND HIGH ENOUGH THAT THE ROD, HUNG BELOW THE HEAD, CLEARS THE WORK.
+    # The swing costs the whole stroke in height, so the carriage has to be
+    # a stroke plus the cage's own radius above the axis to make room for it.
+    swing_z = max(cruise,
+                  geom.R + geom.t.d_chord / 2.0 + Process.SEAT_CLEAR
+                  + Head.yaw_stroke(geom.t.d_chord / 2.0) - Head.TIP_PARK)
     for end in (0, 1):
         rods = sorted([r for r in geom.mount_rods if r.chord == end],
                       key=lambda r: (order[r.kind], r.index))
         for r in rods:
-            # EITHER CAGE ANGLE LAYS THE ROD; only one of them puts it
-            # where the gantry can reach.  rot_x(theta+180) with the yaw
-            # negated is the same line in the cage's frame, but the rod's
-            # POSITION flips with it, and the three end battens came out
-            # 4.7 mm below the z axis's own floor at the first solution.
-            # Take the one that holds the rod higher.
-            poses = _mount.poses_for(r.axis)
-            if not poses:
-                raise ValueError("mount rod %d has no cage pose" % r.index)
-            theta, yaw = max(poses, key=lambda p: float((rot_x(p[0]) @ r.mid)[2]))
+            # WHICH CAGE ANGLE AND WHICH YAW is `mount.lay_pose`'s, and it
+            # is there rather than here because the MAGAZINE has to know:
+            # a part it racks at a yaw the head cannot turn from is a part
+            # that never arrives.
+            theta, yaw = _mount.lay_pose(r)
             index("mount", theta)
-            s = fixture.slot_of(r.index)
-            pick = (s.p0 + s.p1) / 2.0
+            # THE RACK SAYS WHICH WAY IT IS LYING, not a typed 90.  The
+            # mount's parts moved off the end racks and onto the cage's
+            # flanks, where most of them lie along x like the chords and
+            # the kit lies across them at the yaw it is laid at.
+            # `pick_pose` is what the load phase has always read, and
+            # reading it here is what let them move at all.
+            pick, pick_yaw = fixture.pick_pose(r)
             place = rot_x(theta) @ r.mid
             move("mount", x=float(pick[0]) - gx, y=float(pick[1]), z=cruise)
-            yaw_to("mount", 90.0)
+            yaw_to("mount", pick_yaw)
             move("mount", z=grip_z(float(pick[2])))
             P.add("extend", stroke_time(Head.GRIP_STROKE), "mount", tool="grip")
             P.add("grip", Gripper.JAW_CLOSE_S, "mount", rod=r.index)
             P.add("retract", stroke_time(Head.GRIP_STROKE), "mount", tool="grip")
             move("mount", z=cruise)
             move("mount", x=float(place[0]) - gx, y=float(place[1]))
+            # TURN IT BELOW THE HEAD, NOT INSIDE IT.  Retracted, the grip
+            # point sits TIP_PARK above the ring's centre -- inside its bore
+            # -- and a rod swung about that point sweeps its own half-length
+            # out of the bore and into the annulus.  Measured on rig_mount:
+            # a 39.7 mm strut turned to -33.7 degrees sat 0.67 mm inside
+            # `ring7`, and went down 71.6 degrees off its own line with the
+            # yaw servo reporting the commanded angle and every op reporting
+            # success.  Extended past the head's own rim it turns in clear
+            # air at any yaw, which is why this is a stroke and not a filter
+            # on the poses: filtered, two struts an end have no pose left.
+            sw = Head.yaw_stroke(r.r)
+            if abs(((yaw - pick_yaw) + 180.0) % 360.0 - 180.0) > Gripper.YAW_TOL:
+                # ...AND WHAT SWEEPS THE RIM IS THE PART, not a rod.  A part
+                # turned below the head sweeps its own height above the grip
+                # axis round the race's whole outer radius, and on the HEAD
+                # KIT that height is the module, its collar and the wound
+                # grid: 17.5 mm against a rod's 0.75, which wants 51 mm of a
+                # 40 mm stroke.  So the kit is not turned at all -- the
+                # magazine racks it at the yaw `mount.lay_pose` says it is
+                # laid at, and this is the guard that says so if it stops.
+                # Racked square to that and turned anyway it came out 31.3
+                # mm and 75.5 degrees off, measured on rig_mount and plain
+                # in the frames as a board lying flat across the nose.
+                sw = Head.yaw_stroke(_mount.swing_r(r, d_strut=geom.t.d_diag))
+                if sw > Head.GRIP_STROKE:
+                    raise ValueError(
+                        "mount part %d cannot be turned below the head: it "
+                        "wants %.1f mm of a %.1f mm stroke, so the rack has "
+                        "to present it at the %.1f degrees it is laid at"
+                        % (r.index, sw, Head.GRIP_STROKE, yaw))
+            move("mount", z=float(swing_z))
+            P.add("extend", stroke_time(sw), "mount", tool="grip", mm=float(sw))
             yaw_to("mount", yaw)
-            move("mount", z=grip_z(float(place[2])) + Process.DROP_IN)
-            P.add("extend", stroke_time(Head.GRIP_STROKE), "mount", tool="grip")
+            # ...AND IT DOES NOT COME BACK UP.  Turned below the head, the
+            # rod is at a yaw that does NOT clear the head retracted -- so
+            # retracting after the turn drags it straight back through the
+            # annulus.  Measured: `rod13_g` against `ring16`, and four
+            # struts a truss laid 6 degrees off their own line by it.  The
+            # carriage descends with the rod still hung below it and the
+            # stroke finishes the last few millimetres.
+            # DOWN TO WHERE THE ROD GOES, not to a hover above it.  A truss
+            # rod is released a millimetre above a V and the V takes it;
+            # THE MOUNT HAS NO V's, and the keeper welds each rod where the
+            # tool left it -- so a millimetre of drop-in is a millimetre of
+            # permanent error on every part of the nose, and it was the
+            # floor under every reading in rig_mount.
+            move("mount", z=grip_z(float(place[2])))
+            P.add("extend", stroke_time(Head.GRIP_STROKE - sw), "mount",
+                  tool="grip")
             # TACKED, NOT DROPPED.  A truss rod is released a millimetre
             # above a V and the V takes it.  THE MOUNT HAS NO V's -- its
             # rods are laid onto the collar and onto each other -- so the

@@ -84,15 +84,36 @@ class Executor:
         yield from self._until(lambda: self.axes.settled(axis, 0.1), 1.5, "stroke settle")
 
     def _yaw(self, target):
+        """Turn the gripper to `target`, ABSOLUTELY.
+
+        THE YAW HAS HARD STOPS AT +-GRIP_YAW, so there is no wrap-around to
+        be short about -- and taking the short way round is how a rod gets
+        laid off its own line.  From -90 to +90 the difference wraps to
+        -180, the servo is commanded to -270, it clamps at its stop, and
+        every batten and strut picked after the first is held 185 degrees
+        from where the plan believes it is: five degrees off, once the
+        rod's own end-for-end symmetry is taken out.
+
+        Measured on rig_mount: four battens a truss at 8.2 degrees and
+        4.43 mm with their midpoints dead on to 0.03 and NOTHING TOUCHING
+        THEM.  It read as a collision for as long as it was only read as a
+        number; the trace showed the pick yaw sitting at -95.0 when the op
+        had asked for 90.
+        """
         start = self.axes.at("w")
-        d = ((target - start) + 180.0) % 360.0 - 180.0
+        goal = float(target)
+        if abs(goal) > Head.GRIP_YAW + 1e-9:
+            self.log("      yaw %.1f is outside the servo's +-%.0f stop"
+                     % (goal, Head.GRIP_YAW))
+            goal = max(-Head.GRIP_YAW, min(Head.GRIP_YAW, goal))
+        d = goal - start
         T = abs(d) / Gripper.YAW_V
         t = 0.0
         while t < T:
             self.axes.goto("w", start + d * (t / T))
             t += self.clock.PERIOD
             yield
-        self.axes.goto("w", start + d)
+        self.axes.goto("w", goal)
         yield from self._until(lambda: self.axes.settled("w", 0.5), 1.0, "yaw settle")
 
     # --------------------------------------------------------- the ops

@@ -236,6 +236,143 @@ def payload_clearance(mount, geom, end=0, payload=Payload, aperture=True):
     return worst, who
 
 
+def swing_r(rod, payload=Payload, d_strut=1.5):
+    """How far a part held in the jaws reaches above its own grip axis, mm.
+
+    WHAT HAS TO CLEAR THE HEAD'S RIM when the part is turned below it.  For
+    a rod it is the rod's radius; for the HEAD KIT it is the module, the
+    collar and the wound grid standing off the boss the jaws have hold of,
+    which is twelve times that.
+    """
+    if getattr(rod, "kind", "") == "mcam":
+        from .spec import Carrier
+        return max(payload.BOX[2] / 2.0,
+                   Carrier.kit_half(payload, d_strut)[1])
+    return rod.r
+
+
+def yaw_stroke_for(rod, d_strut=1.5, payload=Payload):
+    """The gripper stroke it takes to turn this part below the head, mm."""
+    from .spec import Head
+    return Head.yaw_stroke(swing_r(rod, payload, d_strut))
+
+
+def lay_pose(rod, reversible=None):
+    """(cage angle, gripper yaw) a mount part is laid at.
+
+    ONE PLACE, because the magazine has to rack a part at a yaw the head
+    can turn it FROM, and only this knows what it will be turned TO.
+
+    EITHER CAGE ANGLE LAYS THE ROD; only one of them puts it where the
+    gantry can reach.  rot_x(theta+180) with the yaw negated is the same
+    line in the cage's frame, but the rod's POSITION flips with it, and the
+    three end battens came out 4.7 mm below the z axis's own floor at the
+    first solution -- so take the one that holds the part higher.
+
+    ...AND ONLY THE ONES THE YAW SERVO CAN REACH.  It has a stop at
+    +-GRIP_YAW; asked for more it clamps, lays the rod off its own line and
+    answers "settled", which is how four struts a truss came out 27.7 mm
+    out at their ends while every op reported success.
+
+    THE CAMERA IS NOT REVERSIBLE.  A rod laid end for end is the same rod;
+    a camera laid end for end is a boss where the lens goes.  Only the
+    cage's own symmetry is on offer for it.
+    """
+    from .spec import Head
+    if reversible is None:
+        reversible = getattr(rod, "kind", "") != "mcam"
+    offer = poses_for(rod.axis, reversible=reversible)
+    poses = [p for p in offer if abs(p[1]) <= Head.GRIP_YAW]
+    if not poses:
+        raise ValueError(
+            "mount rod %d wants a gripper yaw outside +-%.0f deg: %s"
+            % (rod.index, Head.GRIP_YAW, [round(p[1], 1) for p in offer]))
+    return max(poses, key=lambda p: float((rot_x(p[0]) @ rod.mid)[2]))
+
+
+def post_station(geom, mount, post_r, post_l, clear=None, lo=None, hi=None,
+                 coarse=0.5, step=0.05):
+    """How far outboard of the chord ends a thread post can stand, mm.
+
+    THIS IS WHY THE FOUR LONG STRUTS CAME OUT SIX DEGREES OFF.  A thread
+    post is a radial pin on the chord's own line, `post_off` beyond the
+    chord end; the mount's struts leave the SAME point heading radially
+    inward to the crossings.  So near the end the post is inside the
+    struts' cone and further out it is not, and the offset the cage was
+    drawn with put it 0.66 mm inside two struts an end on the chosen truss,
+    1.16 on the 300.  The rod was driven into the pin while the gripper
+    held it rigidly, the keeper welded it at that pose, and the contact
+    levered it round the weld the moment the jaws opened.  Every axis
+    reported its commanded value throughout, because every axis went where
+    it was told.
+
+    The window is bounded at both ends and neither bound is new:
+
+        below   the ring's plate has to pass the post in x without reaching
+                the chord end -- `Cage.post_off_min`, which is exactly the
+                8.0 mm the cage was drawn with, arrived at by hand
+        above   the ring PARKED at the post has to clear the end plate --
+                `Cage.post_off_max`, which spec.CHECKS already asserted
+
+    Returns the nearest station to the chord end that clears every part of
+    the mount by `clear`, or None if the window holds no such station --
+    which is a truss this cell cannot put a camera on, not a number to
+    relax.  Scanned rather than bisected: the gap is not monotone in the
+    offset once the struts have crossed the chord's radius, and it is the
+    NEAREST clearing station that is wanted, not any of them.
+    """
+    from .spec import Cage, Process
+    from .geometry import capsule_gap
+    t = geom.t
+    clear = Process.SEAT_CLEAR if clear is None else clear
+    lo = Cage.post_off_min() if lo is None else lo
+    hi = Cage.post_off_max() if hi is None else hi
+    if hi < lo:
+        return None
+    # THE WHOLE MOUNT, not the rods the cell lays: the collar and the grid
+    # arrive on the kit and are as solid as anything else.  Each is padded
+    # by its LARGEST half-extent, which over-reports a strip of sheet edge
+    # on -- the safe direction for a clearance, and the collar is nowhere
+    # near the chords anyway.
+    ends = {}
+    for end in (0, 1):
+        rs = [r for r in mount.rods if r.end == end]
+        if rs:
+            ends[end] = (np.array([np.asarray(r.p0, float) for r in rs]),
+                         np.array([np.asarray(r.p1, float) for r in rs]),
+                         np.array([max(r.r, r.half_w) for r in rs]))
+    if not ends:
+        return float(lo)
+
+    def gap(off):
+        worst = float("inf")
+        for k in range(t.n_chords):
+            up = radial(chord_phi(k))
+            for end, (p0, p1, rr) in ends.items():
+                c = geom.chord_point(k, 0.0 if end == 0 else t.length) \
+                    + np.array([-off if end == 0 else off, 0.0, 0.0])
+                d = capsule_gap(c - up * post_l / 2.0, c + up * post_l / 2.0,
+                                post_r, p0, p1, rr)
+                worst = min(worst, float(d.min()))
+        return worst
+
+    coarse_at = [lo]
+    while coarse_at[-1] < hi - 1e-9:
+        coarse_at.append(min(hi, coarse_at[-1] + coarse))
+    hit = next((i for i, o in enumerate(coarse_at) if gap(o) >= clear - 1e-9),
+               None)
+    if hit is None:
+        return None
+    if hit == 0:
+        return float(lo)
+    o = coarse_at[hit - 1]
+    while o < coarse_at[hit]:
+        if gap(o) >= clear - 1e-9:
+            return float(o)
+        o += step
+    return float(coarse_at[hit])
+
+
 def landing_frame(geom, payload=Payload):
     """(x, look, up) unit vectors of the camera's own frame, cage coords."""
     look = radial(look_azimuth(geom))
@@ -266,13 +403,22 @@ def landing_in_camera(mount, geom, end=0, payload=Payload):
     return out
 
 
-def mech_standoff(payload=Payload, clear=None):
-    """The least standoff the BOARD needs: the platform's plane cuts the
-    enclosure, and the board reaches half its own length back toward the
-    truss from there, so what must not touch is the board against the chord
-    ends."""
+def mech_standoff(payload=Payload, clear=None, d_strut=1.5):
+    """The least standoff the HEAD KIT needs, mm.
+
+    WHAT STANDS OFF IS NOT THE BOARD.  It is the kit station B delivers --
+    the module, the collar and the wound tic-tac-toe -- and the grid
+    overhangs the board by OVERRUN on every side.  Sized on the board's own
+    half-length the kit reaches 5 mm PAST the chord ends, into the cage's
+    backbone, its torsion shafts and the first of its arms: measured on the
+    built scene, eight cage parts inside the kit, the worst 4.5 mm deep.
+    The camera would not seat because there was something already there.
+
+    And what it must clear is not only the chords: the mandrel's own spine
+    starts at the same station."""
+    from .spec import Carrier
     clear = Process.SEAT_CLEAR if clear is None else clear
-    return payload.BOX[0] / 2.0 + clear
+    return Carrier.kit_half(payload, d_strut)[0] + clear
 
 
 def look_azimuth(geom):
@@ -299,7 +445,7 @@ def fov_standoff(geom, payload=Payload, d_strut=1.5, lo=None, hi=200.0, tol=0.05
     photographing it is geometry, not taste -- it falls out of the chord
     radius and the field of view, and it moves when either does.
     """
-    lo = mech_standoff(payload) if lo is None else lo
+    lo = mech_standoff(payload, d_strut=d_strut) if lo is None else lo
     if _clear_at(geom, hi, payload, d_strut, azimuth) <= 0.0:
         return None
     if _clear_at(geom, lo, payload, d_strut, azimuth) > 0.0:
@@ -366,6 +512,45 @@ def fov_clear(mount, payload=Payload, end=None):
     return worst
 
 
+def collar_segments(payload=Payload, d_strut=1.5, clear=None):
+    """The collar's own outline, in the plate's plane: (across, up) pairs,
+    mm from the module's centre.
+
+    FOUR BANDS ROUND THE RECTANGLE THE GRID LIES ON, four ribs in to the
+    ring round the aperture.  It is an open frame, not a plate -- there is
+    a lens behind it.
+
+    Shared because two machines build it: `solve` puts it on the truss and
+    `mjcf.station_b` puts it in station B's nest, and drawn separately B's
+    came out a solid slab lying over the housing.  A part with two
+    definitions has one of them wrong.
+    """
+    px, pu = Bracket.plate_half(payload, d_strut, clear)
+    bw = Bracket.band_w(d_strut)
+    bx, bu = px - bw / 2.0, pu - bw / 2.0       # band centrelines
+    rx, ru = Bracket.ring_half(payload)
+    ax, au = [v / 2.0 for v in Bracket.aperture(payload)]
+    cx, cu = 0.5 * (ax + rx), 0.5 * (au + ru)   # ring centrelines
+    bands = [((-bx, +bu), (+bx, +bu), bw), ((+bx, +bu), (+bx, -bu), bw),
+             ((+bx, -bu), (-bx, -bu), bw), ((-bx, -bu), (-bx, +bu), bw)]
+    # THE RING ROUND THE APERTURE, which the ribs run out from and which
+    # `Bracket.bond_area` has always counted -- it is the whole bond to the
+    # lens housing.  Left out of the outline it was left out of the model
+    # too, so the collar had a hole where its one seating face should be
+    # and the vacuum head reached through it onto the housing.
+    # AND EACH SEGMENT CARRIES ITS OWN WIDTH.  The ring is one WALL wide,
+    # not one band: drawn at the band's width its inner edge closes to 3.1
+    # mm and an 8.5 mm lens housing will not pass through it -- the collar
+    # sat down on top of the camera, 2 mm proud, and every rod after it.
+    ring = [((-cx, +cu), (+cx, +cu), Bracket.WALL),
+            ((+cx, +cu), (+cx, -cu), Bracket.WALL),
+            ((+cx, -cu), (-cx, -cu), Bracket.WALL),
+            ((-cx, -cu), (-cx, +cu), Bracket.WALL)]
+    ribs = [((0.0, +ru), (0.0, +bu), bw), ((0.0, -ru), (0.0, -bu), bw),
+            ((+rx, 0.0), (+bx, 0.0), bw), ((-rx, 0.0), (-bx, 0.0), bw)]
+    return tuple(bands + ring + ribs)
+
+
 def solve(geom, payload=Payload, d_strut=1.5, clear=None, standoff_mm=None,
           azimuth=None):
     """The whole mount for this truss, in the cage frame.
@@ -393,7 +578,7 @@ def solve(geom, payload=Payload, d_strut=1.5, clear=None, standoff_mm=None,
     seat = Bracket.seat_l(payload)
     l0 = Bracket.layer_l(0, payload, d_strut)
     l1 = Bracket.layer_l(1, payload, d_strut)
-    over = Bracket.OVERRUN
+    over = Bracket.overrun(d_strut, geom.t.thread_d)
     rods, poses = [], []
     for end, x0 in ((0, 0.0), (1, t.length)):
         sign = -1.0 if end == 0 else 1.0
@@ -417,16 +602,11 @@ def solve(geom, payload=Payload, d_strut=1.5, clear=None, standoff_mm=None,
         # plate on the housing can be in; as a fin on edge it was 4.50 mm
         # inside the PCB.
         lc = 0.5 * (seat[0] + seat[1])
-        bx, bu = px - bw / 2.0, pu - bw / 2.0   # band centrelines
-        rx, ru = Bracket.ring_half(payload)
-        bands = [((-bx, +bu), (+bx, +bu)), ((+bx, +bu), (+bx, -bu)),
-                 ((+bx, -bu), (-bx, -bu)), ((-bx, -bu), (-bx, +bu))]
-        ribs = [((0.0, +ru), (0.0, +bu)), ((0.0, -ru), (0.0, -bu)),
-                ((+rx, 0.0), (+bx, 0.0)), ((-rx, 0.0), (-bx, 0.0))]
-        for (ax0, au0), (ax1, au1) in bands + ribs:
+        for (ax0, au0), (ax1, au1), sw in collar_segments(payload, d_strut,
+                                                          clear):
             rods.append(Strut("collar", len(rods), at(ax0, lc, au0),
                               at(ax1, lc, au1), Bracket.SHEET / 2.0, end,
-                              w=bw / 2.0, normal=look))
+                              w=sw / 2.0, normal=look))
 
         # ---- THE GRID: four rods on the plate's front face, two layers.
         # Layer 0 runs across the spine, laid along the band's two long
@@ -573,21 +753,42 @@ def pose_for(axis, tol=1e-9):
     return theta % 360.0, psi
 
 
-def poses_for(axis, tol=1e-9):
-    """BOTH (cage theta, gripper yaw) pairs that lay a rod along `axis`.
+def poses_for(axis, tol=1e-9, reversible=True):
+    """ALL FOUR (cage theta, gripper yaw) pairs that lay a rod along `axis`.
 
-    The mapping is two-to-one: rot_x(theta+180) flips both transverse
-    components, so a yaw of -psi puts the rod back on the same cage-frame
-    line.  Which of the two to use is not a geometric question -- it is
-    whether the gantry can REACH the rod once the cage has turned, and the
-    three end battens came out 4.7 mm below the z axis's own floor at the
-    first solution.  The caller picks; this offers.
+    TWO SYMMETRIES, and leaving out the second cost 47 degrees on four rods
+    of every truss.  The first is the cage's: rot_x(theta+180) flips both
+    transverse components, so a yaw of -psi puts the rod back on the same
+    cage-frame line.  The second is the ROD'S OWN -- a rod has no head and
+    no tail, so laying it end-for-end is the same rod, and that is a yaw of
+    psi +- 180 at the same cage angle.
+
+    It matters because the gripper's yaw is a servo with a stop.  Two
+    struts an end want 142.3 degrees, the axis reaches 95, and with only
+    the cage's symmetry on offer BOTH candidates were out of range: the
+    servo clamped, the plan never noticed, and the rod was laid 47 degrees
+    off its own line -- 27.7 mm at its ends, measured by rig_mount.  With
+    the rod's own symmetry the same line is available at -37.7 degrees.
+
+    Which to use is not a geometric question -- it is whether the gantry
+    can reach the rod once the cage has turned, and whether the yaw is
+    inside the stop.  The caller picks; this offers.
+
+    `reversible` is FALSE for a part that is not a rod.  The camera is on a
+    carrier with a boss out of one side; laid end-for-end it is the same
+    LINE and the wrong part, boss where the lens goes.  Only the cage's
+    symmetry applies to it.
     """
     p = pose_for(axis, tol)
     if p is None:
         return ()
     th, psi = p
-    return ((th, psi), ((th + 180.0) % 360.0, -psi))
+    wrap = lambda a: (a + 180.0) % 360.0 - 180.0
+    other = (th + 180.0) % 360.0
+    out = ((th, wrap(psi)), (other, wrap(-psi)))
+    if not reversible:
+        return out
+    return out + ((th, wrap(psi + 180.0)), (other, wrap(180.0 - psi)))
 
 
 def axis_from(theta_deg, yaw_deg):

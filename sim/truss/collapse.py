@@ -154,6 +154,57 @@ class Collapse:
                      + [("face", k, chord_phi(k) + 60.0)
                         for k in range(self.t.n_chords)])
 
+    def shaft_span(self):
+        """(x0, x1) a torsion shaft runs between, mm.
+
+        ONLY AS FAR AS THE RAILS IT TURNS, plus a bearing at each end.  Run
+        the length of the cage instead -- end plate to end plate, which is
+        what they were -- and they pass straight through both NOSES: four of
+        the six cross the camera module, and the one at the face the camera
+        looks out of runs down the optical axis 9.5 mm in front of the lens.
+        Nothing caught it, because check_collapse asked whether the mandrel
+        cleared the TRUSS and check_mount asked whether the mount cleared the
+        MODULE, and no check asked whether the cage cleared the camera.
+
+        Found by looking at a frame.
+        """
+        x0 = min(s[0] for _k, _sh, _p, _r, s in self.rails)
+        x1 = max(s[1] for _k, _sh, _p, _r, s in self.rails)
+        xs = [a.x for a in self.arms]
+        b = Cage.PIVOT_D
+        return (min(x0, min(xs)) - b, max(x1, max(xs)) + b)
+
+    def parts(self, end=0):
+        """The whole mandrel as `mount.Strut` records, so the clearance and
+        field-of-view tests written for the mount can be pointed at it.
+
+        A check that only ever runs on the thing it was written for is how
+        the shafts got into the camera."""
+        from .mount import Strut
+        out = []
+        sx0, sx1 = self.shaft_span()
+        for sh, (_kind, _k, phi) in enumerate(self.shafts):
+            up = radial(phi)
+            out.append(Strut("shaft", len(out),
+                             np.array([sx0, 0.0, 0.0]) + up * self.shaft_r(),
+                             np.array([sx1, 0.0, 0.0]) + up * self.shaft_r(),
+                             Cage.PIVOT_D / 2.0, end))
+        for _kind, _sh, phi, r, (a, b) in self.rails:
+            up = radial(phi)
+            out.append(Strut("rail", len(out),
+                             np.array([a, 0.0, 0.0]) + up * r,
+                             np.array([b, 0.0, 0.0]) + up * r,
+                             max(Cage.ARM_W, self.rail_h()) / 2.0, end))
+        for a in self.arms:
+            out.append(Strut("marm", len(out), a.base, a.tip,
+                             Cage.LINK_T / 2.0, end))
+        for b in self.braces:
+            out.append(Strut("brace", len(out), b.anchor, b.knee,
+                             Cage.LINK_T / 2.0, end))
+            out.append(Strut("brace", len(out), b.knee, b.attach,
+                             Cage.LINK_T / 2.0, end))
+        return tuple(out)
+
     def shaft_r(self):
         """Where a shaft's axis lies, mm from the cage's axis: on the
         spine's surface, one shaft radius out."""

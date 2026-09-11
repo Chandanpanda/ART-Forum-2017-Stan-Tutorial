@@ -155,6 +155,7 @@ class TrussGeometry:
         # has to pick up, so the magazine, the scene and the executor all
         # read `all_rods`.
         self.mount_rods = ()
+        self.mount = None
 
     # ------------------------------------------------------------ helpers
     def chord_point(self, k, x):
@@ -213,26 +214,46 @@ class TrussGeometry:
         n = len(self.rods)
         out = []
         for st in mount.rods:
-            if st.kind == "collar":
-                continue                 # a machined part, not a laid rod
+            if st.kind in ("collar", "grid"):
+                # NEITHER OF THESE IS LAID HERE.  The collar is a machined
+                # part, and the four GRID rods are wound to each other at
+                # four crossings with the same thread the truss's joints
+                # use -- which this cell cannot do.  Its ring is 40 mm
+                # across in a raceway 54 across, and by the time the mount
+                # goes on, the crossings are inside the end triangle with
+                # the camera behind them: there is no approach, and no
+                # clearance argument produces one.  So station B makes that
+                # sub-assembly on its own jig and it arrives HERE already
+                # wound, bonded and seated on the module.  See stationb.Kit;
+                # check_stationb holds its crossings against this mount's
+                # own landings.
+                continue
             out.append(Rod("m" + st.kind, n + len(out),
                            np.asarray(st.p0, float), np.asarray(st.p1, float),
                            st.r, chord=st.end))
-        # THE CAMERA RIDES THE SAME PATH AS A ROD.  Its carrier presents a
-        # boss of the largest stock diameter, coaxial with the spine, so
-        # the jaws already span it and the loader already knows how to pick
-        # it up -- that is what the carrier is FOR.  Given to the cell as
-        # one more thing to fetch, place and keep, it needs no new machine
-        # step and no new op.
+        # THE CAMERA RIDES THE SAME PATH AS A ROD, and it is the whole head
+        # kit now: module, collar and the wound tic-tac-toe, one rigid part
+        # off station B.  Its carrier presents a boss of the largest stock
+        # diameter, coaxial with the spine, so the jaws already span it and
+        # the loader already knows how to pick it up -- that is what the
+        # carrier is FOR.  Given to the cell as one more thing to fetch,
+        # place and keep, it needs no new machine step and no new op.
         from .spec import Carrier, Payload
         for end, (centre, look, _lr) in enumerate(mount.payload):
             look = np.asarray(look, float) / float(np.linalg.norm(look))
             ax = np.asarray(Carrier.boss_axis(look), float)
             b0 = np.asarray(centre, float) + ax * (Payload.BOX[1] / 2.0)
             out.append(Rod("mcam", n + len(out), b0,
-                           b0 + ax * Carrier.boss_l(), Carrier.boss_d() / 2.0,
-                           chord=end))
+                           b0 + ax * Carrier.boss_l(Payload, mount.d_strut),
+                           Carrier.boss_d() / 2.0, chord=end))
         self.mount_rods = tuple(out)
+        # KEEP THE WHOLE MOUNT, not just what the cell lays.  The collar and
+        # the grid are dropped from `mount_rods` because nothing here picks
+        # them up -- but they are ON the finished truss, and the fixture has
+        # to stand its thread posts clear of the parts as well as of the
+        # rods.  A post solved against the laid rods alone is solved against
+        # two thirds of the thing it has to miss.
+        self.mount = mount
         return self.mount_rods
 
     def rods_at(self, theta):
@@ -391,3 +412,23 @@ def clearance(P, p0, p1, rr, skip=None):
     if skip is not None and np.any(skip):
         d = d[:, ~np.asarray(skip, bool)]
     return float(d.min()) if d.size else float("inf")
+
+
+def capsule_gap(q0, q1, qr, p0, p1, rr, step=0.05):
+    """Least surface gap between the capsule q0..q1 of radius qr and each of
+    the N capsules p0,p1 [N,3] of radii rr [N] -> [N].  Negative is inside.
+
+    The single capsule is sampled along its axis and measured exactly
+    against the others, which is what `payload_clearance` does and for the
+    same reason: an exact segment-to-segment minimum is four cases of
+    clamping and this is one line of numpy.  A subset of a segment can only
+    OVER-report the distance, and by less than the sagitta of one pitch --
+    at 0.05 mm on anything in this cell, under a micron.
+    """
+    q0 = np.asarray(q0, float)
+    q1 = np.asarray(q1, float)
+    L = float(np.linalg.norm(q1 - q0))
+    n = max(2, int(np.ceil(L / float(step))) + 1)
+    P = q0[None, :] + np.linspace(0.0, 1.0, n)[:, None] * (q1 - q0)[None, :]
+    d = point_segment_distance(P, np.asarray(p0, float), np.asarray(p1, float))
+    return d.min(axis=0) - np.asarray(rr, float) - float(qr)

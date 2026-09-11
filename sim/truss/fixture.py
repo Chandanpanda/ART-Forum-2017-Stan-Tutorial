@@ -416,37 +416,55 @@ class Fixture:
                                     self.t.length + self.post_off))
 
     def _mount_rack(self, mr, truss_slots, z):
-        """Every mount part on the cage's flanks, inside the x the truss's
-        own racks already need.
+        """Every mount part on the cage's flanks, at the free station
+        NEAREST THE NOSE IT IS LAID AT.
 
-        WHY THERE.  The -y flank carries the chord rack and the two ends
-        carry the diagonals; the flanks are otherwise empty for the truss's
-        whole length, and a part laid there costs no X travel at all.  The
-        parts are stubby enough for it -- 35 to 85 mm against a diagonal's
-        130.  Racked beyond the end racks instead, on the diagonals' own
-        pitch, the chosen truss wanted 1766 mm of a 1400 mm axis.
+        WHY BESIDE THE CAGE.  The -y flank carries the chord rack and the
+        two ends carry the diagonals; the flanks are otherwise empty for the
+        truss's whole length, and a part laid there costs no X travel at
+        all.  The parts are stubby enough for it -- 35 to 85 mm against a
+        diagonal's 130.  Racked beyond the end racks instead, on the
+        diagonals' own pitch, the chosen truss wanted 1766 mm of a 1400 mm
+        axis.
 
         TWO KINDS OF PART, and which kind a part is comes out of the head,
         not out of its name.  A part the gripper can TURN below the head is
-        racked along x, pitched in a row -- the chord rack's own pattern,
-        and `pick_pose` reads the yaw off the slot so the mount phase turns
-        to whatever the rack gives it.  A part it CANNOT turn is racked at
-        the yaw `mount.lay_pose` says it is laid at, so that it never has
-        to be: the head kit's module, collar and grid stand 17.5 mm above
-        the boss the jaws hold and want 51 mm of a 40 mm stroke.  Racked
-        square and turned anyway it came out 31.3 mm and 75.5 degrees off.
+        racked along x -- the chord rack's own pattern, and `pick_pose`
+        reads the yaw off the slot so the mount phase turns to whatever the
+        rack gives it.  A part it CANNOT turn is racked at the yaw
+        `mount.lay_pose` says it is laid at, so that it never has to be: the
+        head kit's module, collar and grid stand 17.5 mm above the boss the
+        jaws hold and want 51 mm of a 40 mm stroke.  Racked square and
+        turned anyway it came out 31.3 mm and 75.5 degrees off.
 
         THE BENCH IS NOT FREE AT THE SAME RADIUS EVERYWHERE.  Over the cage
         a rack has to clear the cage; past its end plates there is nothing
         there but the diagonal rack, 26 mm nearer the axis.  The kit is 61
-        mm deep lying along y and that difference is the whole of whether
-        the mount costs Y travel or none.
+        mm deep lying along y, and that difference is the whole of whether
+        the mount costs Y travel or none -- so a station that costs none is
+        taken over a nearer one that would, and only if there is no such
+        station anywhere does a part stand further out.
+
+        AND THE STATION IS THE NEAREST ONE TO ITS OWN NOSE.  Every part is
+        fetched from the rack and carried to the nose, so what the phase
+        costs is twice the distance, per part, and the ORDER it is laid in
+        cannot change that -- only where it lies can.  Filled from one end
+        of the bench the far nose's kit was racked 1124 mm from the nose it
+        goes on, at the wrong end of the cell: the longest move in the whole
+        build, and the one op that overran its plan.
         """
         from .spec import Carrier, Payload
         from . import mount as _mount
         lo, hi = self._x_span(truss_slots, (-self.post_off,
                                             self.t.length + self.post_off))
-        y_max = Gantry.Y_TRAVEL / 2.0 - Gripper.PAD_L
+        nose = (0.0, float(self.t.length))
+        y_hard = Gantry.Y_TRAVEL / 2.0 - Gripper.PAD_L
+        # WHAT THE TRUSS ALREADY MAKES THE LOADER REACH.  A station inside
+        # this costs the machine nothing; one outside it is the mount asking
+        # for Y travel of its own, and is taken only when nothing else is
+        # left.
+        y_free = max([abs(float(q.p0[1] + q.p1[1]) / 2.0) for q in truss_slots]
+                     + [0.0])
         cage_x = (-(self.end_free() + Cage.END_PLATE_T),
                   self.t.length + self.end_free() + Cage.END_PLATE_T)
 
@@ -471,116 +489,111 @@ class Fixture:
 
             THE SLOT IS THE BOSS AND THE KIT IS NOT: the module, its collar
             and the wound grid hang off the boss's ROOT inside a printed
-            pocket, 14 mm past it and 20 across.  Racked as if the boss
-            were the part, a kit's grid stood 1.30 mm inside the strut in
-            the next slot -- measured on the built scene."""
+            pocket, 14 mm past it and 20 across.  Racked as if the boss were
+            the part, a kit's grid stood 1.30 mm inside the strut in the
+            next slot -- measured on the built scene."""
             if r.kind == "mcam":
                 return Carrier.nest_over(Payload, self.t.d_diag)
             return 0.0, Magazine.DIAG_PITCH / 2.0
 
-        def turnable(r):
-            return (_mount.yaw_stroke_for(r, self.t.d_diag)
-                    <= Head.GRIP_STROKE + 1e-9)
-
-        def gap(ha, hb):
-            """Between two slots end to end.  THE GRIPPER NEVER REACHES
-            PAST THE PART IT TAKES -- it grips at the middle and is BODY_W
-            wide along the carriage -- so this is the seating clearance,
-            plus whatever a part shorter than the gripper's own body would
-            need on top of it."""
-            return (2.0 * Process.SEAT_CLEAR
-                    + max(0.0, Gripper.BODY_W / 2.0 - ha)
-                    + max(0.0, Gripper.BODY_W / 2.0 - hb))
-
-        out = []
-        # ---- the parts that cannot be turned, at the yaw they are laid at,
-        # in their own bay at the low-x end of the bench: they are deep, and
-        # that is the end where the cage is not in the way.
-        bay = lo
-        for r in sorted([q for q in mr if not turnable(q)],
-                        key=lambda q: (-q.length, q.chord, q.index)):
+        def shape(r, sgn):
+            """The part's footprint about its slot's centre, on flank `sgn`:
+            (back along x, front along x, floor to the slot, slot to the
+            part's far edge, the slot's own yaw)."""
             over, wide = over_of(r)
             hl = r.length / 2.0
+            if _mount.yaw_stroke_for(r, self.t.d_diag) <= Head.GRIP_STROKE + 1e-9:
+                return hl, hl, wide, wide, 0.0   # along x; the head turns it
             yaw = _mount.lay_pose(r)[1]
             ay = sin(radians(yaw))
             if abs(ay) < 1e-6:
                 raise ValueError(
                     "mount part %d cannot be turned below the head and is "
-                    "laid at %.1f degrees, which is along the row it would "
-                    "have to be racked in" % (r.index, yaw))
-            x0 = bay + (0.0 if bay == lo else 2.0 * Process.SEAT_CLEAR) + wide
+                    "laid at %.1f degrees, which is along the bench it would "
+                    "have to lie on" % (r.index, yaw))
             ends = [-hl * ay, hl * ay, -(hl + over) * ay]
+            return (wide, wide, -min(sgn * e for e in ends),
+                    max(sgn * e for e in ends), yaw)
+
+        def gap_to(ha, hb):
+            """Between two slots end to end.  THE GRIPPER NEVER REACHES PAST
+            THE PART IT TAKES -- it grips at the middle and is BODY_W wide
+            along the carriage -- so this is the seating clearance, plus
+            whatever a part shorter than the gripper's own body would need
+            on top of it."""
+            return (2.0 * Process.SEAT_CLEAR
+                    + max(0.0, Gripper.BODY_W / 2.0 - ha)
+                    + max(0.0, Gripper.BODY_W / 2.0 - hb))
+
+        placed = {1.0: [], -1.0: []}         # (x0, x1, outer, half-length)
+
+        def at(r, sgn, x, cap):
+            """Where this part would stand at x on this flank, or None if it
+            would reach past `cap`."""
+            w0, w1, near, far, yaw = shape(r, sgn)
+            hl = r.length / 2.0
+            if x - w0 < lo - 1e-9 or x + w1 > hi + 1e-9:
+                return None
+            f = floor_at(sgn, x - w0, x + w1)
+            for a, b, outer, ohl in placed[sgn]:
+                # FLUSH IS NOT OVERLAPPING.  With the slack the other way a
+                # part laid exactly against its neighbour read as inside it
+                # and was pushed a row out -- or, when the row it wanted was
+                # at the cap, to the far end of the bench and the wrong
+                # nose.  Three of the 300 mm truss's parts went there.
+                g = gap_to(hl, ohl)
+                if b + g > x - w0 + 1e-9 and a - g < x + w1 - 1e-9:
+                    f = max(f, outer + Process.SEAT_CLEAR)
+            if f + near > cap + 1e-9:
+                return None
+            return (f + near, f + near + far, w0, w1, yaw, hl)
+
+        def stations(r, sgn):
+            """Where it is worth trying: its own nose, the edges of what is
+            already on this flank, and the plate faces -- a part's best x is
+            flush against something or at the nose, never between."""
+            w0, w1, _n, _f, _y = shape(r, sgn)
+            hl = r.length / 2.0
+            xs = {nose[r.chord], lo + w0, hi - w1,
+                  cage_x[0] - w1, cage_x[0] + w0,
+                  cage_x[1] - w1, cage_x[1] + w0}
+            for a, b, _o, ohl in placed[sgn]:
+                g = gap_to(hl, ohl)
+                xs.add(b + g + w0)
+                xs.add(a - g - w1)
+            return sorted(x for x in xs
+                          if lo + w0 - 1e-9 <= x <= hi - w1 + 1e-9)
+
+        out = []
+        # DEEPEST FIRST, which is first-fit decreasing and not tidiness: a
+        # kit in its nest is 61 mm deep where a strut is 11, and only the
+        # bench nearest the cage is ever that clear.  Packed in index order
+        # the kits come last and find it taken.
+        for r in sorted(mr, key=lambda q: (-sum(shape(q, 1.0)[2:4]),
+                                           q.chord, q.index)):
             best = None
-            for sgn in (1.0, -1.0):
-                f = floor_at(sgn, x0 - wide, x0 + wide)
-                near = min(sgn * e for e in ends)     # toward the axis
-                yc = f - near                         # the slot's own line
-                # WHAT THE AXIS HAS TO REACH IS THE SLOT.  The jaws close on
-                # the boss at the slot's middle; the nest behind it stands
-                # further out and nothing has to reach that.
-                if yc > y_max + 1e-9:
-                    continue
-                if best is None or yc < best[0]:
-                    best = (yc, sgn)
+            for cap in (y_free, y_hard):
+                for sgn in (1.0, -1.0):
+                    for x in stations(r, sgn):
+                        got = at(r, sgn, x, cap)
+                        if got is None:
+                            continue
+                        d = abs(x - nose[r.chord])
+                        if best is None or d < best[0] - 1e-9:
+                            best = (d, x, sgn, got)
+                if best is not None:
+                    break
             if best is None:
                 raise ValueError(
-                    "the mount's rack cannot stand part %d on either flank: "
-                    "the bench is free from %.1f mm off the axis and the "
-                    "part wants its slot %.1f mm out, against %.1f"
-                    % (r.index, floor_at(1.0, x0 - wide, x0 + wide),
-                       floor_at(1.0, x0 - wide, x0 + wide)
-                       - min(e for e in ends), y_max))
-            yc, sgn = best
-            out.append(Slot(r.index,
-                            np.array([x0, sgn * yc - hl * ay, z]),
-                            np.array([x0, sgn * yc + hl * ay, z]),
-                            np.array([0, 0, 1.0])))
-            bay = x0 + wide
-        # ---- everything else, along x, in rows stacked outward from
-        # whichever flank's next free station is nearer the axis
-        rows = []
-        start = bay if bay == lo else bay + 2.0 * Process.SEAT_CLEAR
-        tops = {sgn: floor_at(sgn, start, hi) for sgn in (1.0, -1.0)}
-
-        def fresh():
-            sgn = min(tops, key=lambda q: tops[q])
-            rows.append({"sgn": sgn, "floor": tops[sgn], "top": tops[sgn],
-                         "cursor": start, "last": None})
-            return rows[-1]
-
-        fresh()
-        for r in sorted([q for q in mr if turnable(q)],
-                        key=lambda q: (-over_of(q)[1], q.chord, q.index)):
-            _over, wide = over_of(r)
-            hl = r.length / 2.0
-            row, g = None, 0.0
-            for cand in rows:
-                if cand["floor"] + wide > y_max:
-                    continue
-                g = 0.0 if cand["last"] is None else gap(cand["last"], hl)
-                if cand["cursor"] + g + 2.0 * hl <= hi:
-                    row = cand
-                    break
-            if row is None:
-                row, g = fresh(), 0.0
-                if row["floor"] + wide > y_max:
-                    raise ValueError(
-                        "the mount's rack does not fit beside the cage: part "
-                        "%d wants its slot %.1f mm off the axis against a "
-                        "%.1f mm reach, in x %.1f..%.1f"
-                        % (r.index, row["floor"] + wide + Gripper.PAD_L,
-                           Gantry.Y_TRAVEL / 2.0, start, hi))
-            # ONE CURSOR PER ROW, not one per end.  Filled from both ends of
-            # a row at once, two parts meet in the middle and neither knows
-            # about the other.
-            x0 = row["cursor"] + g + hl
-            row["cursor"] = x0 + hl
-            row["last"] = hl
-            row["top"] = max(row["top"], row["floor"] + 2.0 * wide)
-            tops[row["sgn"]] = row["top"] + Process.SEAT_CLEAR
-            y = row["sgn"] * (row["floor"] + wide)
-            out.append(Slot(r.index, np.array([x0 - hl, y, z]),
-                            np.array([x0 + hl, y, z]),
+                    "the mount's rack has nowhere to stand part %d: it is "
+                    "%.1f mm deep against a %.1f mm reach, in x %.1f..%.1f"
+                    % (r.index, sum(shape(r, 1.0)[2:4]), y_hard, lo, hi))
+            _d, x, sgn, (yc, outer, w0, w1, yaw, hl) = best
+            placed[sgn].append((x - w0, x + w1, outer, hl))
+            y = sgn * yc
+            ax, ay = cos(radians(yaw)) * hl, sin(radians(yaw)) * hl
+            out.append(Slot(r.index, np.array([x - ax, y - ay, z]),
+                            np.array([x + ax, y + ay, z]),
                             np.array([0, 0, 1.0])))
         return out
 

@@ -1,4 +1,4 @@
-"""The whole build, end to end, in MuJoCo: rods, thread, glue, cameras.
+r"""The whole build, end to end, in MuJoCo: rods, thread, glue, cameras.
 
     python3 sim/scripts/truss/demo_assembly.py                  # 300 mm, headless
     python3 sim/scripts/truss/demo_assembly.py --gui            # watch it live
@@ -12,7 +12,11 @@ relative to where you are; from the `sim` directory:
 
     python scripts\truss\demo_assembly.py --gui --speed 20
 
-Forward slashes work too.  Do NOT set MUJOCO_GL -- truss/glenv.py picks one
+Forward slashes work too.  (THIS DOCSTRING IS RAW because that line has
+backslashes in it: `\t` is a TAB and ate the `t` of `truss`, so the command
+this file gave a Windows user was `python scripts<tab>russ\...`.  Only the
+`\d` was loud enough to warn about, and from Python 3.12 it is a
+SyntaxWarning on every run.)  Do NOT set MUJOCO_GL -- truss/glenv.py picks one
 per platform, and `osmesa` is a name that only exists on Linux.  The window
 opens on the FREE camera framed on the cell, so the mouse is live from the
 first frame: left-drag orbits, right-drag pans, scroll zooms; truss/view.py

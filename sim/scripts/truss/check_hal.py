@@ -203,23 +203,66 @@ def main():
         os.environ.pop("MUJOCO_GL", None)
         if keep is not None:
             os.environ["MUJOCO_GL"] = keep
+
     check("a viewer is told to open a window only where one can exist",
           glenv.windowed() in (True, False))
-    # EVERY SOURCE COMPILES WITH WARNINGS FATAL.  A Windows path written
-    # into a docstring put a `\t` in it, which is a tab today and a
-    # SyntaxError in a later Python; the file still ran, so nothing said so.
+    # ------------------------------------ BACKSLASHES IN THE SOURCE ITSELF
+    # THE SAME FAMILY AS MUJOCO_GL: a defect only a Windows user meets.
+    # `demo_assembly` documents the Windows command line, which has
+    # backslashes in it, in a docstring that was not raw -- so `\t` became a
+    # TAB and ate the `t` of `truss`, and the command this file handed a
+    # Windows user was `python scripts<tab>russ\demo_assembly.py`.
+    #
+    # THIS CHECK ALREADY EXISTED AND COULD NOT FAIL, which is worth more than
+    # the fault.  It read "every source compiles with syntax warnings fatal"
+    # and made SyntaxWarning an error -- but the invalid-escape warning is a
+    # SyntaxWarning only from Python 3.12; on the 3.11 it was written and run
+    # against it is a DeprecationWarning, so the filter caught nothing.  A
+    # check that can only fail on an interpreter nobody runs it on is not a
+    # measurement.  This one matches on the warning's MESSAGE, so it does not
+    # care which category the interpreter of the day files it under, and it
+    # walks the whole tree rather than two globs.
+    #
+    # Two checks, because the loud half and the silent half are different
+    # faults: `\d` warns, `\t` does not and mangles the text instead.
     import warnings
-    sick = []
-    for f in (glob.glob(os.path.join(os.path.dirname(__file__), "*.py"))
-              + glob.glob(os.path.join(os.path.dirname(__file__), "..", "..", "truss", "*.py"))):
-        src = open(f).read()
-        with warnings.catch_warnings():
-            warnings.simplefilter("error", SyntaxWarning)
+    import ast
+    import pathlib
+    root = pathlib.Path(os.path.dirname(__file__)).parent.parent
+    pys = sorted(q for q in root.rglob("*.py") if "__pycache__" not in str(q))
+    loud, quiet = [], []
+    for q in pys:
+        text = q.read_text(encoding="utf-8", errors="replace")
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
             try:
-                compile(src, f, "exec")
-            except (SyntaxWarning, SyntaxError) as e:
-                sick.append("%s: %s" % (os.path.basename(f), e))
-    check("every source compiles with syntax warnings fatal", not sick, "; ".join(sick[:3]))
+                compile(text, str(q), "exec")
+            except SyntaxError as exc:
+                loud.append("%s: %s" % (q.name, exc))
+                continue
+        for msg in caught:
+            if "escape sequence" in str(msg.message):
+                loud.append("%s:%s %s" % (q.name, msg.lineno, msg.message))
+        # a DOCSTRING is prose, so a control character in one is always a
+        # mangled path and never intent
+        for node in ast.walk(ast.parse(text)):
+            if not isinstance(node, (ast.Module, ast.ClassDef,
+                                     ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            doc = ast.get_docstring(node, clean=False)
+            for ch in doc or "":
+                if ord(ch) < 32 and ch != "\n":
+                    quiet.append("%s:%s has %r in a docstring"
+                                 % (q.name, getattr(node, "lineno", 1), ch))
+                    break
+    check("every source file in the tree compiles without an escape-sequence "
+          "warning, whatever category this Python files it under: a warning "
+          "printed at the operator on every run is a defect",
+          not loud, "%d files scanned; %s" % (len(pys), "; ".join(loud[:3])))
+    check("...and no docstring carries a control character, which is the half that "
+          "does NOT warn: a Windows path in a docstring that is not raw loses the "
+          "letter after every valid escape",
+          not quiet, "%d files scanned; %s" % (len(pys), "; ".join(quiet[:3])))
 
     bad = sum(1 for _, ok, _ in RESULTS if not ok)
     for nm, ok, det in RESULTS:

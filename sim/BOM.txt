@@ -1,0 +1,87 @@
+Here is the formal technical specification document for your custom automated truss cell build, optimized for rigidity and precision based on our design iterations.
+
+## Structural Chassis & Frame
+
+* **Base Frame:** A 1000 mm x 1000 mm square perimeter constructed from laser-cut steel plates (5 inches wide by 2 inches thick profile). A central steel cross-member spans the middle to support the primary drive mechanism.
+* **Y-Axis Bridge (Plate B):** A 1000 mm long by 4 inch wide aluminum span. To eliminate vertical deflection and vibration, this plate must be reinforced by upgrading to 8 mm thickness, folding the edges into a C-channel, or bolting a 20x40 mm aluminum extrusion spine to the rear.
+* **Z-Axis Interface:** A rigid, heavy-duty 90-degree cast aluminum corner gusset or thick steel L-bracket rigidly mates the moving Y-axis effector plate to the vertical Z-axis base plate.
+
+## Linear Motion Kinematics
+
+* **X-Axis (Gantry Base):** Dual 1000 mm MGN12H linear guide rails mounted on the outer steel perimeter plates to resist torsional twisting, driven centrally by a single 1000 mm SFU1204 ballscrew.
+* **Y-Axis (Bridge Traverse):** A single 1000 mm MGN12H rail and 1000 mm SFU1204 ballscrew mounted parallel (side-by-side) on the reinforced Plate B.
+* **Z-Axis (Vertical Drop):** A single 300 mm to 500 mm MGN12H rail and matched SFU1204 ballscrew to control the winding head's vertical stroke.
+
+## Actuation & Drive Systems
+
+* **Kinematic Drives (X, Y, Z):** NEMA 17 stepper motors (4.8 kg-cm holding torque, D-Type shaft, 200 steps/rev) directly coupled to the ballscrews without microstepping.
+* **Winding Head:** NEMA 8 stepper motor (0.04 N·m) operating through a 4:1 mechanical reduction, utilizing a 4000 CPR quadrature encoder for precise closed-loop tracking.
+* **Tooling Auxiliary:** TowerPro MG996R digital servo for 190° total gripper yaw, and a 12V 10 RPM self-locking worm gear reduction motor for the rotating cage indexer.
+
+## Assembly & Alignment Protocol
+
+* **Fastening Strategy:** All linear rails, ballscrew end mounts (BK10/BF10), and ball nut housings (DSG12H) must be bolted using standard M3 and M4 machine screws into laser-cut pilot holes tapped directly into the steel.
+* **Chemical Locking:** Apply removable blue threadlocker (e.g., Loctite 242) to all fasteners; using epoxy adhesive directly on precision motion hardware is strictly prohibited to allow for future maintenance.
+* **Rail Calibration:** Utilize the "master and slave" alignment method, securing one rail completely, then manually gliding the gantry carriage back and forth to dynamically align the loose secondary rail before final tightening.
+
+Here is the comprehensive, production-ready Bill of Materials (BOM) based on our finalized physical architecture. I have included standard industrial part numbers and common vendor SKUs (like those used on Robu.in, StepperOnline, or generic electronics suppliers) so you can easily search for and cart these exact items.
+
+### 1. Linear Motion & Guide Systems
+
+This covers the physical tracks and driving screws for the X, Y, and Z axes.
+
+| Qty | Item Description | Specification / Size | Generic Part ID / Robu SKU |
+| --- | --- | --- | --- |
+| **3** | **MGN12H Linear Guide Rail (1 Meter)** | 1000 mm rail + MGN12H Carriage Block | SKU: `503387` (Two Trees 1M) |
+| **1** | **MGN12H Linear Guide Rail (0.3m to 0.5m)** | 300 mm - 500 mm rail + MGN12H Block | SKU: `931338` (0.5M variant) |
+| **2** | **SFU1204 Ballscrew Assembly (1 Meter)** | 1000 mm length, 4 mm pitch. Must include ball nut. | `SFU1204-1000` |
+| **1** | **SFU1204 Ballscrew Assembly (0.5 Meter)** | 500 mm length, 4 mm pitch. Must include ball nut. | `SFU1204-500` |
+| **3** | **Ballscrew End Supports (Fixed & Floated)** | BK10 (Fixed end) and BF10 (Floated end) blocks | `BK10/BF10` set |
+| **3** | **Ball Nut Housing Bracket** | Aluminum mounting bracket for SFU1204 nut | `DSG12H` |
+| **3** | **Flexible Motor Couplings** | 5 mm to 8 mm bore (connects NEMA17 to ballscrew) | SKU: `63319` (Spider Coupling) |
+
+### 2. Actuators & Motors
+
+These provide the kinematic muscle to drive the gantries and tooling.
+
+| Qty | Item Description | Specification / Size | Generic Part ID / Robu SKU |
+| --- | --- | --- | --- |
+| **4** | **NEMA 17 Stepper Motor** | 4.8 kg-cm, 2.5A, D-Type Shaft (X, Y, Z, + Dispenser) | SKU: `42HS48-2504AF-01` |
+| **1** | **NEMA 8 Stepper Motor** | 0.04 N·m, 1.8° step (For Winding Ring) | `8HS15-0604S` |
+| **1** | **High-Torque Digital Servo** | Metal Gear, 180° rotation (For Gripper Yaw) | SKU: `MG996R` |
+| **1** | **Worm Gear DC Motor** | 12V, 10 RPM, Self-Locking (For Cage Indexer) | SKU: `JGY370-12V-10RPM` |
+
+### 3. End Effectors & Tooling Hardware
+
+These components build out the custom winding head, the epoxy dispenser, and the vision system.
+
+| Qty | Item Description | Specification / Size | Generic Part ID / Robu SKU |
+| --- | --- | --- | --- |
+| **1** | **Rotary Encoder (Incremental)** | 1000 PPR (4000 CPR), 2-phase AB | `LPD3806-1000BM-G5-24C` |
+| **6** | **Miniature Deep Groove Ball Bearings** | 3mm ID x 6mm OD x 2.5mm W (For Ring Pinions) | `MR63ZZ` |
+| **1** | **Raspberry Pi Camera Module 2** | IMX219 Sensor, Fixed Focus (Payload) | SKU: `RPI-CAM-V2` |
+| **1** | **USB/Webcam Board Camera** | 1280x720, 30FPS, ~40° HFOV (Inspection Vision) | Generic 720p Board Camera |
+| **1** | **Nichrome Resistance Wire** | 24 AWG or 26 AWG (For Hot-Wire Cutter) | `Nichrome 80` wire |
+| **1** | **Miniature Vacuum Pump** | 60 kPa, 12V or 5V DC (For Camera Collar Lifting) | Generic 12V Micro Vacuum Pump |
+
+### 4. Consumables & Fasteners
+
+Essential hardware for assembly and rigid frame alignment.
+
+| Qty | Item Description | Specification / Size | Generic Part ID / Robu SKU |
+| --- | --- | --- | --- |
+| **1** | **Blue Threadlocker** | Medium strength, removable adhesive | `Loctite 242` or `Permatex Blue` |
+| **Lot** | **M3 Hex Socket Cap Screws & Nuts** | Assorted lengths (8mm, 10mm, 12mm, 16mm) | Standard ISO 4762 `M3` hardware |
+| **Lot** | **M4 Hex Socket Cap Screws & Nuts** | Assorted lengths (10mm, 16mm, 20mm) | Standard ISO 4762 `M4` hardware |
+| **Lot** | **M5 Hex Socket Cap Screws** | For mating heavy corner gussets | Standard ISO 4762 `M5` hardware |
+
+### 5. Custom Fabricated Parts (To be sourced via Laser-Cutting/CNC)
+
+You will need to supply DXF/STEP files to a fabricator for these.
+
+* **Base Frame Plates:** 1000 mm x 5-inch x 2-inch equivalent structural mild steel (Qty: 4 sides + 1 central cross-member).
+* **Y-Axis Bridge Plate (Plate B):** 1000 mm x 100 mm aluminum plate, heavily reinforced (minimum 8 mm thick, or 3 mm with an aluminum extrusion bolted to the back).
+* **Z-Axis Gusset:** Heavy-duty cast aluminum 90-degree angle bracket or welded steel L-bracket.
+* **Carriage Adaptor Plates:** Custom 2D profiles to mate the MGN12H blocks and DSG12H nut housings to the respective axes.
+
+---

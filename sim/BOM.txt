@@ -85,3 +85,410 @@ You will need to supply DXF/STEP files to a fabricator for these.
 * **Carriage Adaptor Plates:** Custom 2D profiles to mate the MGN12H blocks and DSG12H nut housings to the respective axes.
 
 ---
+
+# REVIEW AND THE DIAGONAL LAYOUT
+
+*Added after the 1 m procurement limit on rails and ballscrews came to
+light. Nothing below changes code; it is the specification of what would
+have to change. Every number marked **(measured)** is computed from this
+repository as it stands today; numbers marked **(estimated)** are mine and
+want confirming against the parts actually bought.*
+
+---
+
+## PART A — WHAT IS WRONG OR THIN IN THE DOCUMENT ABOVE
+
+Ordered by how much it costs to find out late.
+
+### A1. The base frame as written is 253 kg and cannot be laser-cut
+
+"laser-cut steel plates (5 inches wide by 2 inches thick)" is 127 × 50.8 mm
+in solid mild steel. One 1 m length of that is
+
+    1000 × 127 × 50.8 mm³ × 7.85 g/cm³ = 50.6 kg
+
+and the frame calls for five of them (four sides plus the cross-member):
+**253 kg of steel** for a machine whose moving mass is 3.7 kg **(measured:
+the mass of everything riding the carriage in the MuJoCo cell)**. Fibre
+lasers in most job shops stop at 20–25 mm in mild steel **(estimated)**, so
+50.8 mm would have to be plasma, waterjet or oxy-fuel — none of which hold
+the edge tolerance the "tapped pilot holes" strategy below assumes.
+
+This reads like a units slip: 5 inch × 2 inch is a **section**, not a plate
+thickness. What the machine actually needs is a closed section in bending,
+and two options are equivalent:
+
+| option | I about the bending axis | mass, 1 m |
+|---|---|---|
+| 50 × 50 × 3 mm mild steel box | ≈ 208 000 mm⁴ | 4.4 kg |
+| 40 × 80 aluminium T-slot extrusion | ≈ 600 000 mm⁴ (check the profile) | 2.6 kg |
+
+Either gives the same midspan stiffness as the other (steel's E is 2.9× that
+of aluminium, the extrusion's I is 2.9× the box's), at **one twentieth the
+mass** and a fraction of the cost. A solid plate is the wrong shape for
+bending stiffness at any thickness: all the material is near the neutral
+axis.
+
+### A2. The Y bridge sags 3 mm and rings at 11 Hz
+
+This is the one that would have wasted a build. Take the specified 1000 × 100
+× 8 mm aluminium plate, simply supported, carrying the Z assembly at midspan.
+The Z assembly is a NEMA 17, a 500 mm screw, a 500 mm rail, the gusset and
+the head — **≈ 3 kg (estimated)**, since the repo models only the tool masses
+(ring 18 g, gripper 86 g, dispenser 65 g).
+
+    I = 100 × 8³ / 12                     = 4 267 mm⁴
+    δ_load = P L³ / 48 E I = 30 × 10⁹ / (48 × 69 000 × 4 267)  = 2.1 mm
+    δ_self = 5 w L³ / 384 E I                                   = 0.9 mm
+                                                          total ≈ 3 mm
+
+Three millimetres of sag on a machine whose ballscrews repeat to 0.05 mm
+**(measured: `Gantry.REPEAT`)**. Worse is the dynamics:
+
+    k = 48 E I / L³ = 14.1 N/mm  →  f₁ = (1/2π)√(k/m) ≈ 11 Hz
+
+The plan assumes every move settles in **150 ms** **(measured:
+`Gantry.SETTLE_S`)**. An 11 Hz structure with light damping rings for of
+order a second. Every one of the 799 ops in the build would wait on it, and
+the two "axes settle" timeouts already visible in simulation are the ideal-
+axis version of the same complaint.
+
+To hold the sag under one REPEAT (0.05 mm) from the load alone:
+
+    I ≥ P L³ / (48 E δ) = 30 × 10⁹ / (48 × 69 000 × 0.05) = 181 000 mm⁴
+
+A 20 × 40 T-slot is of order 8–10 × 10⁴ mm⁴ about its strong axis
+**(estimated — check the profile's datasheet)**, i.e. **about half of what is
+needed**. So of the three options the document offers — 8 mm plate, folded
+C-channel, or a 20 × 40 spine — **none of them is sufficient and they should
+not be presented as alternatives**. Specify one part that meets the number:
+a 40 × 80 extrusion, or a 40 × 40 pair, with the rail and screw on machined
+pads. Then f₁ lands near 130 Hz **(estimated)** and the 150 ms settle is
+real.
+
+### A3. Two actuators cannot hold the tolerances the design is built on
+
+These are not "upgrade later" items. Two of the design's headline accuracy
+results rest on them.
+
+**The cage indexer.** `JGY370-12V-10RPM` is a brushed DC worm motor with **no
+feedback of any kind**. The repository asserts the cage indexes to
+**`Cage.THETA_TOL = 0.05°` (measured)**, and the whole architecture rests on
+the sentence "GEOMETRY IS HELD BY THE FIXTURE, NOT THE ROBOT" — which is only
+true if the fixture returns to the same angle every time. An open-loop DC
+motor with a worm will overshoot by degrees. Either
+  * a stepper through the same worm (a NEMA 17 at 200 steps/rev through a
+    30:1 worm is 0.06°/step — still not 0.05° repeatability, but bounded), or
+  * **a hard detent per station**: the cage has only a handful of indexed
+    angles per truss, and a spring-loaded plunger into a reamed hole is
+    repeatable to a hundredth of a degree for pennies. This is the cheaper
+    and better answer, and it matches the design's own philosophy — the V-pins
+    and the over-centre knees are all kinematic locators rather than servos.
+
+**The gripper yaw.** `MG996R` is a hobby servo: **±1° or worse, with gear
+backlash of the same order (estimated)**. The repository asserts
+**`Gripper.YAW_TOL = 0.5°` (measured)**, and the mount phase is where that
+bites: the truss's rods are located by the cage's V-notches, but **the mount
+has no V's** — the keeper welds each rod where the tool left it, so gripper
+yaw error lands directly in the nose. The mount currently builds to **0.79 mm
+and 0.2° (measured, `rig_mount`)** with an ideal servo. An MG996R's backlash
+alone is 2–4× the assumed tolerance. A closed-loop alternative — a small
+stepper with a reduction, or a smart servo with position feedback — is
+warranted for this one axis.
+
+### A4. Smaller corrections
+
+| # | item | what the document says | what the repository says |
+|---|---|---|---|
+| A4.1 | Z travel | 300–500 mm rail and screw | `Gantry.Z_TRAVEL = 150` **(measured)**. Buying 500 mm is not harmful but means the Z screw is 3× longer than its stroke, which costs whip, height and money |
+| A4.2 | payload camera | Qty **1** RPi Camera Module 2 | a **stereo** rig needs **2** — one per nose. `Payload` is Module 2 and its FOV 62.2 × 48.8° matches the IMX219 exactly **(measured)**, so the part is right and the quantity is not |
+| A4.3 | couplings | Qty 3 flexible couplings | there are **4** NEMA 17s (X, Y, Z, dispenser). The dispenser plunger needs its own coupling or leadscrew |
+| A4.4 | bearings | MR63ZZ, 3 × 6 × 2.5, Qty 6 | `Ring.BEARING_OD = 6.0` **(measured)** — correct |
+| A4.5 | encoder | LPD3806-1000BM, 4000 CPR | matches the 4000 CPR the head assumes **(measured)**. Note it is A/B only with no index pulse; the design counts turns from a vision fiducial, so the encoder is the second channel and not the datum |
+| A4.6 | step resolution | "without microstepping", 200 steps/rev, 4 mm pitch | 0.02 mm/step, matching `Gantry.MM_PER_STEP` **(measured)** — correct and worth keeping, because it is why the machine needs no encoder on X/Y |
+| A4.7 | motor thrust | NEMA 17, 4.8 kg·cm | 0.47 N·m on a 4 mm pitch screw is ≈ 660 N of thrust **(estimated, 90 % efficiency)** against the `STALL_N = 120` the sim assumes **(measured)** — comfortable, no change needed |
+| A4.8 | tapping | "M3 and M4 screws into laser-cut pilot holes tapped directly into the steel" | laser-cut holes have a taper and a hardened recast layer; taps chip in them. **Drill and ream the holes to be tapped**, or use through-bolts and nuts. Cheaper and more reliable than tapping 50 mm of steel |
+| A4.9 | units | inches and millimetres mixed throughout | the entire repository is millimetres. One unit system, and it should be mm |
+
+### A5. What the BOM does not contain at all
+
+Nothing below is optional, and together it is probably a third of the build
+cost and most of the schedule risk.
+
+**Electronics — completely absent.** The machine has 4 × NEMA 17, 1 × NEMA 8,
+one servo, one DC worm motor, a vacuum pump and a hot wire. That needs:
+  * 5 stepper drivers (the NEMA 17s at 2.5 A want a real driver, not an A4988)
+  * a 24 V PSU sized for five steppers plus the auxiliaries
+  * a motor driver for the worm gear and a MOSFET for the nichrome
+  * a controller — the plan is generated and executed as a *program*, not
+    G-code, so an SBC (a Pi) with a motion coprocessor, or a microcontroller
+    running the executor, has to be chosen. This is an architectural decision
+    the document has not made.
+
+**Homing and safety — absent.** Two limit switches per axis minimum (the
+repository's whole coordinate system assumes a datum), plus an E-stop that
+drops motor power. Without homing there is no relationship between the
+machine and the truss frame at all.
+
+**The collapsing mandrel — absent.** This is the single most complex
+fabricated assembly in the machine and it is not in the BOM. It is **six
+torsion shafts, six over-centre knee braces, 39 rail segments, parallelogram
+arms, one draw rod, 96 V-pins, 54 cradles, 6 thread posts and 2 end plates**
+**(measured, `check_collapse`)**. It is what makes the truss removable —
+collapsed it measures 20.04 mm against a 21.54 mm exit hole, and the release
+is one 6.00 mm pull at 0.6 N per knee **(measured)**. It needs its own BOM
+section and probably its own drawing set.
+
+**The magazine — absent.** V-blocks under every rod, the two printed camera
+nests, the bench plates.
+
+**Station B — absent.** The sub-assembly station that makes the head kit
+(module + collar + wound tic-tac-toe) is a second machine with its own jig,
+vacuum tool and winder. The main cell cannot wind those four crossings, so
+without station B there is no camera mount.
+
+**Consumables — absent.** Per one 1 m truss **(measured)**:
+
+| consumable | quantity per truss |
+|---|---|
+| 3.0 mm pultruded carbon rod | 3.00 m (3 chords) |
+| 1.5 mm pultruded carbon rod | 4.83 m (27 diagonals at 129.4 mm, plus 1.34 m of mount rods) |
+| Kevlar thread, 0.15 mm | 5.73 m over 30 joints, 18 turns each |
+| two-part epoxy | 5.5 g (4.35 g on the joints, 1.13 g in 36 mount fillets) |
+| laser-cut aluminium collar | 2 off, 2.49 g each |
+| printed camera carrier | 2 off, 2.0 g each |
+
+Buy rod in 1 m lengths and cut, and note the chosen truss is **30 joints and
+27 diagonals**, not the 9 and 24 of the 300 mm truss the simulation demos run
+by default.
+
+---
+
+## PART B — THE DIAGONAL LAYOUT
+
+The insight is correct and the arithmetic works, but not for the reason it
+first appears to, and it is tighter than it looks.
+
+### B1. The arithmetic
+
+A gantry with usable stroke *S* on each of two orthogonal axes reaches a
+square of side *S*. Put the truss on that square's diagonal and the reach
+along the truss becomes *S*√2.
+
+The trap is that *S* is not 1000 mm. On an SFU1204-1000 with BK10/BF10
+supports and a DSG12H nut bracket **(estimated — confirm against the parts)**:
+
+    screw blank                              1000 mm
+    less the Ø8 journals machined for BK/BF    -50
+    less the ball nut's own length             -40
+    less end-of-travel safety                  -20
+    usable stroke                          ≈  890 mm
+
+The MGN12H rail is not the binding part: a 1000 mm rail with a 45 mm H-block
+gives ≈ 955 mm of carriage-centre travel. So:
+
+| usable stroke per axis | diagonal reach |
+|---|---|
+| 1000 mm (nominal, wrong) | 1414 mm |
+| 900 mm | 1273 mm |
+| **880 mm (work to this)** | **1245 mm** |
+| 850 mm | 1202 mm |
+
+### B2. What has to fit, and the three things that free it
+
+Along the truss axis, the cell must reach **(all measured)**:
+
+| configuration | span needed | fits in 1245? |
+|---|---|---|
+| as the cell is built today | **1397 mm** | no, short by 152 |
+| diagonal racks also moved beside the cage | **1246 mm** | by 1 mm — not a design |
+| thread posts + gripper body + tool offset only | **1049 mm** | yes, 196 mm spare |
+
+Three levers, in order of how much they give:
+
+**B2.1 Move the diagonal racks off the ends — 151 mm.** The 1397 is not the
+truss; it is 1000 mm of truss plus ~199 mm of diagonal rack beyond *each* end.
+The mount's magazine was moved beside the cage for exactly this reason and it
+now costs zero X travel; the 27 diagonals are 129 mm long, and 27 of them laid
+along the axis in rows of ~11 mm pitch is four rows and 44 mm of cross room.
+The end racks exist because the original reasoning considered only diagonals
+lying *across* the axis, which would have wanted a 500 mm Y axis. Lying
+*along* it they fit beside the cage like the chords.
+
+**B2.2 The brief wants a 1 m BASELINE, not a 1 m truss — 78 mm.** The camera's
+optical centre stands **19.55 mm (measured, `mount.fov_standoff`)** proud of
+the chord end it is mounted on, at both ends. So
+
+    a 1000 mm truss gives a 1039.1 mm baseline
+    a 1000.0 mm baseline needs a truss of only 960.9 mm
+
+That is 39 mm off each end of the span, free, and it is the *stereo* number
+that matters — the baseline is what sets depth resolution, not the tube it is
+carried on. This should be checked against the brief's wording before it is
+banked, but if the brief says baseline, it is the cheapest 78 mm available.
+
+**B2.3 Re-derive `Magazine.CLEAR` — ~20 mm of cross room.** The chord rack
+stands off the cage's swept radius by a hand-set 40 mm. What it actually has
+to clear is the head's envelope when the head is working the outermost chord,
+which is smaller. This matters in B3.
+
+### B3. The reachable region in truss coordinates is a DIAMOND, not a rectangle
+
+This is the part that is easy to miss and would be expensive to find on the
+machine. Write *u* for distance along the truss and *v* across it. With the
+truss on the diagonal of the reachable square,
+
+    x = (u − v)/√2 ,  y = (u + v)/√2 ,  both in [0, S]
+    ⟹  |v| ≤ min( u , S√2 − u )
+
+The cross room **tapers to nothing at both ends of the truss** and is widest
+at mid-span. For S = 880 and a 1049 mm span centred on the diagonal:
+
+| where | cross room available |
+|---|---|
+| at the truss's two ends | **±98 mm** |
+| at mid-span | ±622 mm |
+
+Now put the cell's actual racks against that **(all measured)**:
+
+| what | how far off the axis | where it sits | verdict |
+|---|---|---|---|
+| the cage itself | ±56 mm | everywhere | fits |
+| chord rack (1 m rods, parallel to the axis) | 96 → 120 mm | full length | **±122 mm allowed at S=880 — fits by 2 mm** |
+| mount rods | up to 114 mm | **at the noses** | **does not fit: only ±98 mm there** |
+| the two camera kits | 119.5 mm | **at the noses** | **does not fit** |
+
+So the mount's magazine — which was just optimised to sit as near each nose
+as possible, because that halves the fetch travel — is in the **worst**
+possible place for a diagonal machine. It is at the ends, which is precisely
+where the diamond pinches.
+
+That is not an argument against the diagonal layout. It is an argument that
+**the rule the magazine packs by has to change**: "the free station nearest
+the nose it is laid at" is correct for a rectangular envelope and wrong for a
+diamond. It becomes "the nearest **reachable** station", with reachability
+asked of the machine's real envelope rather than of two independent intervals.
+On a diagonal machine the mount parts move toward mid-span and the fetch gets
+longer — the 2112 mm of fetch travel currently measured would rise, and that
+is the right trade.
+
+### B4. Mechanical consequences of the 45° mount
+
+* **The head rotates 45° about Z on the carriage.** The ring's plane must stay
+  perpendicular to the chord, the gripper's yaw datum must be the truss axis,
+  and the tool offsets (`grip_x`, `disp_x`) are along the truss. Mounting the
+  whole head at a fixed 45° costs nothing and avoids adding a rotary axis.
+* **The frame must be bigger than the rails.** The BK10/BF10 blocks, couplings
+  and motors need ≈ 120 mm beyond each rail end **(estimated)**, so a
+  1000 mm-rail machine has an outside dimension nearer 1240 mm. The document's
+  "1000 mm × 1000 mm square perimeter" is the rail envelope, not the frame.
+* **The cage lies corner to corner.** The fixture is **1090 mm overall
+  (measured: 1000 mm of chord plus 45 mm of end freedom and end plate at each
+  end)** in a 1245 mm diagonal, so centred it leaves **77 mm at each end** —
+  which is exactly where the ballscrew end blocks and the frame's corner
+  gussets are. The corners must be cut away, or the fixture carried on
+  outriggers past them. At S = 900 it is 91 mm, which is still not enough for
+  a BK10 plus a coupling plus a NEMA 17.
+* **Squareness stops being cosmetic and becomes the dominant error.** Today
+  the truss axis *is* the X rail, so its straightness is the rail's. On a
+  diagonal it is a virtual axis, and an out-of-square ε between X and Y bows
+  it by about *u*·ε/2: a typical unshimmed 0.001 rad over 1000 mm is **0.5 mm
+  of bow (estimated)**. The truss itself does not care — the V-pins hold it —
+  but the mount has no V's, so that 0.5 mm lands straight on the nose, which
+  currently builds to 0.79 mm. **Squareness must be measured and compensated
+  as a shear term in software, not shimmed and hoped for.**
+* **Feed rate and resolution.** A truss-axis move drives both axes, so it is
+  limited by the slower: 40 mm/s each gives 56.6 mm/s resultant against the
+  60 mm/s X alone today **(measured `Gantry.V_MAX`)**. Step resolution along
+  the axis becomes 0.0283 mm and the cross-axis quantisation ±0.0141 mm — both
+  inside the band tolerance, but the path is a staircase rather than a line.
+
+---
+
+## PART C — WHAT WOULD HAVE TO CHANGE IN THE SIMULATION
+
+High-level specification only. In rough dependency order.
+
+**C1. A machine frame distinct from the truss frame, and exactly one
+transform between them.** The plan stays in truss coordinates (u, v, z); the
+HAL maps to machine (x, y, z). The seam belongs at `process._move` /
+`cell.CellSim.goto`, because everything above it already speaks truss
+coordinates and nothing below it needs to. The layout — axis directions,
+origin, and the *measured* squareness shear — becomes data on `spec.Gantry`,
+so a 0° layout and a 45° layout are the same code with different data. This
+is the whole change, if it is done once and in one place.
+
+**C2. `Gantry.X_TRAVEL` / `Y_TRAVEL` become per-axis machine strokes.** 1400
+and 300 stop meaning anything. They become ≈ 880 and ≈ 880, and the layout
+angle is what turns those into reach along the truss.
+
+**C3. Replace `Fixture.x_range()` and `y_reach()` with one reachability
+test.** This is the important one. Two independent intervals cannot express a
+diamond: a station can be inside both and still unreachable. The test should
+take every point the cell must actually visit — rack slots and their whole
+footprints, thread posts, joint stations, mount release poses, bond points,
+the head's home — map each through the transform, and assert the machine
+coordinates are inside the axes' strokes. It subsumes both old checks and it
+is what would catch a part racked in a pinched corner.
+
+**C4. The magazine solver takes reachability as its region.** `_mount_rack`
+already packs against a span with per-flank floors; it would instead ask the
+C3 predicate. Its ordering rule changes from "nearest the nose it is laid at"
+to "nearest reachable station", as B3 explains.
+
+**C5. Move the diagonal racks beside the cage.** Independently worthwhile —
+it is the 151 mm of B2.1 and it makes the layout feasible. The same pattern
+the mount rack now uses: rows along the axis on whichever flank is free.
+
+**C6. MJCF: give the carriage two prismatic joints at ±45° and leave the rest
+of the scene in truss coordinates.** The cheap route by a wide margin. Every
+existing geometric check — the cage, the racks, the clearances, the built-scene
+measurements — stays valid unchanged, and only the joint axes, their ranges and
+the head body's 45° rotation move. Re-laying the whole scene in machine
+coordinates would invalidate all of it for no gain.
+
+**C7. Planned durations change.** `move_time` already coordinates multi-axis
+trapezoids, so the form is unchanged, but a truss-axis move is now bounded by
+the slower axis. Phase times in `schedule.summary` will shift and the
+"overran the plan" tolerances want re-checking against them.
+
+**C8. Squareness becomes a calibration constant with a rig behind it.** The
+project's own rule: a constant with a suite that re-measures it is a
+measurement, and the same constant without one is a guess. The shear term
+belongs beside `M2.HOPPER_SPREAD` and the pace factor — measured by a rig,
+asserted by a check, so it cannot drift away from the machine.
+
+**C9. Re-run the design sweep.** `structure.py` rejects truss candidates on
+`x_reach > X_TRAVEL` and `y_reach > Y_TRAVEL/2`. Under C3 that becomes one
+diamond test, which changes **which trusses are buildable at all** — so
+`spine/chosen.py` has to be re-derived, and the chosen section may move. Do
+this last, and expect the answer to change.
+
+**C10. The truss length becomes an output of the baseline, not an input.** If
+B2.2 holds, the spec should carry the *baseline* as the requirement and derive
+the truss length as `baseline − 2 × standoff`. That keeps the 39 mm per end
+from being quietly lost the next time the standoff changes.
+
+---
+
+## PART D — WHAT TO MEASURE BEFORE COMMITTING TO ANY OF IT
+
+Cheap, and each one settles a number the rest depends on.
+
+1. **Usable stroke of one axis, as assembled.** Mount one screw with its
+   BK10/BF10 and nut bracket and measure the travel between hard stops. Every
+   number in Part B scales off it. If it comes in under 850 mm the diagonal
+   layout needs B2.2 as well as B2.1, not instead of it.
+2. **Squareness of the two axes.** A dial indicator and a granite square, or
+   the diagonal-difference method on the frame. This is the input to C8 and
+   the only thing that decides whether the mount phase survives the layout.
+3. **The Y bridge's first mode.** Tap it with the Z assembly mounted and watch
+   the decay on any accelerometer, including a phone's. If it is near 11 Hz,
+   A2 is confirmed before any rail is drilled.
+4. **The cage indexer's repeatability.** Index to the same station twenty
+   times from alternating directions and measure with an indicator on the end
+   plate. Against 0.05° this will either pass or fail unambiguously, and it
+   decides A3's detent question.
+5. **The gripper servo's backlash.** Command ±90° repeatedly and measure the
+   return angle. The mount's 0.79 mm depends on this one number more than on
+   anything else in the machine.

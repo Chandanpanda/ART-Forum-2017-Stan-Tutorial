@@ -492,3 +492,96 @@ Cheap, and each one settles a number the rest depends on.
 5. **The gripper servo's backlash.** Command ±90° repeatedly and measure the
    return angle. The mount's 0.79 mm depends on this one number more than on
    anything else in the machine.
+
+---
+
+## PART E — DECISION LOG
+
+*Decisions taken and closed, with the reasoning that closed them. A decision
+recorded here is settled; the alternatives are written down so that the next
+person to have the same idea can see it was already costed rather than
+overlooked.*
+
+### E1 — 2026-09-15 · Z axis stays on a profile rail and a ball screw
+
+**The question.** The Z axis does not carry much load. Could it use a lead
+screw and smooth rods instead of an SFU1204 ball screw and an MGN12H profile
+rail, as a saving?
+
+**What the machine actually asks of Z (measured).**
+
+| | |
+|---|---|
+| Z stroke | 150 mm (`Gantry.Z_TRAVEL`) — not the 300–500 mm the BOM buys, see A4.1 |
+| Z duty per 1 m truss | 381 moves, 4628 mm of travel, **116 s of a 35.8 min plan — 5 %** |
+| tool offset from the column | **30.5 mm** (nozzle) and **15 mm** (grip point) |
+| dispenser standoff | **1.0 mm** — the tightest Z-dependent tolerance in the machine |
+| step resolution | 0.020 mm, and `Gantry.MM_PER_STEP` is **one value for all three axes** |
+
+Two things came out of asking the question that are worth keeping whatever
+was decided:
+
+* **Z is a coarse positioner, not a fine one.** The gripper and the
+  dispenser each have their own 40 mm stroke (`gg`, `gd`) and it is that
+  stroke, not Z, which makes the final approach to the work. The premise
+  behind the question was sound, and this is the reason for it.
+* **The load on Z is a moment, not a weight.** With the tools standing 15 to
+  30 mm off the column, and the yaw servo's reaction torque — of order
+  1.1 N·m at an MG996R's stall **(estimated)** against roughly 0.4 N·m of
+  self-weight moment — reacting straight into the Z carriage, the largest
+  thing Z resists is torque rather than mass.
+
+**The lead-screw alternative, as costed.** It was not a bad option. A lead
+screw can be self-locking where a ball screw cannot, and Z's tiny duty means
+a fine lead costs almost nothing in time:
+
+| lead | mm/step | rpm at 40 mm/s | lead angle | self-locking? |
+|---|---|---|---|---|
+| 2 mm | 0.010 | 1200 | 5.2° | yes |
+| 4 mm | 0.020 | 600 | 10.3° | borderline |
+| 8 mm (the 3D-printer default) | 0.040 | 300 | 20.0° | **no** |
+
+Self-locking needs the lead angle under the friction angle — 5.7° at μ = 0.10,
+11.3° at μ = 0.20 for steel on POM **(estimated)**. Tr8×2 at 20 mm/s would
+have given 600 rpm, self-locking, and 0.01 mm/step, for about two minutes
+added to a 36-minute build.
+
+**The decision: keep the MGN12H rail and the SFU1204 ball screw on Z.**
+
+What it buys:
+
+* **One part family across all three axes.** The same BK10/BF10 supports,
+  DSG12H nut housing, coupling and spares serve X, Y and Z. Three of a thing
+  is easier to buy, align and replace than two of one and one of another.
+* **Backlash stops being a question.** A preloaded ball nut closes the one
+  real casualty the lead screw would have had: `dose` is the single
+  accuracy-critical op that approaches its height from *above* — 0 down, 30
+  up, measured — and the nozzle standoff is 1.0 mm, on a machine that has
+  already recorded that a tip one millimetre out "spawned the drop inside the
+  chord and the solver threw it to the floor: seven of twelve". With a ball
+  screw that concern does not arise. (Every rod `release` — 50 of 50 — already
+  descends, so the mount's 0.79 mm was never exposed to it either way.)
+* **Angular stiffness where the loading is angular.** The moment loading above
+  is what a preloaded profile-rail block is for, and what round rods with ball
+  bushings are worst at. The objection to rods was never deflection — two
+  LM8UU 50 mm apart give about 0.04 mm at the tool **(estimated)**, which is
+  inside tolerance — it was **hysteresis**: deflection is repeatable and can be
+  mapped, play cannot, and the mount phase has no V-notches to filter it.
+* **No spec change.** `MM_PER_STEP` stays one value for three axes.
+
+What it costs, and this is now a live requirement rather than a footnote:
+
+* **A ball screw is backdrivable, so the head falls when the power is off.**
+  At roughly 90 % efficiency there is nothing holding the Z carriage but the
+  motor. The build needs one of: holding current on the Z stepper (and the
+  heat and standby power that implies), a fail-safe brake, or a
+  counterbalance. **This must be added to the electronics list in A5, which
+  does not yet have it** — along with the behaviour on E-stop, where cutting
+  motor power drops the head onto the work.
+
+**Still open, and not affected by this decision:** the Z travel discrepancy
+(A4.1 — 150 mm used against a 300–500 mm rail and screw specified), and the
+two actuators the BOM does not carry. The cell models **nine** — X, Y, Z,
+dispenser stroke, gripper stroke, gripper yaw, jaws, ring, cage — and the BOM
+specifies **seven**. The gripper's 40 mm stroke and the jaw actuator are
+missing.

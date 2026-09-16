@@ -1030,9 +1030,9 @@ GANTRY ARCHITECTURE (what the sim models today)
   Y   300 mm travel, SFU1204 ball screw, 0.0200 mm/step
 
 COARSE-FINE ARCHITECTURE (PART H; not yet in the sim)
-  coarse     a mecanum base: get the joint inside 250 x 250, nothing more
-  X   250 mm travel, ball screw, 0.0200 mm/step   } on the trolley plate,
-  Y   250 mm travel, ball screw, 0.0200 mm/step   } nulling the park
+  coarse     a mecanum base: get the joint inside reach, nothing more
+  X   500 mm screw = 361 mm stroke, 0.0200 mm/step } on the trolley plate,
+  Y   500 mm screw = 361 mm stroke, 0.0200 mm/step } nulling the park
   yaw +-10 deg, lever + Tr8x2,   0.0057 deg/step  } from the tags
 
 COMMON TO BOTH
@@ -1103,7 +1103,8 @@ kind these suites are best at catching. None of them is done yet.
 
 **The proposal.** Drop the long precise axis. A mecanum-wheeled robot
 (already owned) carries a trolley until the target joint lies somewhere in
-the fine stages' 250 × 250 mm square — how far off it is does not matter;
+the fine stages' reach — 361 x 361 mm on 500 mm screws (I2), and how far
+off it is does not matter;
 two **250 mm** rail-and-ball-screw stages on the trolley plate take it the
 rest of the way;
 a stereo rig on a 250 mm baseline (already owned) closes the loop; Z stays
@@ -1234,7 +1235,9 @@ So the rule is: **measure all six, null four, and the two left over cost
 stands — but for pitch the orientation was never the expensive half.
 
 **The mecanum's job collapses to one sentence: get the joint inside the
-250 × 250 mm square.** Nothing else about how it arrives matters.
+fine stages' reach** — 361 × 361 mm on 500 mm screws (I2), which leaves
+±132 mm of park error even when two joints must share one park. Nothing
+else about how it arrives matters.
 
 **Where it goes in the stack.** Above X, Y and Z, rotating the head alone,
 so that X and Y stay aligned to the truss and their commands need no frame
@@ -1342,10 +1345,14 @@ the base, and here it costs orientation rather than position.
 ### H6. What it buys, what it costs, and what it reverses
 
 **Buys:** no 1400 mm rail or ball screw — the most expensive and least
-procurable item in the BOM; PART B becomes moot (H1); two 250 mm stages
+procurable item in the BOM; PART B becomes moot (H1); two **500 mm** stages
 instead of a 1400 and a 300; the mecanum base and the stereo rig are already
-owned. A 250 mm fine X covers **two joint pitches** (97.7 mm each) plus the
-coarse error, so about **5 coarse parks per chord, 15 per truss** — not 30.
+owned. **A 500 mm screw leaves 361 mm of stroke** once its ends, supports
+and nut are subtracted, which covers **four joint pitches** (97.7 mm each)
+plus the park error — about **3 coarse parks per chord, 9 per truss**, not
+30. (An earlier draft said 250 mm and 15 parks. It used the nominal length
+as the stroke: 250 mm nominal is 111 mm of travel and covers **one** joint,
+which is a park per joint and throws the architecture away. See I2.)
 
 **Costs:**
 
@@ -1437,37 +1444,98 @@ it racking. A 250 mm cross-slide on a trolley plate is not that machine.
 
 ---
 
-### I2. Order now — the fine motion assembly
+### I2. 500 mm, not 250 — and the nominal length is not the travel
+
+**A nominal screw length is not a stroke.** The machined ends, the two end
+supports and the nut's own body all come off it before anything moves.
+Taking a 500 mm SFU1204 with BK10/BF10 and a flange nut **(dimensions
+estimated from catalogue geometry, not measured)**: 45 mm of machined ends,
+34 for the BK10, 20 for the BF10, 40 for the nut — **125 mm gone.**
+
+Against a joint pitch of **97.7 mm** and ten joints per chord:
+
+| nominal | usable travel | joints per park | **parks per truss** |
+|---|---|---|---|
+| 250 mm | 111 mm | **1** | **30** |
+| 300 mm | 161 mm | 2 | 15 |
+| 400 mm | 261 mm | 3 | 12 |
+| **500 mm** | **361 mm** | **4** | **9** |
+
+**So 500 mm is not a procurement convenience, it is the right length, and
+the 250 mm in the first draft of this part was wrong.** At 250 mm nominal
+the stage has 111 mm of stroke, which after any park error covers **one
+joint** — a park per joint, which throws away most of what the coarse-fine
+split was for. PART H's claim that "a 250 mm fine X covers two joint
+pitches" used the nominal length as the stroke and is corrected below.
+
+A 500 mm screw also makes the mecanum's job trivial: if two joints per park
+is enough, the park may be **±132 mm** out.
+
+**Z stays short.** `Z_TRAVEL` is 150 mm, Z is a Tr8×2 lead screw rather than
+an SFU (E2), and lead screws are sold in any length — so Z needs no 500 mm
+part and should not have one. A 500 mm Z column would raise the whole
+machine and lengthen the very lever that amplifies every angular error (I1).
 
 | Qty | Item | Spec | For |
 |---|---|---|---|
-| **3** | MGN12 linear rail, **250 mm** | with **2 × MGN12H blocks each** | X, Y, Z |
-| **2** | SFU1204 ball screw, **250–300 mm** | machined ends, with ball nut | X, Y |
-| **2** | BK10 / BF10 support set | fixed + floated | X, Y |
-| **2** | DSG12H ball-nut housing | | X, Y |
-| **1** | **Tr8×2 lead screw, 250 mm** | **2 mm lead**, with anti-backlash POM nut | **Z (E2)** |
-| **1** | **Tr8×2 lead screw, 150 mm** | with anti-backlash POM nut | **the yaw lever (H3)** |
+| **2** | MGN12 linear rail, **500 mm** | with **2 × MGN12H blocks each** | X, Y |
+| **1** | MGN12 linear rail, **300–400 mm** | with 2 blocks | Z |
+| **2** | **SFU1204 ball screw, 500 mm**, end-machined | + SFU1204 **flange** nut (the Robokits `RKI-1736` combo is exactly this) | X, Y |
+| **2** | **BK10 + BF10 support set** | fixed + floated — **this is what bolts the screw down** | X, Y |
+| **1** | Tr8×2 lead screw, **300 mm** | + anti-backlash POM nut | Z |
+| **1** | Tr8×2 lead screw, 150 mm | + anti-backlash POM nut | the yaw lever (H3) |
 | **2** | 6802 bearing (15 × 24 × 5) | spaced ~40 mm on a 15 mm shaft | the yaw pivot — a moment needs two |
 | **1** | extension spring, light | preloads the yaw lever | kills backlash the loop cannot |
 | **4** | flexible coupler, 5 × 8 mm | | X, Y, Z, yaw |
 | **4** | NEMA 17 stepper | 4.8 kg·cm, 2.5 A | X, Y, Z, **yaw** |
+| **4** | NEMA 17 motor mount bracket | in line with each screw | X, Y, Z, yaw |
 
-**Note the Tr8×2 on Z and on the yaw lever is not a cost saving.** Z is a
-lead screw because it is **self-locking**, which deletes a requirement (E2);
-the yaw lever is one because on a 100 mm arm it gives **0.0057° per full
-step** over the ±17.6 mm that covers ±10°, with a spring preload leaving no
-backlash — and a closed loop removes error but not hysteresis (H3).
-
-**Four NEMA 17s, same as the original list** — but for X, Y, Z and **yaw**
+**Four NEMA 17s, the same count as the original list** — X, Y, Z and **yaw**
 rather than X, Y, Z and the dispenser.
 
 ---
+
+### I2a. What the screw combo does NOT include, and this was the right question
+
+The `RKI-1736` listing is **the screw rod and the flange nut. That is all.**
+Nothing in it touches the plate. What has to go with it:
+
+| | needed? | what it does |
+|---|---|---|
+| **BK10** (fixed end) | **yes** | holds an angular-contact bearing pair, takes the axial thrust, and **its base is what bolts the screw to the plate**. The machined ends exist for this |
+| **BF10** (floated end) | **yes** | a plain bearing that lets the screw grow with temperature. Bolt both ends rigidly and a warm screw buckles or preloads itself |
+| **motor mount** | **yes** | holds the NEMA 17 in line, usually bolting to the BK10's face |
+| **coupler, 5 → 8 mm** | **yes** | the SFU1204's machined end is 8 mm; the motor's shaft is 5 |
+| **DSG12H nut housing** | **no — optional** | **a *flange* nut already has a bolted flange, so it mounts straight to the carriage plate.** The housing is for when you want the nut at a different height or orientation. An earlier draft of this part listed it as required; it is not |
+| **a drilled and tapped plate** | **yes** | the rail's counterbores, the BK/BF bases and the nut's flange all land on it. This is the "Carriage Adaptor Plate" in section 5 of the original list, and it is the part you have to have made |
+
+**And the assembly order matters more than any of the parts**, because
+getting it wrong quietly ruins a ball nut:
+
+> Mount the **rail** first. Run the **carriage** onto it. Bolt the **nut's
+> flange** to the carriage. Only then bolt **BK10 and BF10** down, with the
+> carriage run to each end in turn, so the screw finds its own line parallel
+> to the rail. A screw bolted down first and a nut then forced onto it binds
+> for the life of the machine.
+
+---
+
+### I2b. Check the trolley deck before ordering
+
+A 500 mm X stage carrying a 500 mm Y stage occupies a footprint of roughly
+**560 × 560 mm** once the end supports are counted, and the moving Y plate
+sweeps a good part of that **(estimated from the part lengths, not laid
+out)**. That has to sit on the mecanum robot's deck with the truss's fixture
+somewhere it can reach. **Measure the robot's deck against 600 × 600 mm
+before the parcel arrives** — this is the one dimension in PART H that has
+never been drawn, and it is cheaper to find now than after the screws are
+cut.
 
 ### I3. Already owned, and now load-bearing
 
 | Item | Role | See |
 |---|---|---|
-| mecanum 4-wheel robot | the coarse axis: get the joint inside 250 × 250 | H3 |
+| mecanum 4-wheel robot | the coarse axis: get the joint inside 361 × 361 | H3, I2 |
 | stereo rig, ~250 mm baseline | the *only* thing that closes the loop | H4, E3 reversed |
 | **AprilTags — print four, spread ≥300 mm apart** | 6-DOF pose; one tag will not do | **H4** |
 | white acrylic sheet | a background behind black rod, for edge fitting | H4 |

@@ -2750,3 +2750,114 @@ counterbalance** (item 15 — ₹200, and without it the head sinks onto the
 work on every E-stop), the **cage's detents** (item 21a — ₹300, and they,
 not the motor, are what holds `Cage.THETA_TOL = 0.05°`), and the **ring's
 motor** (item 20 / J6.1 — measured, and it gates a laser cut).
+
+---
+
+# PART K — HOW STRONG IT IS, IN KILOGRAMS
+
+*Asked practically: what weight will the metre truss take, in its weakest
+direction? Computed with `sim/spine`'s direct-stiffness frame FE by applying
+a 1 N load and reading the buckling margin — the response is linear, so the
+margin under 1 N **is** the failure load in newtons.*
+
+## K1. The rod-limited answer
+
+| how it is held | fails at | **in kg** |
+|---|---|---|
+| **cantilever, 1 m, load on the far end** — the weakest realistic case | 20.8 N | **2.1 kg** |
+| simply supported at both ends, load at mid-span — the "plank" test | 37.8 N | **3.9 kg** |
+| clamped at the mid mount, load split on both ends — the flight case | 41.5 N | **4.2 kg** |
+| squeezed along its own axis | 1,766 N | **180 kg** |
+| pulled along its own axis | 31,806 N | **3,243 kg** |
+
+**The truss weighs 45.1 g.** So it carries **47× its own weight** on the end
+of a metre-long cantilever and **72,000×** in pure tension.
+
+**There is almost no weak direction, and that is the real answer to the
+question.** Sweeping the load direction round the section in 10° steps:
+
+| | cantilever |
+|---|---|
+| worst direction (≈30° off a face normal) | **2.12 kg** |
+| straight down | 2.44 kg |
+| **spread** | **15%** |
+
+**Nothing is gained by orienting it.** A three-chord lattice is nearly
+isotropic in bending, and the worst azimuth is the one that most loads a
+single face's diagonals rather than anything aligned with a chord.
+
+**What goes first is always the same member: a Ø1.5 mm diagonal, 131 mm
+long, in Euler buckling at 21.4 N.**
+
+| member | Euler `P_cr` |
+|---|---|
+| **diagonal, Ø1.5, L 131** | **21.4 N** |
+| chord bay, Ø3.0, L 100 | 588.6 N — **27× stronger** |
+
+Never a chord, never the material. **The structure is
+diagonal-buckling-limited**, which also means it fails *locally and
+gracefully*: one diagonal goes and the truss sags, rather than letting go.
+
+## K2. With the NYLON test thread the joint is weaker than the rod
+
+**The FE contains no joints at all** — it connects members at mathematical
+nodes of infinite strength. That is fine for ranking designs and wrong for
+answering this question, because a thread-wound joint has a capacity of its
+own. Taking the spec's **18 turns** per joint and the band's hoop tension:
+
+| thread | best case | at 40% winding efficiency | vs the 21.4 N rod |
+|---|---|---|---|
+| **nylon 0.11 mm — the thread ordered** | 23.9 N | **9.6 N** | **BELOW: the joint goes first** |
+| nylon 0.15 mm — the diameter `spec` models | 44.5 N | 17.8 N | below |
+| **Kevlar 0.11 mm** | 1,026 N | **410 N** | **19× above — a non-issue** |
+| Kevlar 0.15 mm | 1,909 N | 764 N | 36× above |
+
+> **So the nylon prototype is JOINT-limited at roughly 1 kg of cantilever
+> and will fail at a joint; a Kevlar truss is ROD-limited at 2.1 kg and
+> fails by buckling a diagonal.** A factor of about two between the test
+> piece and the product — and this is exactly why prototyping in nylon is
+> the right call and also why it cannot answer the strength question. **The
+> nylon build proves the geometry and the process. It cannot prove the
+> structure.**
+
+## K3. In service it is nowhere near any of this
+
+`duty.QUADROTOR` is **4 g per camera head at 3 g of manoeuvre** — **0.12 N,
+12 grams-force per head** — against a cantilever capacity of about 2,100
+grams-force. **A margin of roughly 170×.**
+
+**This truss was optimised for STIFFNESS, not strength**, because what it
+has to hold is a stereo calibration measured in microns, not a load. The
+strength came free. That is why it looks fragile and is not: nothing in the
+flight case comes within two orders of magnitude of breaking it.
+
+## K4. What to trust here, and what not to
+
+**Trust the bending numbers.** Every bending case is governed by **Euler
+buckling**, which needs only `E` and the rod's second moment — both of which
+are in the model. The carbon *strength* figures had to be supplied from
+outside the repo (1500 MPa tensile, 600 MPa compressive for UD pultruded
+rod, **my numbers, not the repository's** — `Material` carries E, G, ρ and α
+and no strength at all), and **they never bind on any bending case.** They
+matter only for the axial tension row.
+
+**But they scale with E, and E is a guess.** `material.CARBON_UD`'s
+`E = 150e9` is flagged `[VERIFY]` in its own docstring — *"a typical value
+for the class, not a measurement of the stock in the shop."* Buckling is
+linear in E, so **±20% on E is ±20% on every kilogram above.**
+
+**Pinned ends (K=1)** are assumed for buckling. That is the right
+assumption for a wound joint and conservative for a rigid one.
+
+**The joint numbers in K2 are the crudest thing in this part** — hoop
+tension times a winding efficiency, not a test.
+
+> ### The one measurement that would settle all of it
+>
+> **Pull a single wound joint to failure with a spring balance.** It is
+> twenty minutes of work, and it converts K2 from an estimate into a fact —
+> which in turn decides whether K1's 2.1 kg is the answer or whether the
+> real number is half of it. It is also the measurement that says what
+> winding efficiency actually is, which no amount of arithmetic here can.
+>
+> **This project has no joint rig, and it is the most valuable one missing.**

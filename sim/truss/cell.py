@@ -115,7 +115,7 @@ class CellSim(hal.AxesHAL, hal.RingHAL, hal.CageHAL, hal.GripperHAL,
         return (np.degrees(v) if a == "w" else v * 1000.0) + self._off[a]
 
     def _quant(self, a, value):
-        step = YAW_STEP if a == "w" else Gantry.MM_PER_STEP
+        step = YAW_STEP if a == "w" else Gantry.mm_per_step(a)
         return round(float(value) / step) * step
 
     def goto(self, axis, value):

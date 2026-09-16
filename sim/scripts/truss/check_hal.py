@@ -67,7 +67,7 @@ def main():
         clk.tick()
     believed, truth = c.at("x"), c.axis_truth("x")
     check("an axis believes the quantised setpoint",
-          abs(believed - goal) <= Gantry.MM_PER_STEP / 2.0 + 1e-9,
+          abs(believed - goal) <= Gantry.mm_per_step("x") / 2.0 + 1e-9,
           "%.4f for %.4f" % (believed, goal))
     check("...and the screw did the setpoint times its drawn scale",
           abs(truth - ((believed - c._off["x"]) * c.scale["x"] + c._off["x"])) < 0.02,
@@ -84,9 +84,11 @@ def main():
     c.goto("z", z0 - 20.0)
     for _ in range(60):
         clk.tick()
-    check("z holds its setpoint against gravity to a step",
-          abs(c.axis_truth("z") - c.at("z")) < 2.0 * Gantry.MM_PER_STEP + 0.01,
-          "%.3f vs %.3f" % (c.axis_truth("z"), c.at("z")))
+    check("z holds its setpoint against gravity to a step -- and it is Z's OWN "
+          "step now, half of X's, because Z is a Tr8x2 lead screw (E2)",
+          abs(c.axis_truth("z") - c.at("z")) < 2.0 * Gantry.mm_per_step("z") + 0.01,
+          "%.4f vs %.4f, z step %.4f"
+          % (c.axis_truth("z"), c.at("z"), Gantry.mm_per_step("z")))
     lim = c.limits()
     check("limits are the travels", set(lim) == {"x", "y", "z", "d", "g", "w"})
 

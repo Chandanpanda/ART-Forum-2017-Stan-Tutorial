@@ -1323,15 +1323,37 @@ class Gantry:
     X_TRAVEL    = 1400.0
     Y_TRAVEL    = 300.0
     Z_TRAVEL    = 150.0
-    PITCH       = 4.0          # mm per screw revolution
+    PITCH       = 4.0          # mm per screw revolution, X and Y: SFU1204
+    # Z IS A LEAD SCREW, NOT A BALL SCREW -- see BOM PART E, decision E2.
+    # Tr8x2 rather than Tr8x4 on purpose: a 2 mm lead is SELF-LOCKING (5.2
+    # degrees of lead angle against a 5.7 degree friction angle at mu 0.10),
+    # which DELETES the backdriving requirement E1 had to carry.  No holding
+    # current, no brake, no counterbalance, and cutting motor power on an
+    # E-stop no longer drops the head onto the work.  It is also twice the
+    # resolution.  What it costs is rpm: at the old 40 mm/s a 2 mm lead
+    # wants 1200 rpm, which whips and wears a POM nut, so Z's V_MAX comes
+    # down to 20 and the build pays for it in seconds -- measured, not
+    # estimated, by check_schedule.
+    PITCH_Z     = 2.0
     STEPS_PER_REV = 200        # full steps; no microstepping (brief 4.3)
-    MM_PER_STEP = PITCH / STEPS_PER_REV
-    V_MAX       = {"x": 60.0, "y": 40.0, "z": 40.0}     # mm/s, loaded
+    MM_PER_STEP = PITCH / STEPS_PER_REV     # X and Y; use mm_per_step(axis)
+    V_MAX       = {"x": 60.0, "y": 40.0, "z": 20.0}     # mm/s, loaded
     A_MAX       = {"x": 400.0, "y": 300.0, "z": 300.0}  # mm/s^2
     REPEAT      = 0.05         # mm, bidirectional
     SCREW_CTE   = 12e-6        # /K, steel
     DT_K        = 10.0         # K, warm-up over a shift
     SETTLE_S    = 0.15         # after a move, before a process step
+
+    @classmethod
+    def pitch(cls, axis):
+        """mm of travel per screw revolution, per axis."""
+        return cls.PITCH_Z if axis == "z" else cls.PITCH
+
+    @classmethod
+    def mm_per_step(cls, axis="x"):
+        """One full step, mm.  PER AXIS, because Z's screw is not X's."""
+        return cls.pitch(axis) / cls.STEPS_PER_REV
+
     STALL_N     = {"x": 120.0, "y": 120.0, "z": 120.0}  # thrust at stall
 
 
@@ -2243,8 +2265,9 @@ CHECKS = [
      ring_r_in() < Ring.EXIT_R < ring_r_out()),
     ("the head reaches less far below the chord than the old spool did",
      head_lowest() < 32.0),
-    ("a full step is finer than the repeatability it has to deliver",
-     Gantry.MM_PER_STEP < Gantry.REPEAT),
+    ("a full step is finer than the repeatability it has to deliver, ON EVERY "
+     "axis -- Z's screw is a Tr8x2 lead screw and not X's ball screw (E2)",
+     all(Gantry.mm_per_step(a) < Gantry.REPEAT for a in ("x", "y", "z"))),
     ("screw growth over a shift exceeds the repeatability -- which is why the "
      "camera exists (brief 4.3)",
      stepper_scale_sigma() * 300.0 > Gantry.REPEAT * 0.5),

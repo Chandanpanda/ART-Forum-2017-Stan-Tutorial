@@ -588,6 +588,91 @@ missing.
 
 ---
 
+### E2 — 2026-09-16 · Z reverts to a self-locking lead screw
+
+**Decision: Z becomes a Tr8×2 lead screw. X and Y keep their SFU1204 ball
+screws.** This supersedes E1 for the Z axis only.
+
+**Why E1 is no longer the right answer.** E1 kept the ball screw on four
+legs, and PART F voided one of them: *"`dose` is the single accuracy-critical
+op that approaches its height from **above** — 0 down, 30 up, measured."*
+With resin dosing off the machine, **every remaining Z op descends** — a rod
+`release` descends (50 of 50, measured by E1), and the ring descends onto
+the chord. Backlash taken up in one direction does not appear.
+
+**What the lead screw buys, and it is the thing E1 had to carry as a cost.**
+E1 recorded backdriving as *"a live requirement rather than a footnote"*:
+a ball screw at ~90 % efficiency holds nothing when the power is off, so the
+build needed one of a holding current, a fail-safe brake, or a
+counterbalance — plus an E-stop hazard where cutting motor power drops the
+head onto the work. A Tr8×2 is **self-locking**: 5.2° of lead angle against
+a 5.7° friction angle at μ = 0.10 **(class value, not measured)**. The
+requirement disappears, the brake disappears, and the E-stop stops being a
+hazard.
+
+Tr8×**4** would have needed no spec change at all — 4 mm / 200 steps is
+exactly the 0.0200 mm/step the ball screw gives — but its 10.3° lead angle is
+the "borderline" row in E1's own table, so the self-locking benefit, which is
+the whole reason for the change, would have been a coin toss.
+
+| | before (SFU1204) | after (Tr8×2) |
+|---|---|---|
+| mm per full step, Z | 0.0200 | **0.0100** |
+| self-locking | no | **yes** |
+| `V_MAX["z"]` | 40 mm/s | **20 mm/s** |
+| screw rpm at `V_MAX` | 600 | 600 |
+| metre-truss plan | 26.46 min | **29.15 min** |
+
+**What it costs, measured rather than estimated.** At 40 mm/s a 2 mm lead
+wants 1200 rpm, which whips and wears a POM nut, so `V_MAX["z"]` comes down
+to 20. **That costs 162 s on the metre truss — 10.2 % of a 26.5 minute
+build.** E1's estimate was "about two minutes"; it is 2.7.
+
+Also lost: E1's "one part family across three axes". Two families now.
+
+**Code landed with this decision:** `Gantry.PITCH_Z = 2.0`,
+`Gantry.pitch(axis)` and `Gantry.mm_per_step(axis)`; `cell._quant` and both
+`check_hal` step assertions are per-axis; `spec.CHECKS` now asserts a full
+step is finer than `REPEAT` on **every** axis rather than on one.
+
+---
+
+### E3 — 2026-09-16 · The machine's own vision is deferred to an external rig
+
+**Decision: no camera is designed into the head.** An existing stereo rig is
+placed in the workspace, and perception is deferred.
+
+`Vision` exists for one job: *"find the chord's actual y and the mitre line's
+x before lowering, so the fixture's ±1 mm becomes a non-issue."* Deferring it
+makes that ±1 mm live again, so the question is what the approach margin can
+absorb. **Measured** — the head put at the planned pose with the rod
+somewhere else, over all 30 joints of the metre truss:
+
+| head off by | +y / −y | +z | −z | +x | worst |
+|---|---|---|---|---|---|
+| 0.00 mm | 1.91 | 1.91 | 1.91 | 1.91 | **1.91** |
+| 0.25 | 1.69 | 1.74 | 1.94 | 1.76 | 1.69 |
+| 0.50 | 1.45 | 1.58 | 1.92 | 1.63 | 1.45 |
+| 1.00 | 0.95 | 1.29 | 1.94 | 1.27 | **0.95** |
+| 1.50 | 0.46 | 0.90 | 1.92 | 0.96 | **0.46** |
+
+**Nothing collides out to 1.5 mm**, but the margin is spent: `±y` is the
+worst direction and costs about 0.96 mm of clearance per mm of error, and
+anything past **0.45 mm** eats into the 1.5 mm the plan reserves as
+`Process.SEAT_CLEAR`.
+
+**The mitigation is free and it is in the manual process, not the machine.**
+`Stock.CUT_TOL = 0.3 mm` (1σ) is the hand-cut rod-length scatter — 0.9 mm at
+3σ, which lands on the 0.95 mm row. **Cut the rods against a length stop**
+and 3σ falls to about 0.3 mm, which keeps the worst case near 1.6 mm, above
+the reserve. A saw stop costs nothing and removes the reason for the camera.
+
+**So: no head camera, and cut the rods on a stop.** If a build shows the
+band landing off-centre, vision comes back — the model, the render check and
+`check_vision` are all still in the tree.
+
+---
+
 ## PART F — THE DIVISION OF LABOUR
 
 The objective of the project is to prove that a **scalable process** exists
@@ -624,18 +709,30 @@ On the metre truss that divides as follows:
 | anchor: loop the strand round the post | **3** | chords | the first hoop traps it | **hand** |
 | cut at the far post | **3** | chords | nothing | **hand** |
 | index the cage between chords | **6** | chords | a detent or an index pin | **hand** or machine |
-| place a rod in the fixture | **9** | rods | **the fixture's own V-notch** | **hand** |
+| **place a rod in the fixture** | **30** | **rods = joints** | the fixture's V-notch, but see below | **MACHINE** |
 | **position the ring at a joint** | **30** | **joints** | **the axes, to a 1.94 mm margin** | **MACHINE** |
 | **wind 18 turns with the axial feed** | **30** | **joints** | **0.444 mm per turn** | **MACHINE** |
 | dose 145 mg of resin | 30 | joints | a syringe with a stop, ±7% on a 0.001 g scale | hand, for now |
 
 Two things in that table matter more than the rest.
 
-**Rod loading is precision-free, and the code already says why.**
-`fixture.py`: *"GEOMETRY IS HELD BY THE FIXTURE (brief 4.1)."* A rod dropped
-into its V-notch by a hand lands exactly where a gripper would have put it,
-because the notch defines the position and the placer does not. So handing
-the gripper's job to a person loses nothing measurable.
+**Rod loading was put in the hand column on a wrong count, and it moves
+back.** The first draft of this table said nine rods, which is the **300 mm**
+truss's figure; the metre truss is **3 chords + 27 diagonals = 30 rods**, one
+per joint. That breaks the O(joints) test outright: rod placement grows
+exactly as fast as the winding does.
+
+The precision argument survives — `fixture.py` says *"GEOMETRY IS HELD BY
+THE FIXTURE (brief 4.1)"*, and a rod dropped into its V-notch lands where a
+gripper would have put it — but it is not enough on its own. A diagonal goes
+into **two** cradles at a computed roll angle with a mitred end on each side
+(`theta_face_up`, "a diagonal drops into its two cradles when its face is
+uppermost and level"), twenty-seven times. That is the "precision work I
+cannot manually do even if I had the time".
+
+**So the gripper stays, and the cell is EIGHT actuators, not five:** X, Y,
+Z, ring, cage, gripper stroke, gripper yaw, jaws. Only the dispenser comes
+off.
 
 **The glue is the one weak link in the scalability claim.** It is O(joints)
 — 30 doses, and 300 on a ten-truss run. It is also the only manual step
@@ -725,15 +822,13 @@ What comes off the machine, in total:
 | off the machine | actuators freed | what stops being needed |
 |---|---|---|
 | resin dosing | `a_d` dispenser stroke | the `dose` op, `DOSE_SETTLE_S`, the drop-placement model, the interleaved-vs-separate-pass comparison |
-| rod loading | `a_g` stroke, `a_w` yaw, `a_f` jaws | the gripper, and the kit handling for the truss build |
 | the cut | — (it was a hot wire, not an axis) | `Cutter` entirely, and its material problem |
 | the anchor | — | `Process.ANCHOR_S`, `ANCHOR_LEGS`, and `approach.post_loop` — the solved rectangle the head ran round the post, six moves per chord, which had a recorded failure: the hand-drawn version *"hooked the ring on the post, jammed the x axis, and put the first look 60 mm from its joint"* |
 | loading the spool | — | any machine-loadable groove; the target becomes **hand**-loadable (F5) |
 
-**The cell goes from nine actuators to five: X, Y, Z, ring, cage.** Hand-index
-the cage on a pin and it is four. The magazine and the gripper survive only
-if the **mount** phase stays machine-built, which is a separate decision
-(F10.4).
+**The cell goes from nine actuators to eight**: the dispenser is the only
+one removed, because rod placement is O(joints) and moves back to the
+machine (F1). The gripper, its yaw, its jaws and the magazine all stay.
 
 **A knock-on to PART E that must not rot.** E1's case for keeping a ball
 screw on Z listed four reasons, and one of them was: *"`dose` is the single
@@ -888,6 +983,273 @@ the descent at 1.94 mm and the seated pose at 1.91 mm over all 30 joints.
    and pinion got: derived from `spec.Ring`, emitted as an STL, and checked.
 4. **The mount phase has not been divided.** F1's table covers building the
    truss. Putting the camera bracket on it is 20 parts placed to 0.80 mm and
-   0.2° (measured), and it is the reason the magazine and the gripper exist.
-   Whether that is hand work or machine work is undecided, and it decides
-   whether four of the freed actuators come back.
+   0.2° (measured). Since the gripper stays for rod placement anyway, this
+   no longer changes the actuator count — but it does decide whether the
+   magazine carries 20 more parts.
+
+---
+
+## PART G — THE PROCESS, END TO END
+
+The agreed division, as one sequence. **H** is a hand, **M** is the machine.
+Counts are for the metre truss (30 joints, 30 rods, 3 chords).
+
+| # | step | who | ×  | already built? |
+|---|---|---|---|---|
+| 1 | cut 30 rods to length, **against a stop** (E3) | **H** | 30 | — |
+| 2 | lay the rods in the magazine racks | **H** | 30 | `Magazine`, and the rack layout is solved |
+| 3 | unfold the base structure and lock it | **H** | 1 | `collapse` — over-centre toggles, 101 checks |
+| 4 | place every rod from the rack into the fixture | **M** | 30 | `check_load`: capture, seating, retention |
+| 5 | load a thread cartridge, loop 4 legs round the post | **H** | **3** | **not designed** (F5) |
+| 6 | position the ring and wind 18 turns, joint by joint | **M** | 30 | `check_approach` 1.94 mm, `check_drive`, `check_cad` |
+| 7 | index the cage between chords | **M** | 6 | in the plan |
+| 8 | cut the thread at the far post | **H** | **3** | clippers (F4) |
+| 9 | syringe 145 mg of resin into all 30 joints | **H** | 30 | dose model exists, dispenser removed |
+| 10 | leave it to cure | — | 1 | — |
+| 11 | release the toggles, fold the rails, slide the truss off | **H** | 1 | `collapse`, 101 checks |
+
+**Hands touch it 96 times, and 6 of those are the ones that matter.** Steps
+5 and 8 are O(chords) — three loads and three cuts, which do not grow with
+the truss. Steps 1, 2 and 9 are O(joints) and precision-light. Steps 4, 6
+and 7 are the machine's, and step 4 is there because 27 mitred diagonals into
+54 cradles at computed roll angles is not hand work (F1).
+
+### G1. The machine that results
+
+**Eight actuators**: X, Y, Z, ring, cage, gripper stroke, gripper yaw, jaws.
+The dispenser is gone. Z is a lead screw (E2). No camera (E3).
+
+```
+X  1400 mm travel, SFU1204 ball screw, 0.0200 mm/step
+Y   300 mm travel, SFU1204 ball screw, 0.0200 mm/step
+Z   150 mm travel, Tr8x2 LEAD screw,   0.0100 mm/step, self-locking
+ring       module 0.8, 48T rim, 3 pinions, one belt   (sim/cad/)
+cage       worm-driven, 6 index positions
+gripper    stroke + yaw + jaws
+plan       29.15 min for the metre truss, 891 ops
+```
+
+### G2. The base structure folds, and this was the expensive lesson
+
+Step 3 and step 11 are already designed and checked, and it is worth knowing
+why they needed designing. `collapse.py`:
+
+> *"The truss is a closed triangular lattice wound onto the cage… the chosen
+> 85 mm truss has 96 pins, 54 cradles, 6 posts. The biggest cylinder that can
+> slide out along the axis is 21.54 mm. The pins' notch floors reach 46.95
+> mm. **The cage was drawn as a thing to wind onto and never as a thing to
+> get back**, and no amount of clearance fixes it: the lattice closes around
+> it."*
+
+What replaced it is a collapsible mandrel: rails rather than arms, on
+**parallelogram** linkages so a V-notch translates instead of rotating (a
+notch that rotated as it retreated would rake the rod); the chord rails
+**segmented** onto `fixture.free_spans` so the ring can come down between
+them, twelve pieces per chord; six **torsion shafts** on the spine's surface
+at the arms' own hinge line — the one radius the head can never reach — so
+one shaft folds a whole chord's worth; and six **over-centre** toggle locks,
+because a toggle taken past dead centre is driven harder into its stop by
+the load it carries and cannot be undone by the winding tension.
+
+`check_collapse` has 101 checks and its **first** one asserts that the cage
+*as originally drawn* is trapped — so if that check ever passes trivially,
+the rest of the suite is measuring nothing.
+
+### G3. What still has to change in code
+
+This part is agreed and the code does not yet say it. In blast-radius order:
+
+1. **Remove the dispenser** — `Dispenser`, `a_d` in the HAL and the MJCF,
+   `schedule.dose`, `DOSE_SETTLE_S`, the `dose` op and the
+   interleave comparison. Touches `check_hal`'s actuator contract,
+   `check_schedule`'s op list, `check_model`, `check_cycle`. **Keep**
+   `band.resin_dose_mg` and `drop_radius_mm`: a hand still needs to know it
+   is 145 mg, and the dispenser may come back (F1 — the glue is the one
+   manual step that is O(joints)).
+2. **Remove the cutter and the machine anchor** — `Cutter`, `ANCHOR_S`,
+   `ANCHOR_LEGS`, `approach.post_loop`, and the six moves per chord the plan
+   spends running the head round the post. **Keep** `Cage.POST_R/POST_L` and
+   the `post_off` window: the post is still what the thread anchors to, a
+   hand just ties it.
+3. **Remove the `look`** — `Vision`, `look_x`, `check_vision`, and 30 look
+   ops. Band start becomes `band_start` directly rather than a look followed
+   by a move (E3).
+4. **Design the cartridge** (F5) and add a load stop to the plan: the machine
+   pauses at each chord's start for a hand.
+5. **Relax the reload assertion** — `spec.CHECKS` still says the groove
+   *"holds a whole truss of thread, so nothing is reloaded mid-cycle"*.
+   It now reloads three times, by hand, on purpose.
+
+Items 1 to 3 all *remove* things, which is the safest kind of change and the
+kind these suites are best at catching. None of them is done yet.
+
+---
+
+## PART H — COARSE-FINE POSITIONING ON A MOBILE BASE
+
+**The proposal.** Drop the long precise axis. A mecanum-wheeled robot
+(already owned) carries a trolley to within about ±25 mm; two **250 mm**
+rail-and-ball-screw stages on the trolley plate take it the rest of the way;
+a stereo rig on a 250 mm baseline (already owned) closes the loop; Z stays
+the Tr8×2 lead screw of E2. Later the syringe and, if ever wanted, a cutter
+ride the same Z.
+
+**This is a standard architecture, not a compromise.** The 1400 mm X axis is
+expensive *because it has to be both long and precise*, and those two
+requirements are separable — which is what every wafer stepper, large-format
+machining centre and mobile manipulator does. Splitting them is the textbook
+answer, and here it lands on hardware that is already on the shelf.
+
+---
+
+### H1. It makes PART B unnecessary, and that is the biggest consequence
+
+PART B exists for one reason: **1 m is the procurement limit for rails and
+ball screws, and the metre truss needs 1397 mm of X.** Everything in it —
+the 880 mm usable window opened to a 1245 mm diagonal, the 1397/1246/1049
+span arithmetic, the 960.9 mm truss that yields a 1000.0 mm baseline, the
+**diamond**-shaped reachable region, and the C1–C10 list of simulation
+changes — is a workaround for that one constraint.
+
+**A mobile coarse axis removes the constraint.** X travel stops being bounded
+by what can be bought, so the truss can lie square to the machine and the
+diagonal layout, the diamond and C1–C10 can all be dropped. That is worth
+settling *before* anything is ordered, because it changes which truss the
+sim should be solving for.
+
+---
+
+### H2. How accurately the trolley has to arrive — measured, both ways
+
+Two measurements against `approach`, over all 30 joints of the metre truss.
+The plan's reserve is `Process.SEAT_CLEAR = 1.5 mm` and its clearance with
+everything perfect is **1.91 mm**.
+
+**Translation** (E3's table): the worst direction is ±y and it costs about
+**0.96 mm of clearance per mm of error**. Past **0.45 mm** it eats the
+reserve; nothing contacts out to 1.5 mm.
+
+**Rotation** — a trolley can arrive turned, and the fine stages have no yaw:
+
+| trolley off by | yaw (about vertical) | pitch (about horizontal) | band skew over the 8 mm band |
+|---|---|---|---|
+| 0.25° | 1.88 mm | 1.87 mm | 0.026 mm |
+| 0.50° | 1.86 | 1.82 | 0.052 |
+| **1.00°** | **1.81** | **1.74** | **0.105** |
+| 2.00° | 1.71 | 1.58 | 0.209 |
+| 3.00° | 1.61 | **1.41** | 0.314 |
+| 5.00° | 1.41 | 1.09 | 0.523 |
+
+**Rotation is loose and translation is tight.** About **2°** before the
+reserve is touched, nothing contacts out to 5°, and the band skew at 1° is
+0.105 mm against the band's own 0.444 mm pitch — irrelevant.
+
+That split is exactly what a coarse-fine stage delivers: the fine screws fix
+translation to `REPEAT = 0.05 mm`, and rotation only has to be roughly
+right. **The architecture and the tolerance budget agree**, which is the
+result that makes this worth doing.
+
+---
+
+### H3. Rotation still has to be constrained, and a rail is the cheap way
+
+2° is loose, but mecanum odometry over a metre is worse than 2°, and the
+fine stages cannot correct it. Two options:
+
+- **add a yaw fine axis** — a fourth stage, more cost and more control; or
+- **a passive straightedge.** A 1.2 m length of 2020 extrusion parallel to
+  the mandrel with two rollers on the trolley running against it. It has to
+  be *straight*, not *driven*, so it costs a fraction of an axis. It
+  constrains yaw **and** Y, leaving X uncontrolled — which is what the
+  mecanum drive is for and what vision closes.
+
+The straightedge is the recommendation. It also turns the coarse move into a
+one-dimensional problem, which is much easier to close on.
+
+---
+
+### H4. What the vision has to deliver, and what actually limits it
+
+A 250 mm baseline at a 300 mm working distance, with f ≈ 1100 px and 0.2 px
+of disparity noise, gives σ ≈ **0.065 mm in depth and 0.054 mm laterally**
+**(estimated from σ_Z = Z²σ_d / fB; not measured on this rig)** — comparable
+to the ball screws' own `REPEAT = 0.05 mm` and far inside the 0.45 mm
+budget. **The sensor is not the limit**, and `Vision` already recorded what
+is:
+
+> *"what limits the cell is the camera-to-ring calibration, which is a
+> bracket, and it is drawn ONCE per run as a bias, never averaged away."*
+
+**Two consequences that decide the build:**
+
+1. **The camera mounts on the fine stage, next to the ring — not on the
+   world.** Fixed to the world, the camera-to-ring transform depends on the
+   fine stage's position, which is the very thing being measured. On the
+   stage, the bracket is short, stiff, and the loop closes on a relative
+   measurement.
+2. **The work needs a background.** Pultruded carbon rod is black and
+   specular: poor texture for stereo matching. The existing spec sidesteps
+   this by fitting **edges** against a background — *"20 pixels across a
+   3 mm chord and an edge fit resolves a hundredth of a millimetre"* — so
+   give the work a contrasting or backlit backdrop. A sheet of white
+   acrylic, and it is free.
+
+---
+
+### H5. Does the trolley stay put while it winds?
+
+The loads are negligible and worth having the numbers for. The ring's peak
+reaction is **0.049 N·m** (`check_drive`), which across a 300 mm-wide trolley
+is **0.33 N** at the wheels; the thread pulls **2 N** at r 11 mm. Static
+friction on four mecanum wheels holds that without thinking about it, so
+**no clamp or jack is needed for load.**
+
+What does need attention is **drift**: unpowered drive motors back-drive.
+Holding current on the four wheel motors, or a detent, covers it — the same
+problem E2 just deleted on Z, reappearing on the base.
+
+---
+
+### H6. What it buys, what it costs, and what it reverses
+
+**Buys:** no 1400 mm rail or ball screw — the most expensive and least
+procurable item in the BOM; PART B becomes moot (H1); two 250 mm stages
+instead of a 1400 and a 300; the mecanum base and the stereo rig are already
+owned. A 250 mm fine X covers **two joint pitches** (97.7 mm each) plus the
+coarse error, so about **5 coarse parks per chord, 15 per truss** — not 30.
+
+**Costs:**
+
+- **A closed loop where there is none.** The HAL is open-loop step counting
+  today, and `check_hal` asserts exactly that: an axis *believes the
+  quantised setpoint*. Closed-loop fine axes plus a coarse pose is a real
+  change to `cell.py`, not a parameter.
+- **A straightedge** (H3) and hold current on the wheels (H5).
+- **Vision stops being optional.** In the gantry architecture the fixture's
+  ±1 mm was survivable; here vision is the only thing that closes the loop.
+
+**So H reverses E3.** E3 deferred the camera because the fixture alone
+survived at 0.95 mm of clearance. Under H, deferring it is not available —
+the coarse base's ±25 mm has to be measured away. E3's mitigation (cut the
+rods on a length stop) is still worth doing, but it no longer substitutes
+for the camera.
+
+---
+
+### H7. What has to change in the simulation
+
+1. `Gantry.X_TRAVEL` and `Y_TRAVEL` become **fine-stage** travels (250 each),
+   and the plan gains a **coarse pose per park** — about 15 of them.
+2. A **coarse-move op** with its own settling time and an error model
+   (±25 mm, ±2°), so the schedule prices the parks and the re-registrations.
+3. The HAL grows a **`measure()`** returning the camera's estimate, and the
+   fine axes' `goto` becomes closed-loop. `check_hal`'s "no ground-truth
+   reads in mission code" ratchet already admits a camera as a *sensor*, so
+   the contract survives — but it has to be written.
+4. **PART B's C1–C10 can be dropped** if H1 holds.
+5. `check_approach` gains the two tables above as assertions rather than
+   one-off measurements: the margin must survive ±0.45 mm and ±2°.
+
+Nothing here is done. Items 1–3 are the real work and they are larger than
+the removals in G3, because they *add* a feedback path rather than deleting
+an actuator.

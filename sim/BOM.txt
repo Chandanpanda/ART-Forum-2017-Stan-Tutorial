@@ -2171,3 +2171,46 @@ wheels, and the release layer** — about **₹700 off today's order** and
 **What the shelf does not contain is the thing that is actually blocking**,
 and it is the same as in I7c: the plates cannot be drawn until the BK10's
 bore height and the flange nut's offset are measured off real parts.
+
+---
+
+### I9. The coarse-fine architecture is LOCKED, and what that settles
+
+**Decided, not proposed.** The mecanum base is the coarse axis; the 500 mm
+fine stages null the park. Three consequences, recorded so a compaction
+cannot un-decide them:
+
+**1. PART B is dead, and so are C1–C10.** The diagonal layout, the 1245 mm
+diagonal and the diamond reachability region existed only because a rail
+that had to be 1397 mm could be bought at 1000 (H1). There is no such rail
+in the design now. PART B stays in the file as history; **it is not a
+target.**
+
+**2. Baseline length is no longer bounded by hardware, and that is the
+whole point of the split.** The fine stages never see more than one park's
+worth — 361 × 361 mm on the 500 mm screws — so a longer truss is *more
+parks*, not a bigger machine. The only number that moves with length is
+parks per truss:
+
+| truss | joint pitch | joints per park | parks |
+|---|---|---|---|
+| 300 mm | 97.7 mm | 4 | 3 |
+| **1 m** | 97.7 | 4 | **9** |
+| 2 m | 97.7 | 4 | 18 |
+
+**Nothing in the parts list changes between those rows.** A 2 m stereo
+baseline is the same machine and twice the parks. This is what the
+coarse-fine split was bought for and it is now the committed answer to
+"how long a baseline can this build".
+
+**3. `Gantry.X_TRAVEL = 1400` and `Y_TRAVEL = 300` are now stale.** They
+describe the gantry that H1 deleted. They should become fine-stage travels
+(361 each) with a coarse pose per park — **H7 item 1, still not done**, and
+it is the largest remaining sim change. Left alone deliberately rather than
+half-done: every reach check in `check_geometry`, `check_mount` and
+`check_schedule` is written against them, and they must move together with
+the coarse-park op or the suite starts asserting against a machine that is
+neither the old one nor the new one.
+
+**The base structure / collapsible mandrel is explicitly deferred** — not
+designed, not ordered, not blocking the fine-motion build.

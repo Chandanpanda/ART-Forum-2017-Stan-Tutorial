@@ -28,6 +28,7 @@ FAST = [
     ("check_view",      "the viewer's camera: the mouse is live, the keys return"),
     ("check_load",      "the loader: capture, seating, retention"),
     ("check_cycle",     "a truss made end to end, judged by the inspector"),
+    ("check_cad",       "the printed and cut files against the solve they came from"),
 ]
 SLOW = [
     ("check_drive",     "the ring's drive: a free ring, real teeth, one belt"),

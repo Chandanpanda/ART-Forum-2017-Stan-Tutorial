@@ -1279,9 +1279,21 @@ one actuator do both makes the rod-handling axis the precision element.
 would correct nothing (roll already costs nothing), and a pitch axis would
 buy 0.17 mm of clearance at 1° — a residual already inside the reserve —
 while the 7 mm that pitch *actually* costs is taken out by stages that have
-to be there anyway. If a floor ever did make pitch matter, the answer is
-still not an actuator but **three levelling screws on the trolley**, set
-once and static.
+to be there anyway.
+
+**And not levelling screws either — an earlier draft of this part said
+"three levelling screws on the trolley, set once and static", and that is
+wrong.** The trolley relocates about **nine times per truss** (I2), and its
+pitch changes at every park as the wheels find different floor. Screws set
+at one park do nothing for the next; to be static they would have to be
+re-set nine times, by hand or by three more actuators.
+
+**If a floor is ever bad enough to matter, the fix is a flat RUNWAY for the
+wheels** — a length of plate or flat bar the trolley drives along. It is
+static, it covers every park at once, and it is the one mechanical addition
+here that does not need a control loop. How flat: see I1b — the answer is
+that almost any runway will do, because the floor has to be **12.6 mm out
+over the wheelbase** before the tilt touches the reserve.
 
 **What pitch and roll do require is MEASUREMENT.** Not to correct the tilt,
 but because pitch's 7 mm displacement cannot be nulled without knowing the
@@ -1498,6 +1510,50 @@ three-way split:
 
 > **So if a first article ever proves floppy, the second rail goes on Y, not
 > on X.** X's weak direction is the one the ring does not care about.
+
+---
+
+### I1b. Would a second rail on Y make the residual pitch foolproof? Half of it
+
+Y is the right rail to add — I1a shows why, and it is the only axis whose
+un-resisted direction is a rotation the ring cares about. But the ring's
+pitch has **two independent sources**, and a rail reaches only one.
+
+**Source 1 — compliance in the stack.** The Y carriage rolls about its own
+rail under the head's overhung weight: 2.5 kg at 120 mm of overhang is a
+constant **2.94 N·m**. Taking an MGN12H block at ~10,000 N·m/rad in roll
+**(inferred from a rating, not a datasheet — see I6)**:
+
+| | roll stiffness | tilt | at the ring, 400 mm up |
+|---|---|---|---|
+| two blocks, **one** rail | ~20,000 N·m/rad | 0.147 mrad | **0.059 mm** |
+| two blocks, **two** rails 80 mm apart | ~296,000 | 0.010 mrad | 0.004 mm |
+
+Against the 0.45 mm translation budget, **one rail is already inside by 8×**.
+A second rail takes a 15× bite out of something that was never the problem.
+
+**Source 2 — the trolley's own attitude, and no rail reaches it.** The
+wheels sit on the floor and the whole stack tilts with them. A second Y rail
+is irrelevant here; it stiffens the stack *relative to the trolley*, and the
+trolley is what is crooked.
+
+| runway flat to (over a 300 mm wheelbase) | pitch | the ring shifts | tilt cost |
+|---|---|---|---|
+| 0.5 mm | 0.10° | 0.67 mm (nulled) | 1.89 mm left |
+| 2.0 mm | 0.38° | 2.67 mm (nulled) | 1.85 mm left |
+| 5.2 mm | 0.99° | 6.93 mm (nulled) | 1.74 mm left |
+| **12.6 mm** | **2.41°** | 16.8 mm (nulled) | **1.50 mm — the reserve** |
+
+**So the floor has to be 12.6 mm out under one wheel before the tilt touches
+the reserve**, and the shift — which is by far the larger term, up to 16.8 mm
+— is nulled by the stages the moment the angle is *measured*.
+
+> **What makes the residual foolproof is the MEASUREMENT, not a rail.**
+> Spread tags (H4) null the displacement, which is the expensive half. The
+> tilt that survives is 0.17 mm per degree against a reserve that tolerates
+> 2.4°. Buy the second Y rail if you want the stack tighter — it is the
+> right axis for it — but buy it knowing it addresses the 8×-inside half and
+> leaves the other half exactly where it was.
 
 ---
 

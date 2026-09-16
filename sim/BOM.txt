@@ -732,7 +732,8 @@ cannot manually do even if I had the time".
 
 **So the gripper stays, and the cell is EIGHT actuators, not five:** X, Y,
 Z, ring, cage, gripper stroke, gripper yaw, jaws. Only the dispenser comes
-off.
+off. (PART H later adds a ninth — a fine **yaw** stage — and what that one
+buys is the deletion of the 1400 mm rail; see H3.)
 
 **The glue is the one weak link in the scalability claim.** It is O(joints)
 — 30 doses, and 300 on a ten-truss run. It is also the only manual step
@@ -829,6 +830,8 @@ What comes off the machine, in total:
 **The cell goes from nine actuators to eight**: the dispenser is the only
 one removed, because rod placement is O(joints) and moves back to the
 machine (F1). The gripper, its yaw, its jaws and the magazine all stay.
+PART H then spends the freed slot on a fine yaw stage, so the count returns
+to nine — a *different* nine, and the 1400 mm rail goes instead.
 
 **A knock-on to PART E that must not rot.** E1's case for keeping a ball
 screw on Z listed four reasons, and one of them was: *"`dose` is the single
@@ -1016,17 +1019,28 @@ and 7 are the machine's, and step 4 is there because 27 mitred diagonals into
 
 ### G1. The machine that results
 
-**Eight actuators**: X, Y, Z, ring, cage, gripper stroke, gripper yaw, jaws.
-The dispenser is gone. Z is a lead screw (E2). No camera (E3).
+**Nine actuators**, and PART H changed which nine: the dispenser is gone
+(F4) and a fine **yaw** stage has taken its place (H3). Z is a lead screw
+(E2). No camera on the head — but vision is now load-bearing rather than
+deferred, because H reverses E3.
 
 ```
-X  1400 mm travel, SFU1204 ball screw, 0.0200 mm/step
-Y   300 mm travel, SFU1204 ball screw, 0.0200 mm/step
-Z   150 mm travel, Tr8x2 LEAD screw,   0.0100 mm/step, self-locking
-ring       module 0.8, 48T rim, 3 pinions, one belt   (sim/cad/)
-cage       worm-driven, 6 index positions
-gripper    stroke + yaw + jaws
-plan       29.15 min for the metre truss, 891 ops
+GANTRY ARCHITECTURE (what the sim models today)
+  X  1400 mm travel, SFU1204 ball screw, 0.0200 mm/step
+  Y   300 mm travel, SFU1204 ball screw, 0.0200 mm/step
+
+COARSE-FINE ARCHITECTURE (PART H; not yet in the sim)
+  coarse     a mecanum base: get the joint inside 250 x 250, nothing more
+  X   250 mm travel, ball screw, 0.0200 mm/step   } on the trolley plate,
+  Y   250 mm travel, ball screw, 0.0200 mm/step   } nulling the park
+  yaw +-10 deg, lever + Tr8x2,   0.0057 deg/step  } from the tags
+
+COMMON TO BOTH
+  Z   150 mm travel, Tr8x2 LEAD screw, 0.0100 mm/step, self-locking
+  ring       module 0.8, 48T rim, 3 pinions, one belt   (sim/cad/)
+  cage       worm-driven, 6 index positions
+  gripper    stroke + yaw + jaws
+  plan       29.15 min for the metre truss, 891 ops (gantry; H re-prices it)
 ```
 
 ### G2. The base structure folds, and this was the expensive lesson
@@ -1161,47 +1175,74 @@ result that makes this worth doing.
 
 ---
 
-### H3. The stages correct three degrees of freedom out of six
+### H3. The fine assembly gets a yaw stage: four degrees of freedom out of six
 
-**The trolley's position does not have to be good, and its orientation
-cannot be fixed.** That is the whole of it, and the first draft of this part
-got it backwards by inventing a ±25 mm accuracy requirement that is not a
-requirement at all.
+**The trolley's position does not have to be good, and the fine assembly has
+to be able to fix its orientation.** The first draft of this part got both
+halves wrong — it invented a ±25 mm accuracy requirement for the mecanum
+base that is not a requirement, and then proposed a passive straightedge to
+hold the base's yaw mechanically. **Both are withdrawn.**
 
 | the trolley is off in | who fixes it | how well |
 |---|---|---|
 | x, y | the two fine stages | **exactly** — `REPEAT = 0.05 mm` |
 | z | the Z lead screw | **exactly** |
-| **yaw** (about vertical) | **nothing on the trolley** | must be **driven** out by the wheels |
-| **pitch, roll** | **nothing** | set by floor flatness; absorbed |
+| **yaw** (about vertical) | **a fine yaw stage** | **exactly**, to its own resolution |
+| pitch, roll | nothing | floor flatness; absorbed, and small |
 
-A translation cannot change an orientation, so knowing the trolley's yaw to
-a thousandth of a degree does not correct it — the ring's plane is rotated
-by whatever the chassis is rotated by. The coarse position, by contrast, can
-be off by anything up to the stage travel less the working envelope, because
-the stages cancel it outright.
+A translation cannot change an orientation, so three linear stages leave
+three degrees of freedom uncorrected, and **yaw is the large one** — it is
+the mecanum drive's own free axis, where pitch and roll are merely whatever
+the floor gives. Adding one rotary stage to the fine assembly turns the
+uncorrected set from {yaw, pitch, roll} into {pitch, roll}, which is the
+difference between a degree of freedom the base controls badly and two the
+floor controls well.
 
-**And that is enough, because yaw is a CONTROLLED degree of freedom.**
-Mecanum wheels rotate the chassis in place, so with tag-based feedback the
-base can *servo* its yaw rather than drift in it — and H2 measures the
-requirement as loose: 1° costs 0.10 mm of a 1.91 mm clearance, and 2° is
-still inside the 1.5 mm reserve. An earlier draft of this part recommended a
-passive straightedge to constrain yaw mechanically. **That is withdrawn**: it
-was solving open-loop drift in an architecture whose premise is a closed
-loop.
+**The mecanum's job collapses to one sentence: get the joint inside the
+250 × 250 mm square.** Nothing else about how it arrives matters.
 
-**What is left to measure is the base, not the camera.** Mecanum wheels have
-heavy stiction and slip, so a commanded 0.5° correction may not move the
-chassis at all and then overshoot. The question is the drive's **deadband in
-yaw**, and it is answerable in ten minutes on hardware already owned:
-command 0.5° and see whether it happens. Vision can see far finer than that
-(H4); whether the wheels can deliver it is the open item.
+**Where it goes in the stack.** Above X, Y and Z, rotating the head alone,
+so that X and Y stay aligned to the truss and their commands need no frame
+transform. Put its axis **as near the ring's centre as the packaging
+allows**: rotating about a point offset from the ring displaces the ring by
+the lever arm, and while that is a known constant the XY stages then cancel,
+a short arm is less to cancel and less to calibrate.
 
-**Pitch and roll have no loop at all.** They are whatever the floor gives,
-and pitch is the *more* sensitive of the two rotations — 1.74 mm at 1°
-against yaw's 1.81. Over a 300 mm wheelbase, 1° is a 5 mm step under one
-wheel, so a bench is an order of magnitude flatter than the budget. Worth
-knowing rather than worth fixing.
+**What it has to be.**
+
+| | requirement | why |
+|---|---|---|
+| range | **±10°** | far more than a park needs; costs nothing |
+| resolution | **≤0.05°** | 1° costs 0.10 mm of a 1.91 mm clearance (H2), so this is 20× inside it |
+| **backlash** | **low or preloaded** | the one that matters: a closed loop removes *error*, not *hysteresis* |
+| holding | self-locking or braked | it must not creep through an 18.5 s wind |
+
+Two forms fit. A **worm and wheel** is compact and self-locking, and the
+cell already drives the cage with one — but a worm has backlash unless it is
+preloaded. A **lever and lead screw** (a sine stage) has none worth the name
+once a spring preloads it, reuses the Tr8 screw family E2 just adopted, and
+on a 100 mm arm gives **0.0057° per full step** with ±17.6 mm of travel
+covering ±10°. For a ±10° correction axis the lever is the better answer.
+
+**Its duty is per PARK, not per joint.** The trolley does not move between
+the joints of one park, so yaw is set once per park — about **15 times per
+truss**, against the ring's 30 winds. It is a set-and-hold axis, not a
+contouring one, which is why a lever with limited range is enough.
+
+**The actuator count returns to nine, and it is a different nine.** The
+dispenser left (PART F) and a yaw stage arrived: X, Y, Z, **yaw**, ring,
+cage, gripper stroke, gripper yaw, jaws. What the swap buys is the deletion
+of the 1400 mm rail and ball screw, and with it PART B (H1). The head's yaw
+and the gripper's yaw are kept separate on purpose — one wants ±10° with
+0.05° resolution, the other wants a large range to orient a rod, and making
+one actuator do both makes the rod-handling axis the precision element.
+
+**Stop at yaw; do not chase pitch and roll with actuators.** They cost two
+more axes to fix a residual that is already inside budget — 1° of pitch
+leaves 1.74 mm of the 1.91, above the 1.5 mm reserve, and 1° over a 300 mm
+wheelbase is a 5 mm step under one wheel, which a bench beats by an order of
+magnitude. If a floor ever did make it matter, the answer is not an actuator
+but **three levelling screws on the trolley**, set once and static.
 
 ### H4. What the vision has to deliver, and what actually limits it
 
@@ -1272,8 +1313,9 @@ coarse error, so about **5 coarse parks per chord, 15 per truss** — not 30.
   change to `cell.py`, not a parameter.
 - **Hold current on the four wheels** (H5), because a creeping wheel
   costs orientation, not just position.
-- **A yaw loop on the base that converges**, and a deadband small enough to
-  use it (H3) — the one thing here that needs hardware to answer.
+- **A fourth fine axis: yaw** (H3). This is the swap that makes the
+  architecture work, and it is what the 1400 mm rail's deletion is traded
+  for.
 - **Vision stops being optional.** In the gantry architecture the fixture's
   ±1 mm was survivable; here vision is the only thing that closes the loop.
 
@@ -1289,10 +1331,11 @@ for the camera.
 
 1. `Gantry.X_TRAVEL` and `Y_TRAVEL` become **fine-stage** travels (250 each),
    and the plan gains a **coarse pose per park** — about 15 of them.
-2. A **coarse-park op** with its settling time, and — new — a
-   **measure-and-verify step with a retry**: the park converges on yaw or it
-   is commanded again. The schedule has no iteration-with-a-criterion in it
-   today, and the cycle time depends on how often the retry fires.
+2. A **coarse-park op** with its settling time, followed by a **register**
+   step: measure the trolley's pose from the tags, then null x, y, z on the
+   linear stages and yaw on the rotary one. No retry and no convergence
+   criterion — with a yaw stage the correction is commanded once, not
+   iterated, which is the second thing the stage buys.
 3. The HAL grows a **`measure()`** returning the camera's estimate, and the
    fine axes' `goto` becomes closed-loop. `check_hal`'s "no ground-truth
    reads in mission code" ratchet already admits a camera as a *sensor*, so

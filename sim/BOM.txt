@@ -2267,7 +2267,7 @@ BOM at the top of this file, this row wins.
 | 18 | 1 | **Z** | NEMA 17, **1.2 A, D-shaft** | **CART** | PR42HS40-1204AF-02, ×3. **D-shaft, which the round-shaft pair are not** — better under a coupler's set screw. ⚠ **1.2 A, not the owned pair's 1.7**: see J2.1 on rpm |
 | 19 | 1 | **head yaw** | NEMA 17, 1.2 A, D-shaft | **CART** | |
 | 19a | 1 | *spare / the cage's stepper option* | **CART** | the third of the three. A3 offers "a stepper through the same worm" as the cage's alternative to item 21a |
-| 20 | 1 | **NEMA 8 `8HS15-0604S`**, 0.04 N·m, 0.6 A, **rotor ≤2 g·cm²** + 4:1 | **BUY** | ⚠ **measured, J6.1: a NEMA 17 on this drive JAMS**, and J6.2 picks between the two listings. The three carted NEMA 17s go to Z, head yaw and a spare — not here |
+| 20 | 1 | **NEMA 8, 0.04 N·m, rotor ≤2 g·cm² — DIRECT, no gearbox** | **BUY** | ⚠ **J6.1: a NEMA 17 JAMS this drive.** J6.2 picks the listing, **J6.3 deletes the 4:1**. The three carted NEMA 17s go to Z, head yaw and a spare |
 | 21 | 1 | **cage** | JGY370 12 V 10 rpm worm, solid shaft | **CART** | ⚠ **correct only with item 21a.** A3: this motor has **no feedback of any kind** and the cage is asserted to `Cage.THETA_TOL = 0.05°` |
 | 22 | 1 | **gripper stroke** (40 mm) | N20 300 rpm **with encoder** | **OWNED** | closes A5's oldest gap |
 | 23 | 1 | **gripper yaw** | MG996R servo | **INV?** | A3 measured it against 0.5° and **found it wanting** |
@@ -2423,6 +2423,7 @@ generate the steps.
 | 37 | 3 | 3 mm ground rod / dowel, ~25 mm | **BUY** | the pinion shafts. MR63 is a 3 mm bore |
 | 38 | 1 | **GT2 closed loop, 220 mm × 6 mm** | **BUY** | ₹150. **The only stocked loop the slot reaches** — your 200 and 280 do not (I8e) |
 | 39 | 1 of 2 | GT2 20T pulley, 5 mm bore | **OWNED** | the motor pulley. `belt_path` uses 20T on all four |
+| 39a | 1 | GT2 20T pulley, **4 mm bore** | **BUY if the shaft is 4 mm** | a NEMA 8's shaft is normally 4 mm and the owned pulley is 5 (J6.3). ~₹50 |
 | 40 | 6 | M3 standoff | **BUY** | plate to base |
 | 41 | 1 set | ring, 3 × pinion, race long + short | **MAKE** | STLs generated in `sim/cad/` |
 | 42 | 1 ea | head plate, base | **MAKE** | DXFs generated. ⚠ **blocked on J6** |
@@ -2565,12 +2566,33 @@ that motor. Its rotor inertia is **2 g·cm²**, which *is* `Ring.MOTOR_INERTIA`.
 So the 16/16 pass in J6.1 is a statement about this exact motor and not
 about a torque class.
 
-**The `20HS42-0804` is not ruled out, it is unverified.** Its listing gives
-no inertia, and 0.8 A on a 20 mm frame suggests a different winding. If its
-datasheet says **≤2 g·cm² it is fine and saves ₹720**; if it says 3–4, it is
-the failing row above. **With under 2× of margin, ₹720 for the part the
-drive model was validated against is the right trade** — and if the seller
-will quote the inertia, that settles it either way for free.
+**The `20HS42-0804` is not ruled out, it is unverified — and its own product
+page says so.** Two things on it decide the question:
+
+1. **"This Product is also available at New SKU: R261143"** — which is the
+   StepperOnline listing's SKU. The vendor cross-references them, so this
+   may well be the same motor at ₹720 less.
+2. **"Due to different parameters, it has many models. If you want to know
+   more, please contact me, and I will provide the motor parameters."** —
+   so the listing does **not** pin the model, and **rotor inertia cannot be
+   read off it.** The part numbers also disagree on current: `0804` is 0.8 A,
+   the StepperOnline is 0.6 A.
+
+> **So do what the listing invites: ask for ONE number — rotor inertia in
+> g·cm².** ≤2 and buy the ₹1,889; unanswered, buy R261143 at ₹2,609, where
+> the part is `8HS15-0604S` and its 2 g·cm² *is* `Ring.MOTOR_INERTIA`.
+> **₹720 is cheap insurance on the one parameter with under 2× of margin
+> — but it is only worth paying for a VERIFIED part, not for the same
+> motor twice.**
+
+**Two more things to confirm from a dimensioned drawing before the plate is
+regenerated**, both raised by that page:
+
+- **"NEMA 08 round-type stepper motor."** If the flange is round rather than
+  a 20 mm square with a 16 mm bolt circle, the plate needs a **clamp**, not
+  a bolt pattern — a different cut entirely.
+- **Shaft diameter.** A NEMA 8 is normally **4 mm**; the owned GT2 20T
+  pulley is a 5 mm bore (J6.3).
 
 **Also worth knowing before it surprises anyone on the bench: the motor
 runs at 640 rpm.** The ring turns at 60 rpm, the mesh ratio is 0.375, and
@@ -2586,6 +2608,62 @@ the reduction is 4:1 — so 60 / 0.375 × 4. A NEMA 8 at 640 rpm holds perhaps
 **Adequate, not lavish** — and it is a third reason the 24 V rail matters
 (J3.1): at 12 V a NEMA 8 at 640 rpm would be well down, and 2.6× would not
 survive it.
+
+### J6.3. The "4:1" was never load-bearing — swept with the right rotor, every ratio passes
+
+**J6.1 swept rotor inertia at a fixed 4:1. It never swept the RATIO with
+the NEMA 8 rotor, and that was the measurement that mattered:**
+
+| reduction, NEMA 8 rotor | result |
+|---|---|
+| **1:1 — direct** | **16/16 pass** |
+| 2:1 | 16/16 pass |
+| 3:1 | 16/16 pass |
+| 4:1 — the brief's figure | 16/16 pass |
+
+**So `REDUCTION` is not a requirement, it is a free parameter, and nothing
+in the design ever said what would provide the 4:1.** The belt is 20T → 20T,
+so the belt is not it; no gearbox, shaft or second stage appears in any
+list. It came from the original brief — *"a NEMA 8 stepper operating through
+a 4:1 mechanical reduction"* — and the head was redesigned around a 48T rim,
+three pinions and one belt without that assumption ever being re-tested.
+
+**What the reduction would buy is small, because the rpm penalty nearly
+cancels the ratio gain:**
+
+| reduction | motor rpm | fraction of holding torque it keeps there | at the ring | vs the 0.0489 N·m peak |
+|---|---|---|---|---|
+| **1:1** | **160** | ~100% | **0.107 N·m** | **2.2×** |
+| 2:1 | 320 | ~55% | 0.117 | 2.4× |
+| 4:1 | 640 | ~35% | 0.149 | 3.1× |
+
+**2.2× against 3.1× — for a gearbox.** And it costs resolution nothing that
+matters:
+
+| | at the ring |
+|---|---|
+| one full step at 1:1 | **0.675°** |
+| `Ring.STOP_TOL` | **3.0°** — so 4.4× inside |
+| one 1/8 microstep at 1:1 | 0.084° |
+| **the encoder** | **0.0338°, and independent of the reduction** |
+
+> ### `Ring.REDUCTION` is now 1.0, and this is the first time spec, plate and BOM agree
+>
+> The plate `cad.py` draws has **one motor pulley in the four-pulley loop
+> and no room for a gearbox** — it always described a direct drive. The
+> spec said 4:1. Nobody had noticed because nothing compared them.
+>
+> **Deleted from the order: the 4:1 gearbox (~₹3,000), an intermediate
+> shaft, and a second belt.** And the owned 20T/40T pulleys are off the hook
+> for a job they could only half do — 20T → 40T is 2:1, and two stages would
+> have meant two extra shafts hanging off the yaw stage.
+>
+> **Reversible:** every ratio from 1 to 4 is validated, so if a rig ever
+> wants the torque, the ratio can go back without re-deriving anything.
+
+**One new small part falls out of it.** A NEMA 8's shaft is **4 mm**, and the
+owned GT2 20T pulley is a **5 mm** bore. **Confirm the shaft diameter from a
+drawing and buy a 20T GT2 pulley with a 4 mm bore** (~₹50) if it is 4.
 
 ## J7. Vision and localisation
 
@@ -2652,14 +2730,14 @@ survive it.
 | **cart 2** — Robokits: 6 blocks, 2 screw combos, 2 support sets, incl. GST | **10,084** |
 | | **₹22,192 ordered** |
 | J3 control electronics — **supplies are OWNED**: carrier + Pico, 3 × TMC2209, 6 endstops, wiring, **fuses** | ~3,600 |
-| **J6.1/J6.2 the ring's NEMA 8 (`8HS15-0604S`, ₹2,609) + a 4:1 stage** | ~3,600 |
+| **J6.1–3 the ring's NEMA 8 — ₹1,889 if its inertia checks out, ₹2,609 if not. No gearbox** | ~2,600 |
 | J4 ring head small parts (MR63 ×6, 3 mm dowel, 220 mm belt, standoffs) | ~800 |
 | J6 two camera modules | ~2,500 |
 | J9 fasteners, taps, threadlock | ~1,500 |
 | J5 thread, epoxy, syringes (**rod is INV?**) | ~850 |
 | J1 15 N spring, J2 M4 rod, **J2 21a cage detents** | ~550 |
-| | **≈ ₹13,400 still to buy** |
-| | **≈ ₹35,600 total** |
+| | **≈ ₹12,400 still to buy** |
+| | **≈ ₹34,600 total** |
 
 **₹22,192 is ordered**, roughly **₹5,300 of what would otherwise be here was
 deleted by the inventory** (I8f), and **the carbon rod is an inventory check

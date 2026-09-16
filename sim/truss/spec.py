@@ -966,11 +966,32 @@ class Ring:
     PINION_SIGMA = 60.0        # MPa allowable in the pinion's tooth root
     PINION_SF   = 3.0          # on that, before a module is acceptable
     DRIVE_TORQUE = 0.12        # N.m the pinions can deliver at the ring
-                               # [VERIFY: a NEMA 8 through 4:1 -- the number
+                               # [VERIFY: a NEMA 8 direct -- the number
                                # check_drive measures the demand against]
     ENCODER_CPR = 4000         # counts per turn on the pinion shaft
-    MOTOR_INERTIA = 2.0e-7     # kg.m^2, a NEMA 8 rotor
-    REDUCTION   = 4.0          # motor to pinion shaft
+    # THE MOTOR IS A NEMA 8 AND THIS IS NOT A FREE CHOICE.  check_drive was
+    # swept over rotor inertia at a fixed 4:1 and the cliff is at a factor
+    # of TWO: 2.0e-7 passes 16/16, and 4.0e-7, 7.0e-7, 1.4e-6 (NEMA 14) and
+    # 5.4e-6 (NEMA 17) all fail the same check -- the one that shifts all
+    # three pinions half a pitch and asserts the free ring turns half a
+    # tooth and meshes.  A heavy armature on the pinion joints leaves the
+    # mesh nothing to jiggle into and the drive wedges at full torque.
+    # Rotor inertia varies WITHIN the frame, so a long-body NEMA 8 (8HS30,
+    # ~4.0e-7) is already over.  Buy a short one: 8HS15-0604S.
+    MOTOR_INERTIA = 2.0e-7     # kg.m^2, a NEMA 8 rotor.  BOM J6.1/J6.2
+    # AND THE REDUCTION IS 1:1, NOT THE BRIEF'S 4:1.  Swept with the NEMA 8
+    # rotor, 1:1, 2:1, 3:1 and 4:1 ALL pass 16/16, so the gearbox was never
+    # load-bearing -- it is an assumption inherited from the brief, and the
+    # plate cad.py draws has one motor pulley in the four-pulley loop and no
+    # room for a gearbox anyway.  What the reduction would buy is small,
+    # because the rpm penalty nearly cancels the ratio:
+    #     1:1  motor 160 rpm, holds ~100%  ->  0.107 N.m at the ring, 2.2x
+    #     4:1  motor 640 rpm, holds ~35%   ->  0.149 N.m at the ring, 3.1x
+    # and it costs resolution nothing that matters: 0.675 deg per full step
+    # at the ring against STOP_TOL 3.0, and the encoder's 0.0338 deg does
+    # not depend on the reduction at all.  Any value 1..4 is validated, so
+    # this is reversible if a rig ever wants the torque.
+    REDUCTION   = 1.0          # motor to pinion shaft -- direct
     STEP_DEG    = 1.8          # a 200-step hybrid stepper, at the motor
     # ---- the raceway the pinions and their idlers are carried in
     RACE_T      = 3.0          # mm of rail either side of the rim

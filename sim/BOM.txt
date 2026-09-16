@@ -1471,18 +1471,41 @@ pitches" used the nominal length as the stroke and is corrected below.
 A 500 mm screw also makes the mecanum's job trivial: if two joints per park
 is enough, the park may be **±132 mm** out.
 
-**Z stays short.** `Z_TRAVEL` is 150 mm, Z is a Tr8×2 lead screw rather than
-an SFU (E2), and lead screws are sold in any length — so Z needs no 500 mm
-part and should not have one. A 500 mm Z column would raise the whole
-machine and lengthen the very lever that amplifies every angular error (I1).
+**Z: take the 250, not the 500, and the margin is not close.** Measured
+from the plan rather than assumed — **the 891-op build commands z from 49.1
+to 86.1 mm, a stroke of 37.0 mm.** Not 150, not 145. Thirty-seven.
+
+The reason it is so small is that **Z moves the head and the GRIPPER'S OWN
+40 mm stroke does the reaching** into the racks, so Z never has to dip for a
+rod. Its whole job is the ring's 13 mm per-joint lift plus the cruise height
+between phases.
+
+| for Z | stroke it gives | against 37 mm needed |
+|---|---|---|
+| 250 mm rail, two MGN12H blocks spanning 105 mm | 145 mm | **3.9×** |
+| 250 mm rail, two blocks spanning 90 mm (touching) | 160 mm | 4.3× |
+| 250 mm Tr8×2, less nut, bearing and coupler | **187 mm** | **5.1×** |
+| 500 mm rail, two blocks | 395 mm | 10.7× — and a 500 mm column |
+
+So **250 mm on both the rail and the lead screw**, with the blocks spaced
+properly rather than crammed. A 500 mm Z would raise the whole machine and
+lengthen the very lever that amplifies every angular error (I1), to buy
+travel that is already 4× unused.
+
+**This also settles PART A4.1**, which flagged "150 mm used against a
+300–500 mm rail and screw specified" as an open discrepancy. The real
+figure is worse than that: the plan uses **37 mm**, so `Z_TRAVEL = 150` is
+itself 4× generous and the original BOM's 300–500 mm was generous by 8× to
+13×. A4.1 can be closed: 250 mm, and the spec's `Z_TRAVEL` could come down
+to 60 if anything ever needed the room.
 
 | Qty | Item | Spec | For |
 |---|---|---|---|
 | **2** | MGN12 linear rail, **500 mm** | with **2 × MGN12H blocks each** | X, Y |
-| **1** | MGN12 linear rail, **300–400 mm** | with 2 blocks | Z |
+| **1** | MGN12 linear rail, **250 mm** | with 2 blocks | Z — 145 mm of stroke against 37 needed |
 | **2** | **SFU1204 ball screw, 500 mm**, end-machined | + SFU1204 **flange** nut (the Robokits `RKI-1736` combo is exactly this) | X, Y |
 | **2** | **BK10 + BF10 support set** | fixed + floated — **this is what bolts the screw down** | X, Y |
-| **1** | Tr8×2 lead screw, **300 mm** | + anti-backlash POM nut | Z |
+| **1** | Tr8×2 lead screw, **250 mm** | + anti-backlash POM nut | Z — 187 mm of stroke against 37 needed |
 | **1** | Tr8×2 lead screw, 150 mm | + anti-backlash POM nut | the yaw lever (H3) |
 | **2** | 6802 bearing (15 × 24 × 5) | spaced ~40 mm on a 15 mm shaft | the yaw pivot — a moment needs two |
 | **1** | extension spring, light | preloads the yaw lever | kills backlash the loop cannot |
@@ -1506,17 +1529,39 @@ Nothing in it touches the plate. What has to go with it:
 | **BF10** (floated end) | **yes** | a plain bearing that lets the screw grow with temperature. Bolt both ends rigidly and a warm screw buckles or preloads itself |
 | **motor mount** | **yes** | holds the NEMA 17 in line, usually bolting to the BK10's face |
 | **coupler, 5 → 8 mm** | **yes** | the SFU1204's machined end is 8 mm; the motor's shaft is 5 |
-| **DSG12H nut housing** | **no — optional** | **a *flange* nut already has a bolted flange, so it mounts straight to the carriage plate.** The housing is for when you want the nut at a different height or orientation. An earlier draft of this part listed it as required; it is not |
+| **DSG12H nut housing** | **no — skip it** | **a *flange* nut already has a bolted flange, so it mounts straight to the carriage plate.** The housing only buys a different height or orientation. See I2c for the one thing skipping it makes you do |
 | **a drilled and tapped plate** | **yes** | the rail's counterbores, the BK/BF bases and the nut's flange all land on it. This is the "Carriage Adaptor Plate" in section 5 of the original list, and it is the part you have to have made |
 
 **And the assembly order matters more than any of the parts**, because
-getting it wrong quietly ruins a ball nut:
+getting it wrong quietly ruins a ball nut. It is in **I2c**, together with
+what skipping the nut housing makes you measure.
+
+---
+
+### I2c. Skipping the housing: height is a shim, parallelism is the build order
+
+With no DSG12H, the flange nut bolts to the carriage plate directly — and
+the one thing that then has to be got right is **the height of the nut's
+bore above the plate**, because a BK10's bearing bore sits at a fixed height
+above its own base. The screw's axis is therefore *decided by the supports*,
+and the nut has to meet it.
+
+**Do not predict that dimension from a catalogue.** When the parts arrive,
+measure the BK10's bore height and the flange nut's bore-to-flange-face
+offset, subtract, and make a spacer of the difference. It is a five-minute
+measurement and a shim; guessing it is how a plate gets made twice.
+
+**What the build order fixes is the other half, and that is the half that
+kills nuts.** Height is a shim; *parallelism and lateral position* are not,
+and they cannot be shimmed out later:
 
 > Mount the **rail** first. Run the **carriage** onto it. Bolt the **nut's
-> flange** to the carriage. Only then bolt **BK10 and BF10** down, with the
-> carriage run to each end in turn, so the screw finds its own line parallel
-> to the rail. A screw bolted down first and a nut then forced onto it binds
-> for the life of the machine.
+> flange** to the carriage — on its spacer. Only then bolt **BK10 and BF10**
+> down, with the carriage run to each end in turn, so the screw finds its
+> own line parallel to the rail. A screw bolted down first and a nut then
+> forced onto it binds for the life of the machine.
+
+So the sequence is: **measure, shim, then let the supports follow the nut.**
 
 ---
 

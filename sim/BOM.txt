@@ -1088,8 +1088,10 @@ kind these suites are best at catching. None of them is done yet.
 ## PART H — COARSE-FINE POSITIONING ON A MOBILE BASE
 
 **The proposal.** Drop the long precise axis. A mecanum-wheeled robot
-(already owned) carries a trolley to within about ±25 mm; two **250 mm**
-rail-and-ball-screw stages on the trolley plate take it the rest of the way;
+(already owned) carries a trolley until the target joint lies somewhere in
+the fine stages' 250 × 250 mm square — how far off it is does not matter;
+two **250 mm** rail-and-ball-screw stages on the trolley plate take it the
+rest of the way;
 a stereo rig on a 250 mm baseline (already owned) closes the loop; Z stays
 the Tr8×2 lead screw of E2. Later the syringe and, if ever wanted, a cutter
 ride the same Z.
@@ -1119,17 +1121,25 @@ sim should be solving for.
 
 ---
 
-### H2. How accurately the trolley has to arrive — measured, both ways
+### H2. Two different budgets, belonging to two different parts
 
 Two measurements against `approach`, over all 30 joints of the metre truss.
 The plan's reserve is `Process.SEAT_CLEAR = 1.5 mm` and its clearance with
-everything perfect is **1.91 mm**.
+everything perfect is **1.91 mm**. **The two tables below are not two views
+of one requirement — they belong to different hardware**, and the first
+draft of this part ran them together and got the architecture wrong as a
+result.
 
-**Translation** (E3's table): the worst direction is ±y and it costs about
-**0.96 mm of clearance per mm of error**. Past **0.45 mm** it eats the
-reserve; nothing contacts out to 1.5 mm.
+**The TRANSLATION budget is the FINE STAGES' and the camera's**, not the
+trolley's. It is the residual after the stages have moved, so it measures
+how well vision plus a ball screw can place the ring — not how well the
+wheels arrived. The worst direction is ±y and it costs about **0.96 mm of
+clearance per mm of residual**. Past **0.45 mm** it eats the reserve;
+nothing contacts out to 1.5 mm. Against `REPEAT = 0.05 mm` and a camera good
+to ~0.05 mm (H4), there is an order of magnitude of headroom.
 
-**Rotation** — a trolley can arrive turned, and the fine stages have no yaw:
+**The ROTATION budget is the TROLLEY'S**, and it is the only one that is,
+because nothing on the trolley can correct an orientation (H3):
 
 | trolley off by | yaw (about vertical) | pitch (about horizontal) | band skew over the 8 mm band |
 |---|---|---|---|
@@ -1151,22 +1161,47 @@ result that makes this worth doing.
 
 ---
 
-### H3. Rotation still has to be constrained, and a rail is the cheap way
+### H3. The stages correct three degrees of freedom out of six
 
-2° is loose, but mecanum odometry over a metre is worse than 2°, and the
-fine stages cannot correct it. Two options:
+**The trolley's position does not have to be good, and its orientation
+cannot be fixed.** That is the whole of it, and the first draft of this part
+got it backwards by inventing a ±25 mm accuracy requirement that is not a
+requirement at all.
 
-- **add a yaw fine axis** — a fourth stage, more cost and more control; or
-- **a passive straightedge.** A 1.2 m length of 2020 extrusion parallel to
-  the mandrel with two rollers on the trolley running against it. It has to
-  be *straight*, not *driven*, so it costs a fraction of an axis. It
-  constrains yaw **and** Y, leaving X uncontrolled — which is what the
-  mecanum drive is for and what vision closes.
+| the trolley is off in | who fixes it | how well |
+|---|---|---|
+| x, y | the two fine stages | **exactly** — `REPEAT = 0.05 mm` |
+| z | the Z lead screw | **exactly** |
+| **yaw** (about vertical) | **nothing on the trolley** | must be **driven** out by the wheels |
+| **pitch, roll** | **nothing** | set by floor flatness; absorbed |
 
-The straightedge is the recommendation. It also turns the coarse move into a
-one-dimensional problem, which is much easier to close on.
+A translation cannot change an orientation, so knowing the trolley's yaw to
+a thousandth of a degree does not correct it — the ring's plane is rotated
+by whatever the chassis is rotated by. The coarse position, by contrast, can
+be off by anything up to the stage travel less the working envelope, because
+the stages cancel it outright.
 
----
+**And that is enough, because yaw is a CONTROLLED degree of freedom.**
+Mecanum wheels rotate the chassis in place, so with tag-based feedback the
+base can *servo* its yaw rather than drift in it — and H2 measures the
+requirement as loose: 1° costs 0.10 mm of a 1.91 mm clearance, and 2° is
+still inside the 1.5 mm reserve. An earlier draft of this part recommended a
+passive straightedge to constrain yaw mechanically. **That is withdrawn**: it
+was solving open-loop drift in an architecture whose premise is a closed
+loop.
+
+**What is left to measure is the base, not the camera.** Mecanum wheels have
+heavy stiction and slip, so a commanded 0.5° correction may not move the
+chassis at all and then overshoot. The question is the drive's **deadband in
+yaw**, and it is answerable in ten minutes on hardware already owned:
+command 0.5° and see whether it happens. Vision can see far finer than that
+(H4); whether the wheels can deliver it is the open item.
+
+**Pitch and roll have no loop at all.** They are whatever the floor gives,
+and pitch is the *more* sensitive of the two rotations — 1.74 mm at 1°
+against yaw's 1.81. Over a 300 mm wheelbase, 1° is a 5 mm step under one
+wheel, so a bench is an order of magnitude flatter than the budget. Worth
+knowing rather than worth fixing.
 
 ### H4. What the vision has to deliver, and what actually limits it
 
@@ -1180,14 +1215,23 @@ is:
 > *"what limits the cell is the camera-to-ring calibration, which is a
 > bracket, and it is drawn ONCE per run as a bias, never averaged away."*
 
-**Two consequences that decide the build:**
+**Three consequences that decide the build:**
 
 1. **The camera mounts on the fine stage, next to the ring — not on the
    world.** Fixed to the world, the camera-to-ring transform depends on the
    fine stage's position, which is the very thing being measured. On the
    stage, the bracket is short, stiff, and the loop closes on a relative
    measurement.
-2. **The work needs a background.** Pultruded carbon rod is black and
+2. **SPREAD THE TAGS. Do not localise off one.** A single planar fiducial
+   gives a well-conditioned *position* and an ill-conditioned *orientation*
+   — the planar pose ambiguity — which is precisely the half H3 says cannot
+   be corrected and therefore has to be measured well. Several widely
+   separated tags turn orientation into triangulation between distant
+   points: at ~0.05 mm per point and a 300 mm spread, yaw resolves to about
+   **0.015°** **(estimated: sigma*sqrt(2)/S)**, and the ambiguity disappears
+   because the tags are no longer coplanar-and-small. Printing four tags
+   instead of one is free.
+3. **The work needs a background.** Pultruded carbon rod is black and
    specular: poor texture for stereo matching. The existing spec sidesteps
    this by fitting **edges** against a background — *"20 pixels across a
    3 mm chord and an edge fit resolves a hundredth of a millimetre"* — so
@@ -1204,9 +1248,11 @@ is **0.33 N** at the wheels; the thread pulls **2 N** at r 11 mm. Static
 friction on four mecanum wheels holds that without thinking about it, so
 **no clamp or jack is needed for load.**
 
-What does need attention is **drift**: unpowered drive motors back-drive.
-Holding current on the four wheel motors, or a detent, covers it — the same
-problem E2 just deleted on Z, reappearing on the base.
+What does need attention is **drift**: unpowered drive motors back-drive,
+and a wheel that creeps takes the ring's *orientation* with it, which H3
+says nothing on the trolley can correct. Holding current on the four wheel
+motors, or a detent — the same problem E2 just deleted on Z, reappearing on
+the base, and here it costs orientation rather than position.
 
 ---
 
@@ -1224,7 +1270,10 @@ coarse error, so about **5 coarse parks per chord, 15 per truss** — not 30.
   today, and `check_hal` asserts exactly that: an axis *believes the
   quantised setpoint*. Closed-loop fine axes plus a coarse pose is a real
   change to `cell.py`, not a parameter.
-- **A straightedge** (H3) and hold current on the wheels (H5).
+- **Hold current on the four wheels** (H5), because a creeping wheel
+  costs orientation, not just position.
+- **A yaw loop on the base that converges**, and a deadband small enough to
+  use it (H3) — the one thing here that needs hardware to answer.
 - **Vision stops being optional.** In the gantry architecture the fixture's
   ±1 mm was survivable; here vision is the only thing that closes the loop.
 
@@ -1240,8 +1289,10 @@ for the camera.
 
 1. `Gantry.X_TRAVEL` and `Y_TRAVEL` become **fine-stage** travels (250 each),
    and the plan gains a **coarse pose per park** — about 15 of them.
-2. A **coarse-move op** with its own settling time and an error model
-   (±25 mm, ±2°), so the schedule prices the parks and the re-registrations.
+2. A **coarse-park op** with its settling time, and — new — a
+   **measure-and-verify step with a retry**: the park converges on yaw or it
+   is commanded again. The schedule has no iteration-with-a-criterion in it
+   today, and the cycle time depends on how often the retry fires.
 3. The HAL grows a **`measure()`** returning the camera's estimate, and the
    fine axes' `goto` becomes closed-loop. `check_hal`'s "no ground-truth
    reads in mission code" ratchet already admits a camera as a *sensor*, so

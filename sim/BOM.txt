@@ -1389,3 +1389,134 @@ for the camera.
 Nothing here is done. Items 1–3 are the real work and they are larger than
 the removals in G3, because they *add* a feedback path rather than deleting
 an actuator.
+
+---
+
+## PART I — THE PARTS LIST, REVISED
+
+**This supersedes section 1 (Linear Motion) and parts of sections 2 and 3 at
+the top of this document.** The original list is left in place because PART A
+reviews it and the history is worth keeping; order from here.
+
+---
+
+### I1. Do you need two rails for X and one for Y? No — one rail and two blocks, on all three
+
+**The rail count is set by an angle, not by a weight**, and the angle is
+generous. The translation budget at the ring is **0.45 mm** (H2), and the
+ring stands roughly 400 mm above the X carriage, so any angular give in the
+stack is amplified by that lever:
+
+| ring above the carriage | angular give allowed |
+|---|---|
+| 300 mm | 1.500 mrad (0.086°) |
+| **400 mm** | **1.125 mrad (0.064°)** |
+| 500 mm | 0.900 mrad (0.052°) |
+
+And the moment that has to be resisted is small. Three kilos above the X
+carriage **(estimated)** at `A_MAX["x"] = 400 mm/s²` is 1.2 N, which at
+400 mm is 0.480 N·m; the ring's own peak reaction adds 0.049. Worst case
+**0.53 N·m**.
+
+> **The stack needs better than 470 N·m/rad.** An MGN12H block carries a
+> static moment rating of order 20 N·m at a deflection of tens of microns,
+> which puts its stiffness four decades above that **(estimated — not from a
+> datasheet)**. One rail with two spaced blocks clears the bar by roughly
+> 40×.
+
+**So: one MGN12 rail with two blocks on each of X, Y and Z.** Two parallel
+rails would be stiffer, but they also have to be made parallel *and*
+coplanar, and on a precision stage that alignment is the hard part of the
+build. A single rail has no alignment to get wrong. If a first article turns
+out floppy, drill the plate for the second rail then — the stiffness can be
+added later, the wasted alignment effort cannot be taken back.
+
+This is the opposite of the original list, and correctly so: **that list was
+for a 1.4 m gantry bridge**, where two rails carry a spanning beam and stop
+it racking. A 250 mm cross-slide on a trolley plate is not that machine.
+
+---
+
+### I2. Order now — the fine motion assembly
+
+| Qty | Item | Spec | For |
+|---|---|---|---|
+| **3** | MGN12 linear rail, **250 mm** | with **2 × MGN12H blocks each** | X, Y, Z |
+| **2** | SFU1204 ball screw, **250–300 mm** | machined ends, with ball nut | X, Y |
+| **2** | BK10 / BF10 support set | fixed + floated | X, Y |
+| **2** | DSG12H ball-nut housing | | X, Y |
+| **1** | **Tr8×2 lead screw, 250 mm** | **2 mm lead**, with anti-backlash POM nut | **Z (E2)** |
+| **1** | **Tr8×2 lead screw, 150 mm** | with anti-backlash POM nut | **the yaw lever (H3)** |
+| **2** | 6802 bearing (15 × 24 × 5) | spaced ~40 mm on a 15 mm shaft | the yaw pivot — a moment needs two |
+| **1** | extension spring, light | preloads the yaw lever | kills backlash the loop cannot |
+| **4** | flexible coupler, 5 × 8 mm | | X, Y, Z, yaw |
+| **4** | NEMA 17 stepper | 4.8 kg·cm, 2.5 A | X, Y, Z, **yaw** |
+
+**Note the Tr8×2 on Z and on the yaw lever is not a cost saving.** Z is a
+lead screw because it is **self-locking**, which deletes a requirement (E2);
+the yaw lever is one because on a 100 mm arm it gives **0.0057° per full
+step** over the ±17.6 mm that covers ±10°, with a spring preload leaving no
+backlash — and a closed loop removes error but not hysteresis (H3).
+
+**Four NEMA 17s, same as the original list** — but for X, Y, Z and **yaw**
+rather than X, Y, Z and the dispenser.
+
+---
+
+### I3. Already owned, and now load-bearing
+
+| Item | Role | See |
+|---|---|---|
+| mecanum 4-wheel robot | the coarse axis: get the joint inside 250 × 250 | H3 |
+| stereo rig, ~250 mm baseline | the *only* thing that closes the loop | H4, E3 reversed |
+| **AprilTags — print four, spread ≥300 mm apart** | 6-DOF pose; one tag will not do | **H4** |
+| white acrylic sheet | a background behind black rod, for edge fitting | H4 |
+| NEMA 17 + driver + supply | the ring's drive on the bench rig | `sim/cad/` |
+
+---
+
+### I4. Deleted from the original list
+
+| Deleted | Qty | Why |
+|---|---|---|
+| MGN12H rail, 1000 mm | 3 | no long axis — the mecanum base is the coarse axis (H1) |
+| MGN12H rail, 0.3–0.5 m | 1 | superseded by the 250 mm set |
+| SFU1204 ball screw, 1000 mm | 2 | as above |
+| SFU1204 ball screw, 500 mm | 1 | Z is a lead screw now (E2) |
+| base frame, 1000 mm structural steel | 5 plates | PART A1 measured it at **253 kg** and un-laser-cuttable; the trolley replaces it |
+| Y-axis bridge plate, 1000 × 100 mm | 1 | PART A2: it sagged 3 mm and rang at 11 Hz. There is no bridge now |
+| Nichrome resistance wire | 1 | the cut is three clippings by hand (F4), and a hot wire chars aramid and will not part glass |
+| NEMA 17 for the dispenser | (1 of 4) | the glue is a syringe by hand (F1); the slot goes to yaw |
+
+**PART B goes with them.** The diagonal layout, the 1245 mm diagonal, the
+diamond reachability region and the C1–C10 simulation changes existed only
+because 1 m was the procurement limit for a rail that had to be 1397 mm
+(H1). There is no such rail now.
+
+---
+
+### I5. Unchanged, and still needed
+
+MR63ZZ bearings ×6 for the ring's pinions; the JGY370 worm-gear motor for
+the cage; the MG996R for the gripper's yaw; the 1000 PPR encoder; threadlock
+and the M3/M4/M5 hardware; and the printed and laser-cut parts already
+generated in `sim/cad/`.
+
+**Still open, and flagged rather than ordered:** PART A3 measured the JGY370
+against 0.05° and the MG996R against 0.5° and found both wanting; the vacuum
+pump belongs to the mount phase, which is undecided (F8.4); and the two
+actuators PART A5 found missing — the gripper's 40 mm stroke and its jaws —
+are still not in any list.
+
+---
+
+### I6. What this is worth checking before the parcel arrives
+
+One number in I1 is an estimate and it is the one the whole rail decision
+rests on: **an MGN12H block's moment stiffness**. The requirement is
+470 N·m/rad and the claim is that a block beats it by ~40×, from a rating
+rather than a stiffness figure. If a supplier's datasheet gives a real
+deflection-under-moment curve, read it — and if it does not, the first
+article settles it in a minute: mount the stack, hang a known weight on the
+head at a known lever, and measure the tilt. 0.064° is 0.28 mm at a 250 mm
+dial gauge, which is easy to see.

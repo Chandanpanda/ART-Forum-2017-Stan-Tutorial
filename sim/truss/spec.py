@@ -1322,22 +1322,44 @@ class Gantry:
     # longest truss".
     X_TRAVEL    = 1400.0
     Y_TRAVEL    = 300.0
-    Z_TRAVEL    = 150.0
+    # Z'S TRAVEL IS THE RAIL'S, NOT A CHOSEN NUMBER.  Typed, 150 was 5 mm
+    # more than the hardware can do: the rail ordered for Z is 250 mm and
+    # two MGN12H carriages 60 mm apart occupy 60 + 44.8, leaving 145.2.
+    # WHAT SIZES Z IS THE CAGE'S INDEX LIFT, NOT THE RING'S.  The ring
+    # lifts 13 mm between joints; the cage has to index under the head,
+    # which is 79.1 mm plus the ring's own radius to clear it -- 99.1.  So
+    # BOM I2's aside that "Z_TRAVEL could come down to 60 if anything ever
+    # needed the room" was wrong by 39 mm, and check_approach says so.
+    Z_RAIL      = 250.0        # MGN12 rail, as ordered (BOM I2/I7)
+    BLOCK_L     = 44.8         # MGN12H carriage, along the rail
+    BLOCK_PITCH = 60.0         # the two carriages, centre to centre (I1a)
+    Z_TRAVEL    = Z_RAIL - (BLOCK_PITCH + BLOCK_L)
     PITCH       = 4.0          # mm per screw revolution, X and Y: SFU1204
     # Z IS A LEAD SCREW, NOT A BALL SCREW -- see BOM PART E, decision E2.
-    # Tr8x2 rather than Tr8x4 on purpose: a 2 mm lead is SELF-LOCKING (5.2
-    # degrees of lead angle against a 5.7 degree friction angle at mu 0.10),
-    # which DELETES the backdriving requirement E1 had to carry.  No holding
-    # current, no brake, no counterbalance, and cutting motor power on an
-    # E-stop no longer drops the head onto the work.  It is also twice the
-    # resolution.  What it costs is rpm: at the old 40 mm/s a 2 mm lead
-    # wants 1200 rpm, which whips and wears a POM nut, so Z's V_MAX comes
-    # down to 20 and the build pays for it in seconds -- measured, not
-    # estimated, by check_schedule.
-    PITCH_Z     = 2.0
+    # IT IS A 4-START Tr8x8, BECAUSE THAT IS THE SCREW ALREADY OWNED, and
+    # an earlier revision of this comment had it as a self-locking Tr8x2.
+    # That was reading a listing wrong: "2 mm pitch" on four starts is an
+    # 8 mm LEAD, and the lead is what sets the angle.  Measured below --
+    # 19.99 degrees against a POM nut's 11.31 -- Z BACKDRIVES.  So the
+    # backdriving requirement E1 carried is back, and Z_COUNTER_N pays it:
+    # a spring or counterweight, not holding current, because the reason
+    # to care is an E-stop, and a spring still holds when the power is cut.
+    # AN ANTI-BACKLASH NUT DOES NOT SUBSTITUTE.  It fixes backlash; the
+    # lead angle belongs to the screw and no nut changes it.
+    # The 8 mm lead costs resolution -- 0.040 mm per full step against
+    # REPEAT's 0.05, so 80% of the budget where the 2 mm lead used 20% --
+    # and buys back the rpm that comment was worried about: 40 mm/s is
+    # 300 rpm here where a 2 mm lead wanted 1200, so Z's V_MAX goes back
+    # up and check_schedule prices the build again.
+    PITCH_Z     = 8.0          # the LEAD: 2 mm pitch x 4 starts
+    SCREW_D2_Z  = 7.0          # Tr8 pitch diameter, mm
+    MU_NUT_Z    = 0.20         # POM on steel, dry -- the nut, not the screw
+    # What holds Z up, since the screw will not.  Z's moving mass is
+    # ~1.55 kg, so ~15 N.  Zero here would mean "the screw self-locks".
+    Z_COUNTER_N = 15.0
     STEPS_PER_REV = 200        # full steps; no microstepping (brief 4.3)
     MM_PER_STEP = PITCH / STEPS_PER_REV     # X and Y; use mm_per_step(axis)
-    V_MAX       = {"x": 60.0, "y": 40.0, "z": 20.0}     # mm/s, loaded
+    V_MAX       = {"x": 60.0, "y": 40.0, "z": 40.0}     # mm/s, loaded
     A_MAX       = {"x": 400.0, "y": 300.0, "z": 300.0}  # mm/s^2
     REPEAT      = 0.05         # mm, bidirectional
     SCREW_CTE   = 12e-6        # /K, steel
@@ -1353,6 +1375,19 @@ class Gantry:
     def mm_per_step(cls, axis="x"):
         """One full step, mm.  PER AXIS, because Z's screw is not X's."""
         return cls.pitch(axis) / cls.STEPS_PER_REV
+
+    @classmethod
+    def lead_angle_z(cls):
+        """Z's screw lead angle, degrees.  atan(lead / (pi * d2))."""
+        return degrees(atan2(cls.PITCH_Z, pi * cls.SCREW_D2_Z))
+
+    @classmethod
+    def self_locking_z(cls):
+        """Does Z hold itself up?  Lead angle under the nut's friction
+        angle, and NOTHING ELSE decides it -- not the nut's backlash, not
+        its material's cleverness, not the motor.  atan(mu) is the whole
+        criterion, so a screw is picked or a counterbalance is bought."""
+        return cls.lead_angle_z() < degrees(atan2(cls.MU_NUT_Z, 1.0))
 
     STALL_N     = {"x": 120.0, "y": 120.0, "z": 120.0}  # thrust at stall
 
@@ -2266,8 +2301,15 @@ CHECKS = [
     ("the head reaches less far below the chord than the old spool did",
      head_lowest() < 32.0),
     ("a full step is finer than the repeatability it has to deliver, ON EVERY "
-     "axis -- Z's screw is a Tr8x2 lead screw and not X's ball screw (E2)",
+     "axis -- Z's screw is a 4-start Tr8x8 lead screw and not X's ball "
+     "screw, so its step is four times X's (E2)",
      all(Gantry.mm_per_step(a) < Gantry.REPEAT for a in ("x", "y", "z"))),
+    ("Z's screw does NOT hold itself up, and Z_COUNTER_N is the whole "
+     "reason that is survivable: 19.99 degrees of lead angle against a POM "
+     "nut's 11.31 (E2).  Fit a self-locking screw and the counterbalance "
+     "goes with it -- this fails until one of the two is changed to match "
+     "the other, which is the point",
+     Gantry.self_locking_z() == (Gantry.Z_COUNTER_N == 0.0)),
     ("screw growth over a shift exceeds the repeatability -- which is why the "
      "camera exists (brief 4.3)",
      stepper_scale_sigma() * 300.0 > Gantry.REPEAT * 0.5),

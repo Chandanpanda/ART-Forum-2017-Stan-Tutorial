@@ -1091,10 +1091,10 @@ COARSE-FINE ARCHITECTURE (PART H; not yet in the sim)
   coarse     a mecanum base: get the joint inside reach, nothing more
   X   500 mm screw = 361 mm stroke, 0.0200 mm/step } on the trolley plate,
   Y   500 mm screw = 361 mm stroke, 0.0200 mm/step } nulling the park
-  yaw +-10 deg, lever + Tr8x2,   0.0057 deg/step  } from the tags
+  yaw +-10 deg, lever + Tr8x8,   0.0229 deg/step  } from the tags
 
 COMMON TO BOTH
-  Z   150 mm travel, Tr8x2 LEAD screw, 0.0100 mm/step, self-locking
+  Z   145 mm travel, Tr8x8 LEAD screw, 0.0400 mm/step, BACKDRIVES: +15 N
   ring       module 0.8, 48T rim, 3 pinions, one belt   (sim/cad/)
   cage       worm-driven, 6 index positions
   gripper    stroke + yaw + jaws
@@ -1667,8 +1667,18 @@ travel that is already 4× unused.
 300–500 mm rail and screw specified" as an open discrepancy. The real
 figure is worse than that: the plan uses **37 mm**, so `Z_TRAVEL = 150` is
 itself 4× generous and the original BOM's 300–500 mm was generous by 8× to
-13×. A4.1 can be closed: 250 mm, and the spec's `Z_TRAVEL` could come down
-to 60 if anything ever needed the room.
+13×. A4.1 can be closed: 250 mm.
+
+> **And the aside this paragraph used to end with — "the spec's `Z_TRAVEL`
+> could come down to 60 if anything ever needed the room" — is wrong, by
+> 39 mm.** The 37 mm figure is the RING's stroke. The **cage** has to index
+> under the head between chords, and that is **79.1 mm**, plus the ring's own
+> radius to clear it: **99.1 mm**. `check_approach` has asserted exactly this
+> since it was written and would have caught the 60; the paragraph above
+> simply did not look at it. `Z_TRAVEL` is now derived from the rail
+> instead — 250 less two carriages at a 60 mm pitch, **145.2 mm** — which is
+> a fact about a part that has been bought rather than a number chosen to
+> be comfortable.
 
 | Qty | Item | Spec | For |
 |---|---|---|---|
@@ -1676,11 +1686,14 @@ to 60 if anything ever needed the room.
 | **1** | MGN12 linear rail, **250 mm** | with 2 blocks | Z — 145 mm of stroke against 37 needed |
 | **2** | **SFU1204 ball screw, 500 mm**, end-machined | + SFU1204 **flange** nut (the Robokits `RKI-1736` combo is exactly this) | X, Y |
 | **2** | **BK10 + BF10 support set** | fixed + floated — **this is what bolts the screw down** | X, Y |
-| **1** | Tr8×2 lead screw, **250 mm** | + anti-backlash POM nut | Z — 187 mm of stroke against 37 needed |
-| **1** | Tr8×2 lead screw, 150 mm | + anti-backlash POM nut | the yaw lever (H3) |
+| **0** | ~~Tr8×2 lead screw, 250 mm~~ | **already owned: a 300 mm 4-start Tr8×8.** Buy nothing; it needs a counterbalance instead, and that is the row below | Z — I7 |
+| **0** | ~~Tr8×2 lead screw, 150 mm~~ | **already owned: a 150 mm 4-start Tr8×8**, 0.0229° per step on a 100 mm arm against H3's 0.05° | the yaw lever (H3) |
+| **1** | **counterbalance, ~15 N** | spring or counterweight over a pulley. `Gantry.Z_COUNTER_N`, and a CHECKS entry fails if it is ever zeroed while the screw still backdrives | Z — **the 8 mm lead does not self-lock (E2, I7b)** |
 | **2** | 6802 bearing (15 × 24 × 5) | spaced ~40 mm on a 15 mm shaft | the yaw pivot — a moment needs two |
-| **1** | extension spring, light | preloads the yaw lever | kills backlash the loop cannot |
-| **4** | flexible coupler, 5 × 8 mm | | X, Y, Z, yaw |
+| **1** | 15 mm shaft, ~60 mm, + 2 spacers | what the 6802s actually run on. It was never listed | the yaw pivot |
+| **0** | ~~extension spring, light~~ | **superseded**: a T8 anti-backlash nut carries its preload internally, so the spring is inside the nut | the yaw lever |
+| **1** | **T8 anti-backlash POM nut** | on the **yaw** screw, not Z — yaw reverses, Z only descends (I7a) | the yaw lever |
+| **4** | flexible coupler, 5 × 8 mm | **flexible, not rigid** — I7b prices the difference at 230 N | X, Y, Z, yaw |
 | **4** | NEMA 17 stepper | 4.8 kg·cm, 2.5 A | X, Y, Z, **yaw** |
 | **4** | NEMA 17 motor mount bracket | in line with each screw | X, Y, Z, yaw |
 
@@ -1804,3 +1817,357 @@ deflection-under-moment curve, read it — and if it does not, the first
 article settles it in a minute: mount the stack, hang a known weight on the
 head at a known lever, and measure the tilt. 0.064° is 0.28 mm at a 250 mm
 dial gauge, which is easy to see.
+
+---
+
+### I7. The order as carted — three carts, one wrong quantity, one wrong part, five things in no cart at all
+
+**Checked line by line against I2. The carts are right about the things
+that were hard to get right** — the rail count, the block count, the 500 mm
+screws, the support sets — **and the gaps are all in the small parts nobody
+prices.**
+
+**Cart 1 — Robu.in, ₹8,561**
+
+| line | qty | I2 wants | |
+|---|---|---|---|
+| MGN12H linear guide rail, 0.5 M | 2 | 2 — X, Y | **ok** |
+| MGN12H linear guide rail, 250 mm | 1 | 1 — Z | **ok** |
+| Two Trees T8 anti-backlash spring nut | 1 | 1 — the **yaw** lever | **ok, and one is the right number** (I7a) |
+| Creality lead screw coupling, 5 × 8 | 4 | 4 — X, Y, Z, yaw | qty ok; **check the type** (I7b) |
+
+**Cart 2 — Robokits, ₹8,546 + GST = ₹10,084**
+
+| line | qty | I2 wants | |
+|---|---|---|---|
+| MGN12H LM guide, extended block | 6 | 6 — two per rail, three rails (I1a) | **ok** |
+| SFU1204 500 mm, end-machined, + flange nut combo | 2 | 2 — X, Y | **ok — this is `RKI-1736`, and I2a's list of what it omits still applies** |
+| BK10 + BF10 support set | 2 | 2 — X, Y | **ok** |
+
+**Cart 3 — Amazon, ₹199**
+
+| line | qty | I2 wants | |
+|---|---|---|---|
+| 6802 ZZ, 15 × 24 × 5 | **1** | **2** | **short one** (I7a) |
+
+**₹18,844 across the three**, and the whole of the fine-motion stack is in
+it bar the plates.
+
+---
+
+### I7a. The one quantity that is wrong, and why one bearing is not most of two
+
+**A single bearing is a hinge, not a pivot.** Two 6802s spaced ~40 mm on a
+15 mm shaft give the yaw stage a lever against the moment the head hangs off
+it; one gives it none, and the head nods on the pivot in exactly the plane
+I1 spent the whole rail argument protecting. The requirement there was
+**470 N·m/rad** in the stack, and a stage whose top joint is one 5 mm-wide
+thin-section bearing does not have it. **₹199 to fix, and it is the cheapest
+stiffness in the order.**
+
+**The anti-backlash nut, by contrast, is right at one.** It went to the
+**yaw** screw and not to Z, and the split is not arbitrary:
+
+| | yaw lever | Z |
+|---|---|---|
+| does it reverse? | **yes**, every park | no — every accuracy-critical move **descends** |
+| what closes the play | **the nut's own spring** | **gravity**, 15.2 N of head |
+| load along the screw | small, the lever's side force | **15.2 N — enough to bottom the nut's spring** |
+| so the nut is | **the right part** | redundant, and possibly overwhelmed |
+
+And it **replaces** I2's separate "extension spring, light" for the yaw
+lever — the preload is inside the nut — so the line item nets to zero.
+
+**What it does NOT do is hold Z up.** That is I7b's other half and it is
+the one item the order is missing outright.
+
+---
+
+### I7b. Two part-type questions, both worth a click before paying
+
+**1. The coupler: flexible, not rigid — and the number is 230 N.**
+
+I2 says *flexible* coupler. "Creality Lead Screw Coupling 5 × 8" is the
+Ender-3 Z part, which is the **rigid** aluminium type, and the cart's
+thumbnail looks like it. On an Ender that is fine, because the Z screw is
+supported at **one** end. Here it is supported at **two** — BK10 fixed,
+BF10 floated — so a rigid coupler makes the motor's own bearing a **third**
+radial constraint, and any concentricity error between the motor's axis and
+the BK10's has to be taken out by bending steel:
+
+| what bends | section | side load per **0.1 mm** of misalignment |
+|---|---|---|
+| NEMA 17's 5 mm shaft, 20 mm exposed | I = 30.7 mm⁴ | **230 N** |
+| the screw's 8 mm end, 30 mm to the BK10 | I = 201 mm⁴ | **447 N** |
+
+A NEMA 17's shaft is rated in the tens of newtons radial. **0.1 mm is an
+ordinary mounting-hole tolerance, and a rigid coupler turns it into a
+bearing-killing load**; a helical-beam or jaw coupler takes the same 0.1 mm
+at a few newtons and usually costs less than the branded rigid one. This is
+the same class of error as I2c's build order: a part that works fine and
+quietly ruins the bearing beside it.
+
+**2. Does the rail listing include a carriage?** At ₹2,229 for a 0.5 m
+MGN12H rail it might. If it does, six blocks becomes three and **₹1,720
+incl. GST comes back**. One look at the listing settles it — and if it does
+include them, *do not* also cut the order to three, because the blocks bought
+loose are the **extended** (MGN12H) type and a bundled one may be the short
+MGN12C; I1a's 105 × 27 mm footprint assumed the long block.
+
+---
+
+### I7c. Five things in no cart, in the order they will hurt
+
+| | what | why it is not optional | ~₹ |
+|---|---|---|---|
+| **1** | **the ~15 N Z counterbalance** | **the order contains no way to hold Z up.** The owned screw's 8 mm lead is a 19.99° lead angle against a POM nut's 11.31° (E2), so Z backdrives: power off, the head sinks; E-stop, the head sinks onto the work. A spring or a counterweight over a pulley holds when the power does not | 200 |
+| **2** | **the yaw pivot's 15 mm shaft** + 2 spacers | the 6802s have to run on something, and nothing in I2 ever said what | 300 |
+| **3** | **4 × NEMA 17 motor mounts** | I2's last row. **Printable** — the ring head is already printed — so this may be deliberate; confirm rather than assume | 0–600 |
+| **4** | **3 carriage plates + the yaw lever** | I2a: *"a drilled and tapped plate … this is the part you have to have made"*. **This is the critical path and it is not drawable yet** — I2c says measure the BK10's bore height and the flange nut's offset first, then shim. `sim/cad/` has `plate.dxf` and `base.dxf` for the ring head and **nothing for the stages** | ~1500 |
+| **5** | **endstops, 3–6** | not in I2 either, and that is an omission rather than a decision: with BK10 rigid at one end, a mis-commanded X drives the **ball nut into the support** at 60 mm/s. The vision loop nulls error; it does not know where the ends are | 300 |
+
+**Item 4 is the honest headline of this whole review: the parcel is
+complete and the machine still cannot be assembled**, because the plates
+that join the axes can only be drawn from measurements of parts that have
+not arrived. Ordering was never the blocker. **Measuring on arrival is.**
+
+With items 1, 2 and 5 added and one more 6802, the order runs to about
+**₹20,400**, less ₹1,720 if the rails turn out to include blocks.
+
+---
+
+### I7d. What the parcel weighs
+
+**~3.1 kg net, 4.3–4.9 kg gross (computed from catalogue sections, not
+weighed).**
+
+| | qty | each | |
+|---|---|---|---|
+| MGN12 rail, 500 / 250 mm | 2 / 1 | 0.355 / 0.178 kg | 0.888 |
+| MGN12H block, extended | 6 | 0.085 | 0.510 |
+| SFU1204 screw 500 mm + flange nut | 2 | 0.422 + 0.130 | 1.104 |
+| BK10 + BF10 | 2 | 0.120 + 0.055 | 0.350 |
+| coupler 5 × 8 | 4 | 0.040 | 0.160 |
+| T8 nut, 6802 | 1 each | — | 0.044 |
+| | | **net** | **3.06 kg** |
+
+**The number that matters is not the parcel's, it is what the X carriage
+carries**, because I1 sized the rails against **"3 kg above the X carriage
+(estimated)"**. Adding it up from these parts — the whole Y stage (1.63 kg),
+the Z stage (1.15), the yaw stage (0.71), the ring head (~0.5) and two
+aluminium plates (~1.45) — gives **≈5.4 kg**, not 3. The moment goes with
+it: 5.4 kg × 400 mm/s² × 400 mm = **0.86 N·m**, so the stack's requirement
+rises from 470 to **~810 N·m/rad**. **It changes no decision** — I1's claim
+was that an MGN12H block beats the bar by ~40×, and 20× is still not close —
+but it is the estimate in I1 that the parcel lets be replaced, and I6 says
+to replace it by hanging a weight on the first article rather than by
+another arithmetic like this one.
+
+---
+
+### I7e. What the order pins down in the spec, and what changed there
+
+Buying a screw makes its lead a fact, and three typed numbers had to move:
+
+| `spec.Gantry` | was | now | why |
+|---|---|---|---|
+| `PITCH_Z` | 2.0 | **8.0** | the owned screw is 4-start: 2 mm pitch × 4 = an **8 mm lead**. `mm_per_step("z")` goes 0.0100 → **0.0400**, which is 80% of `REPEAT` where it was 20% |
+| `Z_TRAVEL` | 150.0 | **145.2**, derived | `Z_RAIL - (BLOCK_PITCH + BLOCK_L)` = 250 − (60 + 44.8). **The typed 150 was 5 mm more than the bought hardware can do** |
+| `V_MAX["z"]` | 20.0 | **40.0** | E2 cut it to 20 because a 2 mm lead wanted 1200 rpm at 40 mm/s. An 8 mm lead wants **300**. The reason for the constant was deleted, so the constant went back |
+
+**And the schedule hands back exactly what E2 paid.** `check_schedule` on
+the metre truss, same plan, only `V_MAX["z"]` moved:
+
+| Z's speed | build | |
+|---|---|---|
+| 20 mm/s — as E2 left it | **29.2 min** | the 162 s E2 recorded as the price of self-locking |
+| **40 mm/s — the 4-start screw** | **26.5 min** | **162 s back**, to within the second |
+
+So the trade E2 made is not softened, it is **reversed and re-priced**: the
+2 mm lead bought self-locking for 162 s of build time, and the screw on the
+shelf buys the 162 s back for a ₹200 spring. **The spring is the better
+side of that trade**, and it is better for a reason E2 could not see — a
+spring holds on an E-stop, and self-locking and holding current both only
+hold while nothing has gone wrong.
+
+and two facts and a derivation arrived with them: `SCREW_D2_Z = 7.0`,
+`MU_NUT_Z = 0.20`, `Gantry.lead_angle_z()` → 19.99°, and
+`Gantry.self_locking_z()` → **False**.
+
+**The new CHECKS entry is the point of the exercise.** It asserts
+`self_locking_z() == (Z_COUNTER_N == 0.0)` — the screw's own geometry and
+the counterbalance's existence have to agree. Fit a self-locking screw and
+forget to delete the spring, or type the lead back to 2 mm and leave the
+counterbalance in the BOM, and it fails and says which. **A comment saying
+"Z is self-locking" is exactly what was in the tree before this order, and
+it had been wrong since the screw was chosen.** That is the whole argument
+for the check: the old comment was confident, measured-sounding, and it
+would have shipped a head that sinks onto the work on every E-stop.
+
+---
+
+### I8. Against the inventory: what the shelf already covers, measured rather than eyeballed
+
+**Ten items already owned were checked against the design. Six are direct
+hits, two are hits on open items nothing had priced, one is a clear no, and
+one is the belt — where "use what you have" costs more than it saves.**
+
+| owned | qty | against | verdict |
+|---|---|---|---|
+| Pro-Range NEMA17 PR42HS40-1704, **4.2 kg·cm**, 1.7 A | 2 | I2 asks 4 × "4.8 kg·cm, 2.5 A" | **yes — 2 of the 4.** I8a prices the margin |
+| **TMC2209 V2.1** driver | 2 | 2 of 4 axes, and the one number the 4-start screw made worse | **yes**, I8b |
+| **GT2 20T, 5 mm bore** pulley | 2 | `belt_path` uses `gt2_r(20)` on **all four** pulleys; the NEMA 17 shaft is 5 mm | **yes — this is exactly the motor pulley**, and a turned one beats the printed one |
+| **626ZZ** (6 × 19 × 6) | 8 | the yaw pivot, in place of 2 × 6802 on a 15 mm shaft | **yes, at a measured cost** — I8c |
+| **6 mm smooth rod, 400 mm** | 2 | the pivot stub, the counterbalance pulley, and dowels for the carriage plates (I2c) | **yes** |
+| **Flyrobo 6 mm lock collars** | 4 | retaining all of the above | **yes** |
+| **N20 gearmotors** — 100 rpm high-torque, 300 rpm **with encoder** — + **TB6612FNG** ×2 + 4 plastic N20 brackets | 2 + 2 + 4 | **PART A5's oldest open item**: "the gripper's 40 mm stroke and its jaws — are still not in any list" | **yes, and it closes A5 at zero cost.** Encoder on the stroke, torque on the jaws, one dual driver for both |
+| **70 mm × 20 mm robot wheels** ×4, N20 ball casters ×4 | | the **trolley** (H5), which has never had wheels in any list | **yes** — and I1b's 12.6 mm floor figure assumed a ~300 mm wheelbase, which 70 mm wheels give |
+| **PTFE-coated fabric tape**, 13 mm × 10 m | 1 | **nothing in this document had noticed the problem**: the truss is epoxied *in the fixture* and the mandrel then collapses (G2). Cured epoxy bonds to the V-jigs | **yes — this is the release layer**, and it is the one item on the shelf that answers a question nobody had asked |
+| **MR106ZZ** (6 × 10 × 3) | 8 | the ring's pinion bearings, in place of MR63 (3 × 6 × 2.5) | **no** — I8d |
+| **GT2 closed loops**, 200 mm ×2 and 280 mm ×2, 6 mm wide | 4 | the ring drive's 220 mm loop | **no, and the plate says why** — I8e |
+| GT2 **40T, 6 mm bore, for 10 mm belt** | 2 | — | **no**: the design is 20T throughout, the motor shaft is 5 mm, and the belt is 6 mm wide. Three misses, any one fatal |
+| M3 × 8 SS304 pan head | 25 | MGN12 rails take M3 every 25 mm — **~20 per 500 mm rail, 50+ for three** | **partly** — buy more |
+| NEMA 22 / larger | ? | the stages | **no, and not for torque reasons** — I8a |
+
+---
+
+### I8a. The 4.2 kg·cm motors are enough, and the bigger ones would make things worse
+
+Thrust to torque, at the stall figures `Gantry.STALL_N` already carries:
+
+| axis | screw | thrust | torque needed | inside 4.2 kg·cm by |
+|---|---|---|---|---|
+| X, Y | SFU1204, η 0.90 | 120 N | 0.87 kg·cm | **4.9×** |
+| Z | Tr8×8, **η 0.598** at μ 0.20 | 120 N | 2.60 kg·cm | 1.6× |
+| Z | — at the load that is actually there | **15.2 N** | 0.33 kg·cm | **12.7×** |
+
+Z's 1.6× is the thinnest figure in the table and it is against a **stall
+thrust nothing asks for**; what Z really lifts is its own 15.2 kg·cm-free
+1.55 kg, and the counterbalance takes that too. **1.7 A instead of 2.5 A is
+the real difference, not the 4.2 against 4.8**, and at these torques the
+current is not the binding thing either.
+
+**So the NEMA 22s stay in the box, and the reason is mass, not torque.**
+I7d put the X carriage's load at **≈5.4 kg** against I1's estimate of 3, and
+a NEMA 23-class motor is ~0.7 kg against a NEMA 17's 0.28. Four of them add
+1.7 kg to the very stack whose moment requirement I7d just had to raise from
+470 to 810 N·m/rad. A 57 mm face also will not fit the head plate, whose
+motor cuts are made for `NEMA17_SQ`.
+
+---
+
+### I8b. The TMC2209s are worth more here than they look
+
+`STEPS_PER_REV = 200 # full steps; no microstepping (brief 4.3)`, and the
+4-start screw took Z's step from 0.0100 to **0.0400 mm — 80% of `REPEAT`**
+where it used to be 20% (I7e). That is the one number this order made worse.
+A TMC2209 does 1/256; at 1/8 Z's step is **0.0050 mm**.
+
+**Two honest caveats, so this is not oversold.** Microstep *resolution* is
+not *accuracy* — an open-loop stepper's true positioning is roughly ±5% of a
+full step whatever the driver does, which here is ±0.002 mm and still fine.
+And H4's whole point is that the loop closes on the **tags**, not on the step
+count. So the TMC2209 buys smoothness and quantisation headroom, not
+accuracy the vision does not already provide. **Two of four axes; two more
+drivers to buy.**
+
+---
+
+### I8c. The yaw pivot on 626s: a real saving with a number attached
+
+The head is ~0.7 kg about 60 mm off the pivot axis, so the pivot carries
+**0.41 N·m**. Shaft bending, at a 100 mm lever from the pivot to the ring:
+
+| pivot | I | tilt | at the ring | of the 0.45 mm budget |
+|---|---|---|---|---|
+| **2 × 626 on a 6 mm stub, 40 mm apart** | 63.6 mm⁴ | 1.295 mrad | **0.130 mm** | 29% |
+| **2 × 626 on a 6 mm stub, 18 mm apart** | 63.6 | 0.583 | **0.058 mm** | **13%** |
+| 2 × 6802 on a 15 mm shaft, 40 mm apart | 2485 | 0.033 | 0.003 mm | 0.7% |
+
+**Bending goes as d⁴, so 15 mm is 39× stiffer than 6 — but the span is
+linear, and a SHORT stub gets most of it back.** At an 18 mm bearing spacing
+the owned 626s cost 13% of the budget, which is affordable; at 40 mm they
+cost 29%, which is not. **So: 626s, close together.** That deletes the
+6802 line (₹199 short in the cart anyway) and the 15 mm shaft (~₹300).
+
+**What this does NOT model is the housing**, and on a 6 mm stub the printed
+housing is the likelier weak point. That is I6's measurement, not another
+arithmetic: mount it, hang a known weight at a known lever, read a dial
+gauge. 0.058 mm at 100 mm is 0.14 mm at a 250 mm gauge — visible. **If it
+comes out floppy, the 6802s are ₹500 and one evening.** Starting with what
+is on the shelf costs nothing but the measurement it was going to need
+anyway.
+
+---
+
+### I8d. Why the MR106s cannot be the pinion bearings
+
+The pinion is a 18T module-0.8 gear: pitch radius 7.20, **root radius
+6.20**. The bearing seat is bored in the middle of that.
+
+| bearing | bore × OD × W | wall left at the ROOT circle |
+|---|---|---|
+| **MR63**, as designed | 3 × 6 × 2.5 | **3.20 mm** |
+| **MR106**, owned | 6 × 10 × 3 | **1.20 mm** |
+
+**1.2 mm of printed wall between a bearing's outer race and a gear root,
+carrying a measured 0.0489 N·m peak.** `check_cad` holds `PINION_WALL` for
+exactly this reason. It is not close, and a 6 mm shaft would be nicer if
+there were room for one. There is not.
+
+---
+
+### I8e. The belts: the answer is no, and the plate now computes it
+
+**Neither owned length fits, and the 200 mm is not even buildable.** The
+check that used to assert "a standard 220 mm closed loop lands inside the
+motor's slot" had the **220 typed into it**, which answers the wrong
+question — the question that comes up is *which of the loops I can get*. So
+`cad.py` now carries `BELT_LOOPS` (the loops that exist), `motor_r_for_belt`
+(solve the motor's radius for one) and `belt_buildable` (can the plate be
+re-cut for it at all), and `check_cad` reads the answer out:
+
+| stocked loop | motor radius | plate re-cuttable? | |
+|---|---|---|---|
+| ≤160 mm | — | — | **impossible**: three pinions on a 26.4 mm circle have a hull of their own. The floor is **176.8 mm**, at `motor_r` 14.40 — where the motor crosses the chord between the pinions it sits between and the belt stops touching it |
+| 180, 188 | 22.98, 31.12 | **no** | `standoff_az` cannot place six holes |
+| **200 — owned** | **39.86** | **no** | the motor's bolt slots cover the rail arc 84.6..161.5 **end to end**. `MOTOR_R`'s comment has claimed this since it was written; this is the first time it was measured |
+| **220 — buy this** | **52.12** | **yes** | and it is the **only** stocked loop inside the tensioner slot as built |
+| 240, 260, **280 — owned** | 63.4, 74.2, **84.73** | **yes** | but 280 costs **+33 mm of plate radius** |
+
+**The 280 works and should still not be used.** It puts the motor 84.7 mm
+out, which grows the head plate 66 mm across, adds acrylic to a stack I7d
+already had to re-price at 5.4 kg, and adds 33 mm to the very lever arm
+I8c's pivot has to hold. **A 220 mm GT2 loop is ₹150. Buy the belt.**
+
+> **The by-product is worth more than the belt.** `MOTOR_R = 52.0` was a
+> hand-set constant whose comment said it "lands the belt on a standard
+> closed loop". That is now a solve with a stated floor, so if a 220 is ever
+> unobtainable, 240 at `motor_r` 63.4 is a computation and a re-cut plate,
+> not a redesign. And the first version of the solver **returned 1.98 × 10³
+> mm of residual for a 100 mm belt instead of "impossible"** — the
+> round-trip check caught it, which is the whole reason to write the check
+> rather than trust the solve.
+
+---
+
+### I8f. What is still to buy today, after the shelf
+
+| | ~₹ |
+|---|---|
+| 2 × NEMA 17 (2 of 4 owned) | 2,000 |
+| 2 × stepper driver (2 TMC2209 owned) | 2,200 |
+| **1 × GT2 220 mm closed loop, 6 mm** | 150 |
+| the ~15 N Z counterbalance (I7c item 1) | 200 |
+| endstops, 3–6 (I7c item 5) | 300 |
+| M3 hardware beyond the 25 owned | 300 |
+| 3 carriage plates + the yaw lever — **not orderable yet** (I2c) | ~1500 |
+
+**Deleted from I7c by the inventory: the second 6802, the 15 mm shaft, the
+shaft collars, the gripper's two actuators and their driver, the trolley's
+wheels, and the release layer** — about **₹700 off today's order** and
+**~₹5,300 of spend that was coming and now is not.**
+
+**What the shelf does not contain is the thing that is actually blocking**,
+and it is the same as in I7c: the plates cannot be drawn until the BK10's
+bore height and the flange nut's offset are measured off real parts.

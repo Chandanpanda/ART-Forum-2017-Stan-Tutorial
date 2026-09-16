@@ -816,6 +816,112 @@ def belt_path(motor_az=MOTOR_AZ, motor_r=MOTOR_R):
                 length=span + 2.0 * pi * r_p, pitch_r=r_p)
 
 
+# GT2 CLOSED LOOPS THAT EXIST, as a fact about the shelf rather than a
+# number in a check.  `check_cad` used to assert "a standard 220 mm closed
+# loop lands inside the motor's slot" with the 220 typed into the check,
+# which answered the wrong question: the question is not whether ONE loop
+# fits, it is WHICH of the loops one can actually buy (or already owns) the
+# motor can be placed for.  Two 280s and two 200s in a drawer here made
+# that concrete.
+BELT_LOOPS = (100.0, 110.0, 120.0, 140.0, 158.0, 160.0, 180.0, 188.0,
+              200.0, 220.0, 240.0, 260.0, 280.0, 300.0, 400.0)
+
+
+def belt_r_floor(motor_az=MOTOR_AZ, hi=None):
+    """The smallest motor radius that is still a BELT: pulled in past the
+    chord between the pinions it sits between, the motor is inside the hull
+    and the belt skips it.  Bisected on belt_path's own convexity rather
+    than derived, so it stays true if a pinion ever moves.
+    """
+    hi = float(MOTOR_R if hi is None else hi)
+    lo = 0.0
+    for _ in range(60):
+        mid = (lo + hi) / 2.0
+        if belt_path(motor_az, mid)["convex"]:
+            hi = mid
+        else:
+            lo = mid
+    return hi
+
+
+def belt_span_possible(motor_az=MOTOR_AZ, r_max=200.0):
+    """(shortest, longest) closed loop the four pulleys can be arranged for.
+
+    THE SHORT END IS A HARD FLOOR AND IT IS NOT ZERO: three pinions on a
+    26.4 mm circle already have a perimeter, so no motor position makes the
+    loop shorter than their hull plus one wrap.  A solver that does not know
+    this returns a number for a 100 mm belt, and the number is nonsense --
+    which is exactly what the first version of motor_r_for_belt did, and
+    what check_cad's round-trip caught.
+    """
+    floor = belt_r_floor(motor_az)
+    return (belt_path(motor_az, floor + 1e-6)["length"],
+            belt_path(motor_az, r_max)["length"])
+
+
+def motor_r_for_belt(length, motor_az=MOTOR_AZ, r_max=200.0):
+    """The motor radius that puts a closed loop of `length` on the four
+    pulleys, or **None** if no radius does.
+
+    THIS IS WHY THE BELT LENGTH IS AN INPUT AND MOTOR_R IS NOT A CHOICE.
+    A loop is a thing one buys in fixed sizes; the motor's radius is a slot
+    in a plate cut to order.  Which of the two bends to the other is not a
+    matter of taste.
+
+    Bisection, not Newton: the length is monotone in r over the convex
+    range, and bisection cannot walk out of that range the way Newton did.
+    """
+    lo, hi = belt_r_floor(motor_az), float(r_max)
+    l_lo, l_hi = (belt_path(motor_az, lo + 1e-6)["length"],
+                  belt_path(motor_az, hi)["length"])
+    if not (l_lo <= float(length) <= l_hi):
+        return None
+    for _ in range(100):
+        mid = (lo + hi) / 2.0
+        if belt_path(motor_az, mid)["length"] < length:
+            lo = mid
+        else:
+            hi = mid
+    return (lo + hi) / 2.0
+
+
+def belt_fits(slot=None):
+    """Which stocked loops the motor's tensioner slot reaches as built.
+
+    Returns {length: motor_r} for every loop in BELT_LOOPS whose path lands
+    inside the slot -- NOT which ones are geometrically solvable.  A loop
+    that needs the motor somewhere else is a different plate, and
+    `motor_r_for_belt` plus `standoff_az` say whether that plate exists.
+    """
+    slot = MOTOR_SLOT if slot is None else slot
+    lo = belt_path(motor_r=MOTOR_R - slot / 2.0)["length"]
+    hi = belt_path(motor_r=MOTOR_R + slot / 2.0)["length"]
+    return dict((L, motor_r_for_belt(L)) for L in BELT_LOOPS if lo < L < hi)
+
+
+def belt_buildable(length):
+    """Could the plate be RE-CUT for this loop?  (motor_r, standoffs_place).
+
+    Convexity and the six standoffs are the two things that actually fail:
+    a 200 mm loop wants the motor at 39.9 mm, which is where its bolt slots
+    cover a rail arc end to end and `standoff_az` cannot place a hole --
+    measured, not recalled from the comment on MOTOR_R that says so.
+    """
+    global MOTOR_R
+    r = motor_r_for_belt(length)
+    if r is None:
+        return None, False
+    keep = MOTOR_R
+    MOTOR_R = r
+    try:
+        ok = len(standoff_az()) == 6 and belt_path(motor_r=r)["convex"]
+    except ValueError:
+        ok = False
+    finally:
+        MOTOR_R = keep
+    return r, ok
+
+
 def standoff_az(arcs=None, inset=9.0):
     """Where the six standoffs go: inside a rail arc, out of the rod slot,
     out from under the motor.  Placed by rule and CHECKED, because a hole

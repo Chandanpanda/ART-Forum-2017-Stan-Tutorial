@@ -262,9 +262,48 @@ def main():
           belt["convex"])
     span = [cad.belt_path(motor_r=cad.MOTOR_R + s * cad.MOTOR_SLOT / 2)["length"]
             for s in (-1, 1)]
-    check("a standard 220 mm closed loop lands inside the motor's slot",
-          min(span) < 220.0 < max(span),
-          "slot gives %.1f .. %.1f mm of path" % (min(span), max(span)))
+    # WHICH STOCKED LOOP, not whether one magic number fits.  This check
+    # used to read "a standard 220 mm closed loop lands inside the motor's
+    # slot" with the 220 typed here, which cannot answer the question that
+    # actually comes up -- two 280 mm and two 200 mm GT2 loops already in a
+    # drawer, can the head use them?  It can not, and now the suite says so
+    # rather than a person re-deriving it.
+    fits = cad.belt_fits()
+    check("exactly one STOCKED GT2 loop lands inside the motor's slot, and it "
+          "is the 220 -- so that is the belt to buy, and no other length on "
+          "the shelf is a substitute without re-cutting the plate",
+          sorted(fits) == [220.0],
+          "slot gives %.1f .. %.1f mm; stocked loops inside it: %s"
+          % (min(span), max(span), sorted(fits)))
+    # THE ROUND-TRIP FAILED FIRST TIME AND THE SOLVER WAS WRONG, not the
+    # check: Newton was asked for a 100 mm loop, which no motor position can
+    # give -- three pinions on a 26.4 mm circle have a hull of their own --
+    # and it wandered off and returned 1.98e3 mm of residual rather than
+    # "impossible".  Both halves are asserted now, because a solver that
+    # answers an impossible question is worse than one that refuses.
+    solved = [(L, cad.motor_r_for_belt(L)) for L in cad.BELT_LOOPS]
+    lo_p, hi_p = cad.belt_span_possible()
+    rt = max(abs(cad.belt_path(motor_r=r)["length"] - L)
+             for L, r in solved if r is not None)
+    check("the solver round-trips every loop it says is possible, so 'which "
+          "motor radius for this belt' is a computation and not a redesign",
+          rt < 1e-6, "worst residual %.2e mm over %d of %d stocked lengths"
+          % (rt, sum(1 for _, r in solved if r is not None), len(solved)))
+    check("...and it REFUSES the ones no motor position can give: the three "
+          "pinions' own hull plus a wrap is a hard floor, and it is not zero",
+          all((r is None) == (L < lo_p - 1e-9) for L, r in solved),
+          "floor %.1f mm at motor_r %.2f (where the motor crosses the chord "
+          "between the pinions it sits between); refused %s"
+          % (lo_p, cad.belt_r_floor(), [L for L, r in solved if r is None]))
+    r200, ok200 = cad.belt_buildable(200.0)
+    r280, ok280 = cad.belt_buildable(280.0)
+    check("a 200 mm loop is not buildable even with a RE-CUT plate, and a 280 "
+          "is -- the MOTOR_R comment claims the first half and this measures "
+          "it: at 39.9 mm the motor's slots cover a rail arc end to end and "
+          "standoff_az cannot place a hole in it",
+          ok200 is False and ok280 is True,
+          "200 -> motor_r %.1f (%s), 280 -> motor_r %.1f (%s), and 280 costs "
+          "%+.0f mm of plate radius" % (r200, ok200, r280, ok280, r280 - cad.MOTOR_R))
     check("the pinions are spaced wider than the gap, so two are always "
           "meshed",
           all(abs(((b - a + 180.0) % 360.0) - 180.0) > Ring.GAP

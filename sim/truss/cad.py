@@ -824,8 +824,8 @@ def standoff_az(arcs=None, inset=9.0):
     caps = motor_cuts()
     def ok(az):
         p = _pt(az, STANDOFF_R)
-        if p[0] < 0.0 and abs(p[1]) < SLOT_HALF + 2.0:
-            return False                           # in the rod slot
+        if p[0] < 0.0 and abs(p[1]) < SLOT_HALF + M3 / 2.0 + 5.0:
+            return False                           # too near the rod slot
         return all(_seg_gap(p, a, b) > r + 4.0 for a, b, r in caps)
     out = []
     for t0, t1 in arcs:
@@ -942,14 +942,21 @@ def plate_dxf():
     # scribe: where the rail's skirt lands, so the standoffs can be set to it
     d.arc((0.0, 0.0), SKIRT_R, 0.0, 360.0, "SCRIBE")
     d.arc((0.0, 0.0), ring_r_out(), 0.0, 360.0, "SCRIBE")
-    d.text((y0 + 4.0, z1 - 9.0), "RIG PLATE %.0fmm  ring-drive" % PLATE_T, 4.0)
-    for az in Ring.pinion_az():
-        q = _pt(az, M.centre) + _pt(az, 1.0) * 5.0
-        d.text((q[0] - 4.0, q[1]), "P%.2f PRESS" % (3.0 + FIT_PRESS), 2.2)
-    q = _pt(standoff_az()[0], STANDOFF_R) + _pt(standoff_az()[0], 1.0) * 4.0
-    d.text((q[0] - 4.0, q[1]), "M3 x6 STANDOFF", 2.2)
-    d.text((mc[0] - 12.0, mc[1] + NEMA17_SQ / 2 + 4.0), "NEMA17 - SLOTS TENSION", 2.5)
-    d.text((u[0] * abs(y0) * 0.6, SLOT_HALF + 2.5), "ROD SLOT", 2.5)
+    # ENGRAVED TEXT IS ON THE PART, so it goes where nothing else is -- a
+    # LEGEND in the corner, not a label beside every hole.  Scattered per
+    # feature, "ROD SLOT" landed on a hole and "M3 STANDOFF" on another; the
+    # laser would engrave round them, which is untidy rather than wrong, but
+    # a legend is what a shop drawing does anyway.
+    ly = max(y0 + 4.0, -SKIRT_R - 34.0)
+    d.text((ly, z0 + 30.0), "RIG PLATE  %.0f mm  -  ring drive" % PLATE_T, 4.0)
+    for i, ln in enumerate((
+            "%.2f dia  = PRESS, a 3 mm pinion shaft   (x3, on the %.1f circle)"
+            % (3.0 + FIT_PRESS, 2 * M.centre),
+            "%.2f dia  = CLEARANCE, an M3 standoff screw   (x%d)"
+            % (M3 + FIT_SCREW, len(standoff_az())),
+            "slots     = NEMA 17: slide it to tension the belt",
+            "ORANGE    = SCRIBE.  Engrave only.  Do not cut.")):
+        d.text((ly, z0 + 22.0 - i * 5.0), ln, 2.8)
     return d
 
 

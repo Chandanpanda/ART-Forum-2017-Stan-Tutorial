@@ -240,10 +240,13 @@ def main():
     check("every rail arc carries at least one standoff",
           all(any(a <= s <= b for s in sa) for a, b in arcs),
           "%d standoffs over %d arcs" % (len(sa), len(arcs)))
-    check("no standoff lands in the rod slot",
-          all(not (cad._pt(s, cad.STANDOFF_R)[0] < 0 and
-                   abs(cad._pt(s, cad.STANDOFF_R)[1]) < cad.SLOT_HALF)
-              for s in sa))
+    # NOT "outside the slot" -- 1.2 mm of acrylic beside a slot is a crack
+    # waiting to happen, and the plate picture is where that showed up.
+    web = min((abs(cad._pt(s, cad.STANDOFF_R)[1]) - cad.SLOT_HALF
+               - (cad.M3 + cad.FIT_SCREW) / 2.0)
+              for s in sa if cad._pt(s, cad.STANDOFF_R)[0] < 0)
+    check("a standoff beside the rod slot leaves a web worth cutting, not "
+          "just clears it", web > 3.0, "%.2f mm of acrylic" % web)
     check("no standoff lands on one of the motor's own cuts",
           all(cad._seg_gap(cad._pt(s, cad.STANDOFF_R), a, b) > r
               for s in sa for a, b, r in cad.motor_cuts()),

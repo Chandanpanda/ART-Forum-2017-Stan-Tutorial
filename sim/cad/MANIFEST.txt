@@ -29,7 +29,7 @@ THE BELT: one loop round the outside of four pulleys, which is what
 phases three pinions off one motor.
   motor at az 123.0, r 52.0 on a 12 mm radial slot (the tensioner)
   hull convex: True   path 219.8 mm -> a 220 mm closed loop, 110 teeth
-  standoffs at az 93.6, 152.1, 207.5, 250.0, 321.3, 38.7
+  standoffs at az 93.6, 152.1, 207.5, 239.0, 321.3, 38.7
 
 PARTS
   file         qty  process                         tris  bbox mm                note
@@ -39,7 +39,7 @@ PARTS
   race_long      2  resin or FDM                    2492  25.9 x 29.2 x 10.1     76.96 deg of C-channel
   vjig_chord     1  FDM                               40  26.0 x 45.0 x 25.0     V for the 3.0 mm chord, axis 45 mm up
   vjig_diag      1  FDM                               40  26.0 x 45.0 x 25.0     V for the 1.5 mm diagonal, axis 45 mm up
-  plate          1  laser: 6 mm acrylic or aluminium      53  -                      
+  plate          1  laser: 6 mm acrylic or aluminium      51  -                      
   base           1  laser: 6 mm acrylic               32  -                      
 
 BUY (the rig's own hardware -- the motor, driver and supply are yours)

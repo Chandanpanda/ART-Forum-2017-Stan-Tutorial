@@ -1188,15 +1188,50 @@ hold the base's yaw mechanically. **Both are withdrawn.**
 | x, y | the two fine stages | **exactly** — `REPEAT = 0.05 mm` |
 | z | the Z lead screw | **exactly** |
 | **yaw** (about vertical) | **a fine yaw stage** | **exactly**, to its own resolution |
-| pitch, roll | nothing | floor flatness; absorbed, and small |
+| **pitch** (nose up/down) | the stages take the **displacement**; the tilt stays | residual **0.17 mm** at 1° |
+| **roll** (about the chord) | **nothing needed** | **0.00 mm** to 3° |
 
-A translation cannot change an orientation, so three linear stages leave
-three degrees of freedom uncorrected, and **yaw is the large one** — it is
-the mecanum drive's own free axis, where pitch and roll are merely whatever
-the floor gives. Adding one rotary stage to the fine assembly turns the
-uncorrected set from {yaw, pitch, roll} into {pitch, roll}, which is the
-difference between a degree of freedom the base controls badly and two the
-floor controls well.
+**The three rotations are three different cases, and an earlier draft of
+this part lumped the last two together as "floor flatness; absorbed".** That
+was pessimistic and it hid the two facts that matter. Measured over all 30
+joints, against the 1.91 mm clearance a perfect pose gives:
+
+| tilt | yaw | pitch | **roll** |
+|---|---|---|---|
+| 1° | 1.81 mm | 1.74 mm | **1.91 mm** |
+| 2° | 1.71 | 1.58 | **1.91** |
+| 3° | 1.61 | 1.41 | **1.91** |
+| 5° | 1.41 | 1.09 | 1.69 |
+
+**ROLL IS FREE, and it is free for a reason worth knowing.** Roll is a
+rotation about the ring's *own* axis, so it does not tilt the ring's plane
+at all — it only turns the ring within that plane, which moves where the gap
+points. The gap is **60° wide** and `gap_azimuth` parks it at ±10°, so it
+carries slack the work never uses, and three degrees of roll disappears into
+that slack. **Do not try to compensate it**: re-parking the gap by the roll
+angle costs 0.12 mm at 1° and 0.45 mm at 3°, in *either* direction, because
+the solver's azimuth is already a local optimum and moving it either way
+walks off the peak.
+
+**PITCH'S DOMINANT EFFECT IS A DISPLACEMENT, AND THE STAGES CANCEL IT
+EXACTLY.** A trolley pitching about its wheel contact line swings a ring
+standing `h` above that line through `h·θ`:
+
+| ring height above the wheels | 0.5° | 1.0° |
+|---|---|---|
+| 300 mm | 2.62 mm | 5.24 mm |
+| **400 mm** | 3.49 mm | **6.98 mm** |
+| 500 mm | 4.36 mm | 8.73 mm |
+
+Seven millimetres at one degree — **fifteen times the 0.45 mm translation
+budget**, and the largest single error in the whole architecture. It is also
+*exactly* correctable, because it is a translation: measure the pitch, and
+X, Y and Z null it. What is left after that is the tilt alone, and the tilt
+costs **0.17 mm** of the 1.91.
+
+So the rule is: **measure all six, null four, and the two left over cost
+0.17 mm and nothing.** A translation cannot change an orientation — that part
+stands — but for pitch the orientation was never the expensive half.
 
 **The mecanum's job collapses to one sentence: get the joint inside the
 250 × 250 mm square.** Nothing else about how it arrives matters.
@@ -1237,12 +1272,19 @@ and the gripper's yaw are kept separate on purpose — one wants ±10° with
 0.05° resolution, the other wants a large range to orient a rod, and making
 one actuator do both makes the rod-handling axis the precision element.
 
-**Stop at yaw; do not chase pitch and roll with actuators.** They cost two
-more axes to fix a residual that is already inside budget — 1° of pitch
-leaves 1.74 mm of the 1.91, above the 1.5 mm reserve, and 1° over a 300 mm
-wheelbase is a 5 mm step under one wheel, which a bench beats by an order of
-magnitude. If a floor ever did make it matter, the answer is not an actuator
-but **three levelling screws on the trolley**, set once and static.
+**Stop at yaw; do not chase pitch and roll with actuators.** A roll axis
+would correct nothing (roll already costs nothing), and a pitch axis would
+buy 0.17 mm of clearance at 1° — a residual already inside the reserve —
+while the 7 mm that pitch *actually* costs is taken out by stages that have
+to be there anyway. If a floor ever did make pitch matter, the answer is
+still not an actuator but **three levelling screws on the trolley**, set
+once and static.
+
+**What pitch and roll do require is MEASUREMENT.** Not to correct the tilt,
+but because pitch's 7 mm displacement cannot be nulled without knowing the
+angle — which is the second reason H4 insists the tags are spread rather
+than single. A trolley whose pitch is unknown is 7 mm out and does not know
+it; a trolley whose pitch is measured is 0.17 mm out and does.
 
 ### H4. What the vision has to deliver, and what actually limits it
 

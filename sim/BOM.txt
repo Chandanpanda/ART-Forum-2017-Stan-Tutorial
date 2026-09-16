@@ -2252,7 +2252,7 @@ BOM at the top of this file, this row wins.
 | 8 | 1 | brass/copper nut for the 300 mm screw | **OWNED** | came with the screw; gravity preloads it |
 | 9 | 1 | T8 anti-backlash POM nut | **CART** | the **yaw** screw, not Z (I7a) |
 | 10 | 4 | coupler, 5 × 8 mm | **CART** | ⚠ **verify flexible, not rigid** — I7b prices the difference at 230 N |
-| 11 | 2–4 | 608ZZ (8 × 22 × 7) | **BUY** | far ends of the Z and yaw lead screws; both are Tr8 |
+| 11 | **10** | 608ZZ (8 × 22 × 7) | **CART** | far ends of the Z and yaw lead screws; both are Tr8. Ten gives spares, and a 608 is also a stock GT2 idler |
 | 12 | 2 of 8 | 626ZZ (6 × 19 × 6) | **OWNED** | the yaw pivot — **keep them ≤20 mm apart** (I8c) |
 | 13 | 1 of 2 | 6 mm ground rod, 400 mm | **OWNED** | pivot stub, pulley axles, plate dowels |
 | 14 | 4 | 6 mm lock collar | **OWNED** | retains the above |
@@ -2264,14 +2264,58 @@ BOM at the top of this file, this row wins.
 |---|---|---|---|---|---|
 | 16 | 1 | **X** | NEMA 17, 4.2 kg·cm | **OWNED** | Pro-Range. 4.9× inside the thrust (I8a) |
 | 17 | 1 | **Y** | NEMA 17, 4.2 kg·cm | **OWNED** | Pro-Range |
-| 18 | 1 | **Z** | NEMA 17 | **BUY** | or INV? — you have one on the bench rig |
-| 19 | 1 | **head yaw** | NEMA 17 | **BUY** | |
-| 20 | 1 | **ring** | NEMA 17, **or** NEMA 8 + 4:1 | **DECIDE** | **J6 — this one blocks a laser cut** |
-| 21 | 1 | **cage** | JGY370 12 V 10 rpm worm | **INV?** | A3 measured it against 0.05° and **found it wanting** |
+| 18 | 1 | **Z** | NEMA 17, **1.2 A, D-shaft** | **CART** | PR42HS40-1204AF-02, ×3. **D-shaft, which the round-shaft pair are not** — better under a coupler's set screw. ⚠ **1.2 A, not the owned pair's 1.7**: see J2.1 on rpm |
+| 19 | 1 | **head yaw** | NEMA 17, 1.2 A, D-shaft | **CART** | |
+| 19a | 1 | *spare / the cage's stepper option* | **CART** | the third of the three. A3 offers "a stepper through the same worm" as the cage's alternative to item 21a |
+| 20 | 1 | **ring** | **NEMA 8, low-inertia** (≤2e-7 kg·m²) + 4:1 | **BUY** | ⚠ **measured, J6.1: a NEMA 17 on this drive JAMS.** The three carted NEMA 17s go to Z, head yaw and a spare — not here |
+| 21 | 1 | **cage** | JGY370 12 V 10 rpm worm, solid shaft | **CART** | ⚠ **correct only with item 21a.** A3: this motor has **no feedback of any kind** and the cage is asserted to `Cage.THETA_TOL = 0.05°` |
 | 22 | 1 | **gripper stroke** (40 mm) | N20 300 rpm **with encoder** | **OWNED** | closes A5's oldest gap |
 | 23 | 1 | **gripper yaw** | MG996R servo | **INV?** | A3 measured it against 0.5° and **found it wanting** |
 | 24 | 1 | **jaws** | N20 100 rpm high-torque | **OWNED** | |
+| 21a | 6 | **spring-loaded ball plunger + reamed detent** | **BUY** | **this is what actually holds the cage's angle, not the motor.** A3's own conclusion: *"a spring-loaded plunger into a reamed hole is repeatable to a hundredth of a degree for pennies. This is the cheaper and better answer."* It was never carried into a parts list. ~₹300, and without it item 21 misses 0.05° by degrees |
 | 25 | 1 | — | M4 threaded rod + nut, ~60 mm | **BUY** | the gripper's stroke needs a screw; an N20 is rotary |
+
+### J2.1. The carted motors are 1.2 A, not 1.7 — and X turns at 900 rpm
+
+The two owned Pro-Range motors are **PR42HS40-1704, 1.7 A, round shaft**;
+the three carted are **PR42HS40-1204AF-02, 1.2 A, D-shaft**. Same 4.2 kg·cm
+of *holding* torque. Two things follow.
+
+**The D-shaft is the better part** and it matters more than the current: a
+round 5 mm shaft under a coupler's set screw holds by friction alone.
+
+**But holding torque is a stall figure, and these axes do not run at
+stall.** Screw speed at `V_MAX`:
+
+| axis | V_MAX | lead | **screw rpm** |
+|---|---|---|---|
+| **X** | 60 mm/s | 4 mm | **900 rpm** |
+| Y | 40 | 4 | 600 |
+| Z | 40 | 8 | 300 |
+
+A stepper at 900 rpm delivers a small fraction of its holding torque, and a
+**1.2 A motor of the same holding torque as a 1.7 A one has more turns and
+more inductance, so it falls off sooner.** So the "4.9× inside" figure in
+I8a is a stall-speed number and **does not survive to 900 rpm.**
+
+What rescues it is that the load is not the design stall thrust either:
+
+| X's load | thrust | torque at the screw |
+|---|---|---|
+| `STALL_N`, the design figure | 120 N | 0.865 kg·cm |
+| **accelerating 5.4 kg at 400 mm/s² + ~10 N of preload friction** | **~12 N** | **0.088 kg·cm** |
+
+Against a plausible 1.0–1.5 kg·cm at 900 rpm that is **about 11×** on the
+real load, and roughly **1.2×** on the design stall figure. Comfortable, on
+the number that is actually true.
+
+**Two consequences worth acting on:**
+
+1. **The 24 V supply (item 30) is now load-bearing, not a convenience.** At
+   12 V a high-inductance NEMA 17 at 900 rpm would be badly down, and this
+   is where that would show.
+2. **If a first article feels weak on X, drop `V_MAX["x"]`** rather than
+   buying motors. 60 mm/s is a choice; `check_schedule` prices what it costs.
 
 ## J3. Control electronics
 
@@ -2306,9 +2350,9 @@ For **one complete metre-baseline spine including both camera mounts**:
 
 | | Qty | Item | Status | Note |
 |---|---|---|---|---|
-| 43 | **4.0 m** | carbon rod, **Ø3.0 mm** pultruded | **BUY** | the 3 chords × 1000 mm |
-| 44 | **6.5 m** | carbon rod, **Ø1.5 mm** pultruded | **BUY** | 27 truss diagonals (3444 mm) **+ 26 mount rods (1340 mm)**, +30% |
-| 45 | (2.5 m) | carbon rod, Ø1.0 mm | **BUY if 300 mm first** | the 300 mm truss is 12 rods, all Ø1.0 |
+| 43 | **4.0 m** | carbon rod, **Ø3.0 mm** pultruded | **INV?** | the 3 chords × 1000 mm. **Check stock against 4.0 m** |
+| 44 | **6.5 m** | carbon rod, **Ø1.5 mm** pultruded | **INV?** | 27 truss diagonals (3444 mm) **+ 26 mount rods (1340 mm)**, +30%. **This is the one to count carefully** — the mount's rods are easy to forget |
+| 45 | (2.5 m) | carbon rod, Ø1.0 mm | **INV?** | only if the 300 mm truss goes first — it is 12 rods, all Ø1.0 |
 | 46 | 1 spool | nylon thread, 0.11 mm, 1000 m | **BUY** | ₹230. **8.16 m per truss → 122 trusses** |
 | 47 | 50 g | structural epoxy, slow cure | **BUY** | **4.35 g per truss** (145 mg × 30 joints) → 11 trusses |
 | 48 | 10 | blunt-tip syringe, 1 ml, 23–25 G | **BUY** | the dose is a **3.1 mm** drop |
@@ -2318,32 +2362,96 @@ For **one complete metre-baseline spine including both camera mounts**:
 
 | | Qty | Item | Status | Note |
 |---|---|---|---|---|
-| 50 | **2** | Raspberry Pi Camera Module 2 (IMX219) | **BUY** | **the original BOM said 1.** The mount has two ends, 25 parts each — it is a *stereo* rig |
+| 50 | **2** | Raspberry Pi Camera Module 2 (IMX219) | **BUY** | **A4.2 caught this already** and it had never reached a parts list: the original BOM says 1, the mount has two ends of 25 parts each, and `Payload`'s 62.2 × 48.8° matches the IMX219 exactly — so the part is right and only the quantity was wrong |
 | 51 | 2 | printed carrier for the module | **MAKE** | the gripper cannot hold a camera; `Carrier` explains why |
 | 52 | 2 | laser-cut collar | **MAKE** | 24 collar pieces in the mount model |
 
-> ### ⚠ J6.1 — WHICH MOTOR TURNS THE RING? This is not a detail.
+### ⚠ J6.1 — WHICH MOTOR TURNS THE RING: MEASURED, AND THE EARLIER RECOMMENDATION WAS WRONG
+
+`spec.Ring` models **a NEMA 8 rotor through 4:1** (`MOTOR_INERTIA = 2.0e-7`,
+`REDUCTION = 4.0`). `cad.py` cuts a **NEMA 17** footprint into the plate:
+`NEMA17_SQ = 42.3`, bolt circle 31.0, boss 22.0. **Nothing in any suite
+compares the two.**
+
+**An earlier revision of this section recommended the NEMA 17, on the
+grounds that the plate is the newer artefact and the NEMA 8 a leftover from
+the brief. That was wrong, and `check_drive` says so in one run.** The
+reduction is not decoration and the NEMA 8 is not a leftover.
+
+**What was measured.** `check_drive` re-run with `Ring.MOTOR_INERTIA` and
+`Ring.REDUCTION` patched in memory, nothing else touched:
+
+| rotor | kg·m² | at 4:1 | |
+|---|---|---|---|
+| **NEMA 8 (8HS15 class)** | **2.0e-7** | **16/16 pass** | the spec as it stands |
+| — | 4.0e-7 | **1 fail** | **the cliff is here — a factor of TWO** |
+| — | 7.0e-7 | 1 fail | |
+| — | 1.0e-6 | 1 fail | |
+| NEMA 14 | 1.4e-6 | 1 fail | a NEMA 14 does not rescue it either |
+| **NEMA 17** | **5.4e-6** | **1 fail** | |
+
+**And reduction is not the lever.** A NEMA 17 rotor, sweeping the ratio:
+
+| reduction | 1:1 | 2:1 | 3:1 | 4:1 | 6:1 | 8:1 |
+|---|---|---|---|---|---|---|
+| result | 1 fail | 1 fail | 1 fail | 1 fail | 1 fail | **3 fail** |
+
+**Every ratio fails, and 8:1 fails worse** — because reflected inertia goes
+as **R²** while the position loop only stiffens as **R**. More gearing makes
+this problem worse, not better.
+
+**The check that fails, and why it is the right check.** It is the one that
+shifts **all three pinions half a pitch** and asserts that this is
+*harmless* — the ring is a free body, so it should turn half a tooth and
+mesh:
+
+> `abs(k[-1,1] - k[-1,0]) < Ring.STOP_TOL * 2.0 and pk4 < Ring.DRIVE_TORQUE`
+
+With a NEMA 17 rotor the ring **reaches −0.84° of 179.16° commanded, with
+the torque pinned at 0.1200 N·m for the whole run.** That is not an
+acceleration limit — spinning the ring to 60 rpm against even the NEMA 17's
+reflected inertia asks about 6% of the rating. It is a **wedge**: three
+pinions tooth-on-tooth against the ring, and a heavy armature on the pinion
+joints leaves the mesh nothing to jiggle into. A light rotor finds the mesh;
+a heavy one locks against it.
+
+> ### The real finding is the MARGIN, not the part number
 >
-> `spec.Ring` models **a NEMA 8 rotor through 4:1** (`MOTOR_INERTIA =
-> 2.0e-7`, `REDUCTION = 4.0`) — inherited from the original brief, before
-> the head was redesigned with a 48T rim, three pinions and a belt.
-> `cad.py` cuts a **NEMA 17** footprint into the plate: `NEMA17_SQ = 42.3`,
-> bolt circle 31.0, boss 22.0. **A NEMA 8 with a gearbox will not bolt to
-> that plate, and nothing in any suite compares the two.**
+> **The cliff sits between 2.0e-7 and 4.0e-7 — under 2× on rotor inertia.**
+> That is not a motor-selection result, it is a **design fragility**, and
+> rotor inertia varies by part number *within* NEMA 8: an 8HS11 is ~1.0e-7,
+> an 8HS15 ~2.0e-7, a long-body 8HS30 ~4.0e-7. **A long NEMA 8 fails too.**
+> So "buy a NEMA 8" is necessary and not sufficient — it has to be a
+> **short-body, low-inertia** one, and the design deserves more room than
+> that.
 >
-> Torque settles nothing — both clear the measured 0.0489 N·m peak with room
-> (`DRIVE_TORQUE = 0.12` at the ring; the belt is 20T→20T, so any reduction
-> would have to be a gearbox).
->
-> **Recommendation: a NEMA 17, direct. The plate is the newer artefact, it
-> is held by 66 checks and it has been read in rendered frames; the NEMA 8
-> is a leftover.** Then `REDUCTION` → 1.0 and `MOTOR_INERTIA` → a NEMA 17
-> rotor, and `check_drive` (slow tier) has to be re-run, because those two
-> feed the drive's inertia and its servo gain.
->
-> **This is left as DECIDE rather than changed, because changing it
-> unvalidated is how a drive model stops describing the drive.** But it
-> must be settled **before the plate is cut**, not after.
+> Where the room would come from is worth one measurement before anything
+> is cut: the model puts the armature on the **pinion joint**, and a 220 mm
+> GT2 belt is itself a **compliant element** that it is not obvious the
+> MJCF represents. If it does not, this cliff is partly an artefact of the
+> model's stiffness and the real margin is wider. **That is the next thing
+> to measure, and it is cheap.**
+
+**What this means for procurement, concretely:**
+
+1. **Do not change the order.** All three carted NEMA 17s are correct buys:
+   **Z, head yaw, and one spare** — and A3 already offers a use for the
+   spare, as "a stepper through the same worm" for the cage.
+2. **Add a short-body NEMA 8 + 4:1 for the ring** (item 20). It is the only
+   rotor in the sweep that passes.
+3. **The 40T GT2 pulleys do not help here.** 20T → 40T is **2:1, not 4:1**
+   (4:1 wants 20T → 80T, or two stages), and the sweep shows ratio is not
+   the problem. Changing the *pinion* pulleys to 40T would mean regenerating
+   the pinions, the belt path, the pinion window and the plate — a large
+   change, for half the needed ratio, against a problem it does not address.
+4. **The head plate DXF cannot be cut until this is settled**, because its
+   motor cut is a 42.3 mm NEMA 17 footprint and a NEMA 8 is a 20 mm face on
+   a 16 mm bolt circle. **Regenerating `plate.dxf` for the real motor is the
+   one piece of work that gates a laser cut.**
+
+**Left as a record rather than a change**, because `REDUCTION` and
+`MOTOR_INERTIA` are already right for the motor that passes — it is the
+*plate* that disagrees with them, and the plate is `cad.py`'s to fix.
 
 ## J7. Vision and localisation
 
@@ -2406,21 +2514,27 @@ For **one complete metre-baseline spine including both camera mounts**:
 
 | | ₹ |
 |---|---|
-| **cart 1** — Robu.in (rails, Z rail, anti-backlash nut, 4 couplers) | 8,561 |
-| **cart 2** — Robokits (6 blocks, 2 screw combos, 2 support sets), incl. GST | 10,084 |
-| J3 control electronics | ~5,500 |
-| J2 two more NEMA 17 + the ring's | ~3,000 |
-| J4 ring head small parts (MR63 ×6, shafts, belt, standoffs) | ~800 |
-| J5 truss consumables (rod, thread, epoxy, syringes) | ~2,000 |
+| **cart 1** — Robu.in: 3 rails, anti-backlash nut, 4 couplers, **10 × 608ZZ, 3 × NEMA 17, JGY370** | **12,108** |
+| **cart 2** — Robokits: 6 blocks, 2 screw combos, 2 support sets, incl. GST | **10,084** |
+| | **₹22,192 ordered** |
+| J3 control electronics (board, 2–3 drivers, 24 V PSU, buck, 6 endstops, wiring) | ~5,500 |
+| **J6.1 the ring's NEMA 8 + 4:1** | ~1,500 |
+| J4 ring head small parts (MR63 ×6, 3 mm dowel, 220 mm belt, standoffs) | ~800 |
 | J6 two camera modules | ~2,500 |
-| J1/J9 springs, 608s, fasteners, taps, threadlock | ~1,500 |
-| | **≈ ₹34,000** |
+| J9 fasteners, taps, threadlock | ~1,500 |
+| J5 thread, epoxy, syringes (**rod is INV?**) | ~850 |
+| J1 15 N spring, J2 M4 rod, **J2 21a cage detents** | ~550 |
+| | **≈ ₹13,200 still to buy** |
+| | **≈ ₹35,400 total** |
 
-**Of which ₹18,645 is already carted**, and roughly **₹5,300 of what would
-otherwise be here was deleted by the inventory** (I8f).
+**₹22,192 is ordered**, roughly **₹5,300 of what would otherwise be here was
+deleted by the inventory** (I8f), and **the carbon rod is an inventory check
+rather than a purchase** — count Ø1.5 mm against **6.5 m**, which is the
+figure that includes the camera mounts' 26 rods.
 
-**Three rows in this table are worth more attention than their price**: the
-**controller board** (item 26 — never specified, and nothing runs without
-it), the **Z counterbalance** (item 15 — ₹200, and without it the head sinks
-onto the work on every E-stop), and the **ring's motor** (item 20 / J6.1 —
-which has to be settled before a plate is cut, not after).
+**Four rows are worth more attention than their price**: the **controller
+board** (item 26 — never specified, and nothing runs without it), the **Z
+counterbalance** (item 15 — ₹200, and without it the head sinks onto the
+work on every E-stop), the **cage's detents** (item 21a — ₹300, and they,
+not the motor, are what holds `Cage.THETA_TOL = 0.05°`), and the **ring's
+motor** (item 20 / J6.1 — measured, and it gates a laser cut).

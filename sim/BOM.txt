@@ -1444,6 +1444,63 @@ it racking. A 250 mm cross-slide on a trolley plate is not that machine.
 
 ---
 
+### I1a. Why two blocks per axis, and what they cost in travel
+
+**They cost no usable travel on any axis, because something else binds
+first.** That is the whole answer; the rest is why they are worth having.
+
+| arrangement | footprint | travel on 500 | travel on 250 |
+|---|---|---|---|
+| one block | 44.8 mm | 455 mm | 205 mm |
+| two, touching | 89.6 | 410 | 160 |
+| **two, 60 mm pitch** | **104.8** | **395** | **145** |
+| two, 100 mm pitch | 144.8 | 355 | 105 |
+
+| axis | screw stroke | rail travel, 2 blocks | what binds | against need |
+|---|---|---|---|---|
+| X | **361 mm** | 395 mm | the **screw** | — |
+| Y | **361 mm** | 395 mm | the **screw** | — |
+| Z | 187 mm | **145 mm** | the **rail** | **3.9×** of 37 mm |
+
+On X and Y the ball screw's 361 mm is shorter than the rail's 395 either
+way, so the second block is **free**. On Z the rail does become the limit —
+145 mm against the screw's 187 — but 145 mm is four times the 37 mm the plan
+commands (I2), so it is free in practice too.
+
+**What they buy: tilt goes as the inverse square of the spacing.** Two
+blocks resist pitch and yaw through the lever between them, so doubling the
+span quarters the tilt under the same moment:
+
+| span | relative tilt |
+|---|---|
+| 44.8 mm (one block) | 1.00 |
+| 89.6 (two, touching) | 0.25 |
+| **104.8 (60 mm pitch)** | **0.18** |
+| 144.8 (100 mm pitch) | 0.10 |
+
+**But the honest reason is the PLATE, not the bearing.** I1 put the
+requirement at ~470 N·m/rad and a single MGN12H block at four decades above
+it, so on bearing stiffness alone one block would do. What one block cannot
+do is carry a plate: it offers a **45 × 27 mm pad with four screws**, and a
+plate holding an entire 500 mm axis cantilevered off that pad bends *as
+aluminium*, however stiff the balls are. Two blocks give a 105 × 27
+footprint. Spend the block to stiffen the plate, not the bearing.
+
+**And what two blocks on one rail do NOT buy: roll about that rail's own
+axis.** Spacing gives no lever against roll — only a second *rail* does.
+Which matters asymmetrically here, and it falls straight out of H3's
+three-way split:
+
+- roll about the **X** rail (along the chord) is **the ring rolling on its
+  own axis** — measured **free**, 1.91 mm out to 3°;
+- roll about the **Y** rail (across the chord) is **the ring pitching** —
+  the sensitive one, and the one that also brings a 7 mm displacement.
+
+> **So if a first article ever proves floppy, the second rail goes on Y, not
+> on X.** X's weak direction is the one the ring does not care about.
+
+---
+
 ### I2. 500 mm, not 250 — and the nominal length is not the travel
 
 **A nominal screw length is not a stroke.** The machined ends, the two end

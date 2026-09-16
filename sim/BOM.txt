@@ -2267,7 +2267,7 @@ BOM at the top of this file, this row wins.
 | 18 | 1 | **Z** | NEMA 17, **1.2 A, D-shaft** | **CART** | PR42HS40-1204AF-02, ×3. **D-shaft, which the round-shaft pair are not** — better under a coupler's set screw. ⚠ **1.2 A, not the owned pair's 1.7**: see J2.1 on rpm |
 | 19 | 1 | **head yaw** | NEMA 17, 1.2 A, D-shaft | **CART** | |
 | 19a | 1 | *spare / the cage's stepper option* | **CART** | the third of the three. A3 offers "a stepper through the same worm" as the cage's alternative to item 21a |
-| 20 | 1 | **ring** | **NEMA 8, low-inertia** (≤2e-7 kg·m²) + 4:1 | **BUY** | ⚠ **measured, J6.1: a NEMA 17 on this drive JAMS.** The three carted NEMA 17s go to Z, head yaw and a spare — not here |
+| 20 | 1 | **NEMA 8 `8HS15-0604S`**, 0.04 N·m, 0.6 A, **rotor ≤2 g·cm²** + 4:1 | **BUY** | ⚠ **measured, J6.1: a NEMA 17 on this drive JAMS**, and J6.2 picks between the two listings. The three carted NEMA 17s go to Z, head yaw and a spare — not here |
 | 21 | 1 | **cage** | JGY370 12 V 10 rpm worm, solid shaft | **CART** | ⚠ **correct only with item 21a.** A3: this motor has **no feedback of any kind** and the cage is asserted to `Cage.THETA_TOL = 0.05°` |
 | 22 | 1 | **gripper stroke** (40 mm) | N20 300 rpm **with encoder** | **OWNED** | closes A5's oldest gap |
 | 23 | 1 | **gripper yaw** | MG996R servo | **INV?** | A3 measured it against 0.5° and **found it wanting** |
@@ -2321,18 +2321,19 @@ the number that is actually true.
 
 | | Qty | Item | Status | Note |
 |---|---|---|---|---|
-| 26 | 1 | **controller board, ≥5 stepstick sockets** | **BUY** | **no document in this project has ever specified one.** RAMPS 1.4 + Mega has exactly 5 |
+| 26 | 1 | **5-stepstick carrier + a step generator** | **BUY** | **no document in this project ever specified one.** The Pi is the host, **not the stepper** (J3.1): RAMPS 1.4 + Mega, or a breakout + an **RP2040 Pico, ~₹400** |
 | 27 | 2 of 5 | TMC2209 V2.1 driver | **OWNED** | 1/256 takes Z's step from 0.040 to 0.005 mm (I8b) |
-| 28 | 2–3 | stepper driver | **BUY** | to make five |
+| 28 | **3** | stepper driver — **TMC2209, not A4988** | **BUY** | to make five. J3.1: an A4988 has **no standstill current reduction**, and four axes hold through every wind |
 | 29 | 2 | TB6612FNG dual DC driver | **OWNED** | one channel each for the two N20s |
-| 30 | 1 | **24 V PSU, ≥8 A** | **BUY** | five steppers at 1.7 A. A bench-rig supply will not do it |
-| 31 | 1 | 12 V buck converter | **BUY** | N20s and the cage motor off the 24 V rail |
+| 30 | 1 | 24 V SMPS, **40 A / 960 W** | **OWNED** | the whole build draws **6.5%** of it (J3.1). ⚠ **needs a 5 A fuse on the stepper branch** |
+| 31 | 2 | 12 V + 5 V SMPS, 40 A each | **OWNED** | N20s, the JGY370, the logic. No buck converter needed. ⚠ **fuse the 12 V branch too** |
 | 32 | 6 | endstop, microswitch + lever | **BUY** | **BK10 is rigid: a mis-commanded X drives the ball nut into it.** The vision loop nulls error, not limits |
 | 33 | 1 | rotary encoder, 1000 PPR / 4000 CPR (LPD3806) | **INV?** | the ring's angle. `Ring.ENCODER_CPR = 4000` |
 | 34 | ~5 m | 4-core shielded cable + JST connectors | **BUY** | |
-| 35 | 1 | host computer | **OWNED** | runs the vision loop and the plan |
+| 34a | 4 | **inline fuse holder + 5 A fuses** | **BUY** | ⚠ J3.1 — ~₹50, and it is what stands between a wiring slip and a burnt driver on a 960 W rail |
+| 35 | 1 | Raspberry Pi | **OWNED** | the host: vision loop and plan. **Not the step generator** — see item 26 |
 
-### J3.1. There is no stepper voltage to get wrong — but "40 W" is conditional
+### J3.1. There is no stepper voltage to get wrong — and at 40 A, no power question either
 
 **A bipolar stepper is a current-mode device and has no supply voltage of
 its own.** The "rated voltage" on a datasheet is only `I_rated x R_phase` —
@@ -2362,32 +2363,48 @@ because it means the 1.2 A choice costs nothing thermally: ampere-turns for
 a given torque in a given frame are invariant, so `I^2 R` comes out at
 **11.6 W per motor** at full current for both.
 
-**Where the 40 W SMPS actually lands**, five motors on the 24 V rail at 92%
-driver efficiency:
+**The supply is 24 V at 40 A — 960 W — so capacity is a non-issue**, and an
+earlier revision of this section read that as 40 **W** and spent a table
+worrying about it. Five motors on the 24 V rail at 92% driver efficiency:
 
-| how the drivers are run | motor W | drawn | 40 W? |
+| how the drivers are run | motor W | drawn | of 960 W |
 |---|---|---|---|
-| **full step, no current reduction** — what `spec.Gantry` says | 57.8 | **62.8 W** | **over by 57%** |
-| microstepped, full run current | 28.9 | 31.4 W | fits |
-| **1 axis moving + 4 holding at 50%** — the real duty | 11.6 | **12.6 W** | **comfortable** |
+| **full step, no current reduction** — what `spec.Gantry` says | 57.8 | 62.8 W | **6.5%** |
+| microstepped, full run current | 28.9 | 31.4 W | 3.3% |
+| 1 axis moving + 4 holding at 50% — the real duty | 11.6 | 12.6 W | 1.3% |
 
-> **The spec's "no microstepping (brief 4.3)" and a 40 W supply are in
-> conflict, and the resolution is not to buy a bigger supply.** A TMC2209
-> microsteps *and* reduces standstill current natively, and I8b already
-> wanted it for resolution. Microstepping only ever *adds* resolution, so
-> A4.6's point stands untouched — the spec's 0.02 mm/step claim rests on
-> **full steps**, which is the conservative guarantee, and the driver's
-> microstepping is margin on top of it.
+> ### The supply constraint evaporates; the MOTOR's thermal one does not
+>
+> **11.6 W of copper loss sits inside a 42 mm motor**, and that is the
+> number that matters now. Five of them holding continuously through an
+> 18.5 s wind runs them to 70–80 °C, and a hot motor's winding resistance
+> climbs, which costs torque exactly where J2.1 already found it thin.
+> **So standstill current reduction is still wanted — for the motor, not
+> for the rail** — and so is microstepping, for the resolution I8b wanted.
+> Microstepping only ever *adds* resolution, so A4.6's point stands
+> untouched: the spec's 0.02 mm/step claim rests on **full steps**, the
+> conservative guarantee, and the driver's microstepping is margin on top.
 
-**Two consequences for what to buy:**
+> ### ⚠ But 960 W behind a TMC2209 is a hazard a 40 W supply did not have
+>
+> A 40 W brick current-limits itself into a fault. **A 40 A rail does not
+> — it will pour hundreds of watts into a shorted driver output or a
+> miswired coil until something fails destructively**, and a 24 V/40 A unit
+> is usually a bench or LED supply with no output protection at all.
+>
+> **Fuse the stepper branch.** Five motors draw about **2.3 A** at 24 V at
+> full current, so a **5 A fuse** is 2× the load and a small fraction of
+> what the supply can deliver. Same for the 12 V branch feeding the N20s
+> and the JGY370. This is a ₹50 part that stands between a wiring slip and
+> a burnt driver, board or motor.
 
-1. **The three remaining drivers should be TMC2209s too, not A4988s.** An
-   A4988 or DRV8825 microsteps but has **no standstill current reduction**,
-   and four axes holding is most of the duty cycle. A mixed set puts the
-   table's middle row back in play.
-2. **The 40 W supply is enough — use it**, and keep a 24 V / 150 W
-   (~₹800) as the fallback if a first article browns out under
-   simultaneous acceleration. Do not buy it up front.
+**One consequence for what to buy, and the reason changed:**
+
+**The three remaining drivers should be TMC2209s, not A4988s** — not
+because of supply capacity, which is now irrelevant, but because an A4988
+or DRV8825 has **no standstill current reduction**, and four axes holding
+through every wind is most of the duty cycle. That is now a motor-temperature
+argument rather than a power-budget one, and it is the stronger of the two.
 
 **On the Pi: a Pi is a host, not a step generator.** Stepping from Linux
 userspace jitters, and a jittering step train on a 900 rpm screw (J2.1) is
@@ -2519,6 +2536,57 @@ a heavy one locks against it.
 `MOTOR_INERTIA` are already right for the motor that passes — it is the
 *plate* that disagrees with them, and the plate is `cad.py`'s to fix.
 
+### J6.2. Choosing the ring's NEMA 8: torque is not the question, ROTOR INERTIA is
+
+Two candidates, and **they have the same torque**, so nothing about torque
+separates them:
+
+| | torque | current | ₹ |
+|---|---|---|---|
+| `20HS42-0804` NEMA 08 | 0.4 kg·cm = **0.039 N·m** | 0.8 A | 1,889 |
+| **STEPPERONLINE Nema 8 bipolar** | **0.04 N·m** = 0.41 kg·cm | **0.6 A** | 2,609 |
+
+**The one number to read off a datasheet is rotor inertia, because J6.1
+measured the cliff and it is under 2×:**
+
+| | kg·m² | g·cm² | |
+|---|---|---|---|
+| what `spec.Ring` passes with | 2.0e-7 | **2.0** | 16/16 |
+| **the measured cliff** | 4.0e-7 | **4.0** | 1 fail |
+
+> **Budget: ≤ 2 g·cm². A motor at 4 g·cm² jams the drive.** Rotor inertia
+> scales with body length in a given frame, so a long NEMA 8 is
+> disqualified by its own length regardless of its torque rating.
+
+**The StepperOnline is the right buy, and for a specific reason: it is the
+part the model was written against.** The original BOM at the top of this
+file already names the SKU — **`8HS15-0604S`** — and 0.04 N·m at 0.6 A is
+that motor. Its rotor inertia is **2 g·cm²**, which *is* `Ring.MOTOR_INERTIA`.
+So the 16/16 pass in J6.1 is a statement about this exact motor and not
+about a torque class.
+
+**The `20HS42-0804` is not ruled out, it is unverified.** Its listing gives
+no inertia, and 0.8 A on a 20 mm frame suggests a different winding. If its
+datasheet says **≤2 g·cm² it is fine and saves ₹720**; if it says 3–4, it is
+the failing row above. **With under 2× of margin, ₹720 for the part the
+drive model was validated against is the right trade** — and if the seller
+will quote the inertia, that settles it either way for free.
+
+**Also worth knowing before it surprises anyone on the bench: the motor
+runs at 640 rpm.** The ring turns at 60 rpm, the mesh ratio is 0.375, and
+the reduction is 4:1 — so 60 / 0.375 × 4. A NEMA 8 at 640 rpm holds perhaps
+30–40% of its rating:
+
+| motor torque | at the pinion | **at the ring** | vs the measured 0.0489 N·m peak |
+|---|---|---|---|
+| 0.0400 (holding, 0 rpm) | 0.160 | 0.427 | 8.7× |
+| 0.0160 (~40% at 640 rpm) | 0.064 | 0.171 | **3.5×** |
+| 0.0120 (~30% at 640 rpm) | 0.048 | 0.128 | **2.6×** |
+
+**Adequate, not lavish** — and it is a third reason the 24 V rail matters
+(J3.1): at 12 V a NEMA 8 at 640 rpm would be well down, and 2.6× would not
+survive it.
+
 ## J7. Vision and localisation
 
 | | Qty | Item | Status | Note |
@@ -2583,15 +2651,15 @@ a heavy one locks against it.
 | **cart 1** — Robu.in: 3 rails, anti-backlash nut, 4 couplers, **10 × 608ZZ, 3 × NEMA 17, JGY370** | **12,108** |
 | **cart 2** — Robokits: 6 blocks, 2 screw combos, 2 support sets, incl. GST | **10,084** |
 | | **₹22,192 ordered** |
-| J3 control electronics (board, 2–3 drivers, 24 V PSU, buck, 6 endstops, wiring) | ~5,500 |
-| **J6.1 the ring's NEMA 8 + 4:1** | ~1,500 |
+| J3 control electronics — **supplies are OWNED**: carrier + Pico, 3 × TMC2209, 6 endstops, wiring, **fuses** | ~3,600 |
+| **J6.1/J6.2 the ring's NEMA 8 (`8HS15-0604S`, ₹2,609) + a 4:1 stage** | ~3,600 |
 | J4 ring head small parts (MR63 ×6, 3 mm dowel, 220 mm belt, standoffs) | ~800 |
 | J6 two camera modules | ~2,500 |
 | J9 fasteners, taps, threadlock | ~1,500 |
 | J5 thread, epoxy, syringes (**rod is INV?**) | ~850 |
 | J1 15 N spring, J2 M4 rod, **J2 21a cage detents** | ~550 |
-| | **≈ ₹13,200 still to buy** |
-| | **≈ ₹35,400 total** |
+| | **≈ ₹13,400 still to buy** |
+| | **≈ ₹35,600 total** |
 
 **₹22,192 is ordered**, roughly **₹5,300 of what would otherwise be here was
 deleted by the inventory** (I8f), and **the carbon rod is an inventory check

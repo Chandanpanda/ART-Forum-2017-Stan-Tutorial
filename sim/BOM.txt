@@ -2332,6 +2332,72 @@ the number that is actually true.
 | 34 | ~5 m | 4-core shielded cable + JST connectors | **BUY** | |
 | 35 | 1 | host computer | **OWNED** | runs the vision loop and the plan |
 
+### J3.1. There is no stepper voltage to get wrong — but "40 W" is conditional
+
+**A bipolar stepper is a current-mode device and has no supply voltage of
+its own.** The "rated voltage" on a datasheet is only `I_rated x R_phase` —
+about **4.8 V** for the carted 1.2 A motors — and it is emphatically *not*
+what you feed it. The driver chops a much higher rail to force current
+through the winding's inductance, which is where high-speed torque comes
+from. `32 x sqrt(L_mH)` says the *ideal* rail for these is **~85 V**.
+
+> **So 24 V on a nominally 4.8 V motor is correct, and it is also the
+> ceiling: a TMC2209's absolute maximum VM is 29 V.** A 24 V SMPS off-load
+> sits at 25–26 V and a decelerating motor regenerates into it. There is no
+> headroom to go higher, and nothing in the cart to verify.
+
+**What has to be SET rather than verified is the driver's current limit,
+and this build now has two different motors.**
+
+| motor | qty | I/phase | set the driver to |
+|---|---|---|---|
+| PR42HS40-**1704**, round shaft | 2 (owned) | 1.7 A | ~1.7 A |
+| PR42HS40-**1204**AF-02, D-shaft | 3 (carted) | **1.2 A** | **~1.2 A** |
+
+**Label them.** A driver set for the 1.7 A motor with a 1.2 A motor plugged
+into it runs it 42% over rated current.
+
+**And the copper loss is the same either way**, which is worth knowing
+because it means the 1.2 A choice costs nothing thermally: ampere-turns for
+a given torque in a given frame are invariant, so `I^2 R` comes out at
+**11.6 W per motor** at full current for both.
+
+**Where the 40 W SMPS actually lands**, five motors on the 24 V rail at 92%
+driver efficiency:
+
+| how the drivers are run | motor W | drawn | 40 W? |
+|---|---|---|---|
+| **full step, no current reduction** — what `spec.Gantry` says | 57.8 | **62.8 W** | **over by 57%** |
+| microstepped, full run current | 28.9 | 31.4 W | fits |
+| **1 axis moving + 4 holding at 50%** — the real duty | 11.6 | **12.6 W** | **comfortable** |
+
+> **The spec's "no microstepping (brief 4.3)" and a 40 W supply are in
+> conflict, and the resolution is not to buy a bigger supply.** A TMC2209
+> microsteps *and* reduces standstill current natively, and I8b already
+> wanted it for resolution. Microstepping only ever *adds* resolution, so
+> A4.6's point stands untouched — the spec's 0.02 mm/step claim rests on
+> **full steps**, which is the conservative guarantee, and the driver's
+> microstepping is margin on top of it.
+
+**Two consequences for what to buy:**
+
+1. **The three remaining drivers should be TMC2209s too, not A4988s.** An
+   A4988 or DRV8825 microsteps but has **no standstill current reduction**,
+   and four axes holding is most of the duty cycle. A mixed set puts the
+   table's middle row back in play.
+2. **The 40 W supply is enough — use it**, and keep a 24 V / 150 W
+   (~₹800) as the fallback if a first article browns out under
+   simultaneous acceleration. Do not buy it up front.
+
+**On the Pi: a Pi is a host, not a step generator.** Stepping from Linux
+userspace jitters, and a jittering step train on a 900 rpm screw (J2.1) is
+exactly where it shows. The standard split is a Pi planning and an MCU
+stepping — **Klipper is precisely this architecture** — and an RP2040's PIO
+generates rock-steady pulses for many axes for about ₹400. So **item 26
+shrinks**: the Pi is owned, and what is still needed is a carrier that
+sockets five stepsticks and distributes 24 V, plus a Pico or a Mega to
+generate the steps.
+
 ## J4. The ring head
 
 | | Qty | Item | Status | Note |

@@ -2214,3 +2214,213 @@ neither the old one nor the new one.
 
 **The base structure / collapsible mandrel is explicitly deferred** — not
 designed, not ordered, not blocking the fine-motion build.
+
+---
+
+# PART J — THE COMPLETE PROCUREMENT TABLE
+
+**Every item the machine needs, in one place, with a status.** Parts A–I are
+the reasoning; this is the list. Where a row disagrees with the original
+BOM at the top of this file, this row wins.
+
+**Status key**
+
+| | |
+|---|---|
+| **OWNED** | in hand, confirmed |
+| **INV?** | probably in inventory — check before buying |
+| **CART** | in the two carts being placed now |
+| **BUY** | to procure |
+| **MAKE** | printed, laser-cut or machined — after parts arrive |
+| **DECIDE** | the need is real, the part is not yet settled |
+| **DEFER** | deliberately out of scope for this build stage |
+| **KILLED** | was in the original BOM, deleted for a stated reason |
+
+---
+
+## J1. Fine-motion stack — X, Y, Z, head yaw
+
+| | Qty | Item | Status | Note |
+|---|---|---|---|---|
+| 1 | 2 | MGN12 rail, 500 mm | **CART** | X, Y |
+| 2 | 1 | MGN12 rail, 250 mm | **CART** | Z — 145 mm of travel against 37 needed |
+| 3 | 6 | MGN12H block, extended | **CART** | two per rail (I1a) |
+| 4 | 2 | SFU1204 ball screw 500 mm, end-machined, + flange nut | **CART** | X, Y — 361 mm of stroke each |
+| 5 | 2 | BK10 + BF10 support set | **CART** | this is what bolts the screws down |
+| 6 | 1 | Tr8×8 4-start lead screw, 300 mm | **OWNED** | Z. 8 mm lead, **backdrives** (E2) |
+| 7 | 1 | Tr8×8 4-start lead screw, 150 mm | **OWNED** | the yaw lever — 0.0229°/step on a 100 mm arm |
+| 8 | 1 | brass/copper nut for the 300 mm screw | **OWNED** | came with the screw; gravity preloads it |
+| 9 | 1 | T8 anti-backlash POM nut | **CART** | the **yaw** screw, not Z (I7a) |
+| 10 | 4 | coupler, 5 × 8 mm | **CART** | ⚠ **verify flexible, not rigid** — I7b prices the difference at 230 N |
+| 11 | 2–4 | 608ZZ (8 × 22 × 7) | **BUY** | far ends of the Z and yaw lead screws; both are Tr8 |
+| 12 | 2 of 8 | 626ZZ (6 × 19 × 6) | **OWNED** | the yaw pivot — **keep them ≤20 mm apart** (I8c) |
+| 13 | 1 of 2 | 6 mm ground rod, 400 mm | **OWNED** | pivot stub, pulley axles, plate dowels |
+| 14 | 4 | 6 mm lock collar | **OWNED** | retains the above |
+| 15 | 1 | extension spring, **~15 N** | **BUY** | **the Z counterbalance.** Nothing else holds Z up |
+
+## J2. The nine actuators
+
+| | Qty | Drives | Item | Status | Note |
+|---|---|---|---|---|---|
+| 16 | 1 | **X** | NEMA 17, 4.2 kg·cm | **OWNED** | Pro-Range. 4.9× inside the thrust (I8a) |
+| 17 | 1 | **Y** | NEMA 17, 4.2 kg·cm | **OWNED** | Pro-Range |
+| 18 | 1 | **Z** | NEMA 17 | **BUY** | or INV? — you have one on the bench rig |
+| 19 | 1 | **head yaw** | NEMA 17 | **BUY** | |
+| 20 | 1 | **ring** | NEMA 17, **or** NEMA 8 + 4:1 | **DECIDE** | **J6 — this one blocks a laser cut** |
+| 21 | 1 | **cage** | JGY370 12 V 10 rpm worm | **INV?** | A3 measured it against 0.05° and **found it wanting** |
+| 22 | 1 | **gripper stroke** (40 mm) | N20 300 rpm **with encoder** | **OWNED** | closes A5's oldest gap |
+| 23 | 1 | **gripper yaw** | MG996R servo | **INV?** | A3 measured it against 0.5° and **found it wanting** |
+| 24 | 1 | **jaws** | N20 100 rpm high-torque | **OWNED** | |
+| 25 | 1 | — | M4 threaded rod + nut, ~60 mm | **BUY** | the gripper's stroke needs a screw; an N20 is rotary |
+
+## J3. Control electronics
+
+| | Qty | Item | Status | Note |
+|---|---|---|---|---|
+| 26 | 1 | **controller board, ≥5 stepstick sockets** | **BUY** | **no document in this project has ever specified one.** RAMPS 1.4 + Mega has exactly 5 |
+| 27 | 2 of 5 | TMC2209 V2.1 driver | **OWNED** | 1/256 takes Z's step from 0.040 to 0.005 mm (I8b) |
+| 28 | 2–3 | stepper driver | **BUY** | to make five |
+| 29 | 2 | TB6612FNG dual DC driver | **OWNED** | one channel each for the two N20s |
+| 30 | 1 | **24 V PSU, ≥8 A** | **BUY** | five steppers at 1.7 A. A bench-rig supply will not do it |
+| 31 | 1 | 12 V buck converter | **BUY** | N20s and the cage motor off the 24 V rail |
+| 32 | 6 | endstop, microswitch + lever | **BUY** | **BK10 is rigid: a mis-commanded X drives the ball nut into it.** The vision loop nulls error, not limits |
+| 33 | 1 | rotary encoder, 1000 PPR / 4000 CPR (LPD3806) | **INV?** | the ring's angle. `Ring.ENCODER_CPR = 4000` |
+| 34 | ~5 m | 4-core shielded cable + JST connectors | **BUY** | |
+| 35 | 1 | host computer | **OWNED** | runs the vision loop and the plan |
+
+## J4. The ring head
+
+| | Qty | Item | Status | Note |
+|---|---|---|---|---|
+| 36 | **6** | **MR63ZZ (3 × 6 × 2.5)** | **BUY** | the pinion bearings, two per pinion. **Your MR106s cannot substitute** — 1.20 mm of wall against 3.20 (I8d) |
+| 37 | 3 | 3 mm ground rod / dowel, ~25 mm | **BUY** | the pinion shafts. MR63 is a 3 mm bore |
+| 38 | 1 | **GT2 closed loop, 220 mm × 6 mm** | **BUY** | ₹150. **The only stocked loop the slot reaches** — your 200 and 280 do not (I8e) |
+| 39 | 1 of 2 | GT2 20T pulley, 5 mm bore | **OWNED** | the motor pulley. `belt_path` uses 20T on all four |
+| 40 | 6 | M3 standoff | **BUY** | plate to base |
+| 41 | 1 set | ring, 3 × pinion, race long + short | **MAKE** | STLs generated in `sim/cad/` |
+| 42 | 1 ea | head plate, base | **MAKE** | DXFs generated. ⚠ **blocked on J6** |
+
+## J5. Truss consumables — the actual product
+
+For **one complete metre-baseline spine including both camera mounts**:
+
+| | Qty | Item | Status | Note |
+|---|---|---|---|---|
+| 43 | **4.0 m** | carbon rod, **Ø3.0 mm** pultruded | **BUY** | the 3 chords × 1000 mm |
+| 44 | **6.5 m** | carbon rod, **Ø1.5 mm** pultruded | **BUY** | 27 truss diagonals (3444 mm) **+ 26 mount rods (1340 mm)**, +30% |
+| 45 | (2.5 m) | carbon rod, Ø1.0 mm | **BUY if 300 mm first** | the 300 mm truss is 12 rods, all Ø1.0 |
+| 46 | 1 spool | nylon thread, 0.11 mm, 1000 m | **BUY** | ₹230. **8.16 m per truss → 122 trusses** |
+| 47 | 50 g | structural epoxy, slow cure | **BUY** | **4.35 g per truss** (145 mg × 30 joints) → 11 trusses |
+| 48 | 10 | blunt-tip syringe, 1 ml, 23–25 G | **BUY** | the dose is a **3.1 mm** drop |
+| 49 | 1 | PTFE-coated fabric tape, 13 mm | **OWNED** | **the jig release layer.** Nothing here had noticed the fixture needs one |
+
+## J6. The payload, and the decision that blocks a laser cut
+
+| | Qty | Item | Status | Note |
+|---|---|---|---|---|
+| 50 | **2** | Raspberry Pi Camera Module 2 (IMX219) | **BUY** | **the original BOM said 1.** The mount has two ends, 25 parts each — it is a *stereo* rig |
+| 51 | 2 | printed carrier for the module | **MAKE** | the gripper cannot hold a camera; `Carrier` explains why |
+| 52 | 2 | laser-cut collar | **MAKE** | 24 collar pieces in the mount model |
+
+> ### ⚠ J6.1 — WHICH MOTOR TURNS THE RING? This is not a detail.
+>
+> `spec.Ring` models **a NEMA 8 rotor through 4:1** (`MOTOR_INERTIA =
+> 2.0e-7`, `REDUCTION = 4.0`) — inherited from the original brief, before
+> the head was redesigned with a 48T rim, three pinions and a belt.
+> `cad.py` cuts a **NEMA 17** footprint into the plate: `NEMA17_SQ = 42.3`,
+> bolt circle 31.0, boss 22.0. **A NEMA 8 with a gearbox will not bolt to
+> that plate, and nothing in any suite compares the two.**
+>
+> Torque settles nothing — both clear the measured 0.0489 N·m peak with room
+> (`DRIVE_TORQUE = 0.12` at the ring; the belt is 20T→20T, so any reduction
+> would have to be a gearbox).
+>
+> **Recommendation: a NEMA 17, direct. The plate is the newer artefact, it
+> is held by 66 checks and it has been read in rendered frames; the NEMA 8
+> is a leftover.** Then `REDUCTION` → 1.0 and `MOTOR_INERTIA` → a NEMA 17
+> rotor, and `check_drive` (slow tier) has to be re-run, because those two
+> feed the drive's inertia and its servo gain.
+>
+> **This is left as DECIDE rather than changed, because changing it
+> unvalidated is how a drive model stops describing the drive.** But it
+> must be settled **before the plate is cut**, not after.
+
+## J7. Vision and localisation
+
+| | Qty | Item | Status | Note |
+|---|---|---|---|---|
+| 53 | 1 | stereo rig, ~250 mm baseline | **OWNED** | ⚠ H4 wants it **on the fine stage, not the world** — the bracket is a MAKE item |
+| 54 | 4 | AprilTag, **spread ≥300 mm** | **MAKE** | print on paper. One tag will not give 6-DOF |
+| 55 | 1 | white acrylic sheet | **OWNED** | a background behind black rod |
+
+## J8. Coarse axis and trolley
+
+| | Qty | Item | Status | Note |
+|---|---|---|---|---|
+| 56 | 1 | mecanum 4-wheel robot | **OWNED** | the coarse axis. Job: get the joint inside 361 × 361 |
+| 57 | 4 | robot wheel, 70 × 20 mm | **OWNED** | the trolley. I1b's 12.6 mm floor figure assumed a ~300 mm wheelbase |
+| 58 | 4 | N20 ball caster | **OWNED** | alternative trolley castors |
+| 59 | 1 | trolley deck, ~600 × 600 mm | **DEFER** | **measure the robot's deck against 600 × 600 first** (I2b) |
+| 60 | — | flat-bar runway | **DEFER** | only if the floor is >12.6 mm out over the wheelbase |
+
+## J9. Fasteners and workshop
+
+| | Qty | Item | Status | Note |
+|---|---|---|---|---|
+| 61 | ~60 | M3 × 10 cap screw | **BUY** | ~20 per 500 mm rail + 4 per block |
+| 62 | 25 | M3 × 8 SS304 pan head | **OWNED** | covers about a third |
+| 63 | ~16 | M5 cap screw | **BUY** | BK10/BF10 bases and the flange nuts |
+| 64 | lot | M4 assorted | **BUY** | |
+| 65 | 1 set | M3 + M5 tap, matched drills | **BUY** | only if the carriage plates come out aluminium rather than through-drilled with nuts |
+| 66 | 1 | threadlock, removable (Loctite 243) | **BUY** | |
+
+## J10. Fabricated — all MAKE, all after the parcel lands
+
+| | Item | Blocked on |
+|---|---|---|
+| 67 | ring, pinion ×3, race long/short, V-jig chord/diag | nothing — STLs are in `sim/cad/` |
+| 68 | head plate, base | **J6.1** |
+| 69 | **3 carriage plates + the yaw lever** | **measuring the BK10's bore height and the flange nut's bore-to-flange offset off real parts** (I2c). Not drawable today |
+| 70 | 4 × NEMA 17 bracket | printable; buy steel L-brackets if preferred |
+| 71 | yaw pivot housing (2 × 626, ≤20 mm apart) | I8c |
+| 72 | gripper body, jaws, camera carrier | the gripper is not fully specced (A5) |
+| 73 | collapsible mandrel / base structure | **DEFER** — explicitly later |
+
+## J11. Killed and deferred, recorded so they do not come back
+
+| Item | Why |
+|---|---|
+| nichrome hot-wire cutter | chars aramid, will not part glass; the cut is three clippings by hand (F4) |
+| DSG12H nut housing ×3 | a **flange** nut has its own bolted flange (I2a) |
+| 3 × MGN12 rail 1000 mm, 3 × SFU1204 1000 mm | no long axis — the mecanum base is the coarse axis (H1) |
+| steel base frame, 1000 mm | A1 measured it at **253 kg** and un-laser-cuttable |
+| Y-axis bridge plate 1000 × 100 | A2: sagged 3 mm and rang at 11 Hz. There is no bridge |
+| NEMA 17 for the dispenser | the glue is a syringe by hand (F1); the slot went to yaw |
+| 6802 bearing + 15 mm shaft | the owned 626s cost 13% of the budget instead of 0.7% (I8c) |
+| miniature vacuum pump | DEFER — belongs to the mount phase, which is undecided (F8.4) |
+| USB inspection camera | superseded by the owned stereo rig (E3 reversed by H4) |
+
+---
+
+## J12. What the money looks like
+
+| | ₹ |
+|---|---|
+| **cart 1** — Robu.in (rails, Z rail, anti-backlash nut, 4 couplers) | 8,561 |
+| **cart 2** — Robokits (6 blocks, 2 screw combos, 2 support sets), incl. GST | 10,084 |
+| J3 control electronics | ~5,500 |
+| J2 two more NEMA 17 + the ring's | ~3,000 |
+| J4 ring head small parts (MR63 ×6, shafts, belt, standoffs) | ~800 |
+| J5 truss consumables (rod, thread, epoxy, syringes) | ~2,000 |
+| J6 two camera modules | ~2,500 |
+| J1/J9 springs, 608s, fasteners, taps, threadlock | ~1,500 |
+| | **≈ ₹34,000** |
+
+**Of which ₹18,645 is already carted**, and roughly **₹5,300 of what would
+otherwise be here was deleted by the inventory** (I8f).
+
+**Three rows in this table are worth more attention than their price**: the
+**controller board** (item 26 — never specified, and nothing runs without
+it), the **Z counterbalance** (item 15 — ₹200, and without it the head sinks
+onto the work on every E-stop), and the **ring's motor** (item 20 / J6.1 —
+which has to be settled before a plate is cut, not after).

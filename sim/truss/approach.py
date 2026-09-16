@@ -5,28 +5,37 @@ The question is the same one the competition robot asks before every
 drop: put the effector so the payload lands where it must, with the body
 somewhere legal, and say HOW MUCH can go wrong before it fails.  Here the
 effector is a C-ring, the payload is a hoop of thread, and "legal" means
-the ring, its spool and the head above them touch nothing through the
-whole cycle: descending onto the chord, turning eighteen times round it,
-and traversing to the next joint.
+the ring, its raceway, its pinions and the head above them touch nothing
+through the whole cycle: descending onto the chord, turning eighteen times
+round it, and traversing to the next joint.
 
 THE ANSWER IS A MARGIN, IN MILLIMETRES.  A pose is not good because it
 looked fine; it is good because the nearest rod, pin or cradle is this
 far from the head's swept volume, and a rig can check that number.
 
 HOW IT IS MEASURED.  The head is a handful of solids of revolution and
-boxes in the ring's own frame -- an annulus, a spool, a carriage box --
-and the distance from a point to each of those is a closed form.  The
-rods and the fixture are capsules, sampled densely along their axes.  So
-the clearance is exact to the rod sampling pitch, a millimetre, which is
-the difference between "the solver says 1.2 mm" and "the solver says 1.2
-mm and a 2 mm rod fell between its sample points".  (The first version
-sampled the HEAD as a point cloud and passed a truss whose other chords
-ran straight through the spool.)
+boxes in the ring's own frame -- the ring's annulus, the raceway's, three
+pinion discs, a carriage box -- and the distance from a point to each of
+those is a closed form.  The rods and the fixture are capsules, sampled
+densely along their axes.  So the clearance is exact to the rod sampling
+pitch, a millimetre, which is the difference between "the solver says 1.2
+mm" and "the solver says 1.2 mm and a 2 mm rod fell between its sample
+points".  (The first version sampled the HEAD as a point cloud and passed
+a truss whose other chords ran straight through the spool that then stood
+on the rim.)
+
+THERE IS NO SPOOL IN THIS LIST, and until this comment was fixed the list
+said there was.  The thread moved into a groove in the ring's own web the
+day the rim became the drive's, and a groove inside the ring's own
+material cannot be a separate obstacle: any descent that clears the ring
+clears its groove.  A stale docstring naming a solid the code twelve
+lines below does not model is worse than no docstring, because it is the
+kind of thing that gets planned against after a compaction.
 
 Three sweeps:
 
     seated    the full annulus (the gap vanishes over a revolution), the
-              spool's torus, the head box, at the chord axis
+              raceway, the pinions, the head box, at the chord axis
     descent   the C-ring parked with its gap toward the joint's face,
               from the lift height down to seated
     traverse  the same ring parked gap-down, at the lift height, from

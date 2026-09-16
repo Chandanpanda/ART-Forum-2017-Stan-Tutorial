@@ -585,3 +585,309 @@ two actuators the BOM does not carry. The cell models **nine** — X, Y, Z,
 dispenser stroke, gripper stroke, gripper yaw, jaws, ring, cage — and the BOM
 specifies **seven**. The gripper's 40 mm stroke and the jaw actuator are
 missing.
+
+---
+
+## PART F — THE DIVISION OF LABOUR
+
+The objective of the project is to prove that a **scalable process** exists
+for building the stereo camera's spine. That makes the design question not
+"what can be done cheaply" but:
+
+> **Which operations must a machine do, because a person cannot do them at
+> all at the precision required — and which can a person keep doing
+> forever without the process stopping being scalable?**
+
+This part answers that, and the answer removes four of the cell's nine
+actuators. It was written after a question exposed that the winding
+*process* had never been described anywhere: how the thread gets from the
+ring to the rod, how it starts, how it stops. The simulation planned the
+motion in detail and the mechanism was a duration with a name.
+
+---
+
+### F1. The rule, and the answer it gives
+
+A manual step does not stop a process being scalable when it is either:
+
+- **not O(joints)** — its count is set by the number of chords or rods, so
+  it does not grow as the truss does; or
+- **precision-free** — something other than the human hand holds the
+  tolerance.
+
+Everything that is **O(joints) *and* precision-critical** is the machine's.
+On the metre truss that divides as follows:
+
+| operation | count | grows with | what holds the tolerance | who |
+|---|---|---|---|---|
+| load a thread cartridge | **3** | chords | nothing — a bench jig | **hand** |
+| anchor: loop the strand round the post | **3** | chords | the first hoop traps it | **hand** |
+| cut at the far post | **3** | chords | nothing | **hand** |
+| index the cage between chords | **6** | chords | a detent or an index pin | **hand** or machine |
+| place a rod in the fixture | **9** | rods | **the fixture's own V-notch** | **hand** |
+| **position the ring at a joint** | **30** | **joints** | **the axes, to a 1.94 mm margin** | **MACHINE** |
+| **wind 18 turns with the axial feed** | **30** | **joints** | **0.444 mm per turn** | **MACHINE** |
+| dose 145 mg of resin | 30 | joints | a syringe with a stop, ±7% on a 0.001 g scale | hand, for now |
+
+Two things in that table matter more than the rest.
+
+**Rod loading is precision-free, and the code already says why.**
+`fixture.py`: *"GEOMETRY IS HELD BY THE FIXTURE (brief 4.1)."* A rod dropped
+into its V-notch by a hand lands exactly where a gripper would have put it,
+because the notch defines the position and the placer does not. So handing
+the gripper's job to a person loses nothing measurable.
+
+**The glue is the one weak link in the scalability claim.** It is O(joints)
+— 30 doses, and 300 on a ten-truss run. It is also the only manual step
+that grows, which makes it the first thing to automate later, and the
+dispenser is already designed and measured (`check_effectors`). It stays
+manual now because it is precision-light, not because it is scalable.
+
+---
+
+### F2. What the winding mechanism is, and what the groove is for
+
+One ring revolution lays one hoop. The thread's far end is anchored, the
+ring's exit guide orbits the rod, and each orbit wraps one turn. It is a
+lathe with the spindle and the tool exchanged.
+
+The groove exists for exactly one reason, and it is **not** storage:
+
+> **The supply must orbit with the guide.** A bobbin standing still while
+> the guide orbits would have the strand between them twist up and wind onto
+> the *bobbin* instead of the rod.
+
+Everything else about the groove — the 2 × 2 mm section, `PACKING = 0.6`,
+the capacity figure — is *packaging*. It keeps the head's swept radius at
+the rim (20 mm instead of the old rim-mounted spool's 32 mm), which is what
+let `Cage` grow its spine from 3 mm to 8 mm.
+
+A bobbin bolted to the ring's face would also orbit, and the obvious
+objection to a lopsided wheel does not survive arithmetic:
+
+| bobbin | radius | speed | out of balance |
+|---|---|---|---|
+| 2 g | 15 mm | 60 rpm (`Ring.RPM`) | 0.0012 N |
+| 5 g | 15 mm | 150 rpm (`RPM_MAX`) | 0.0185 N |
+
+against a winding tension of 2.0 N — 100× to 1700× smaller than the force
+it is fighting. Balance is not a constraint at these speeds. **But envelope
+still is**, which is why F5 keeps the supply inboard of the rim rather than
+bolting it on.
+
+---
+
+### F3. The anchor and the cut are three per truss, not thirty
+
+This was already in `schedule.py` and had not been read: *"Chord runs
+alternate direction. The thread is continuous along a chord."*
+
+The plan loops four legs round a **thread post on the fixture**
+(`Process.ANCHOR_LEGS = 4`, `Cage.POST_R`, `Cage.POST_L`, and the `post_off`
+window solved earlier), runs the thread continuously along the chord through
+all ten of its joints — carrying 97.7 mm between bands — and cuts once at
+the far post. Then it reverses for the next chord.
+
+| | metre truss |
+|---|---|
+| joints / chords | 30 on 3, ten each |
+| thread per joint | 191 mm |
+| thread per **chord run** | 2718 mm |
+| thread, whole truss | 8.16 m, 0.208 g |
+| **anchors** | **3** |
+| **cuts** | **3** |
+
+The rod is never touched to anchor. The thread is never cut mid-chord.
+**Three of each is O(chords), so both belong in the hand column
+permanently — not as a prototype compromise.**
+
+---
+
+### F4. What that deletes from the design
+
+Hand-cutting removes a real material problem rather than deferring it.
+`Cutter` is specified as a hot wire on the head (`CUT_S = 1.0`,
+`WIRE_OFF = 4.0`):
+
+| thread | hot wire | hand clippers |
+|---|---|---|
+| nylon | works — melts ~220 °C (nylon 6) to ~260 °C (6,6) and fuses the end | fine |
+| para-aramid (Kevlar) | **chars** — no melting point, decomposes ~430–480 °C, so the end frays | fine |
+| E-glass | **will not part it** — softens ~840 °C, above a small nichrome element | fine |
+
+**(Softening and decomposition figures are class values, not measured.)**
+A hot wire suits the shakedown thread and neither material the truss would
+actually ship with. A pair of clippers suits all three, and is used three
+times per truss.
+
+What comes off the machine, in total:
+
+| off the machine | actuators freed | what stops being needed |
+|---|---|---|
+| resin dosing | `a_d` dispenser stroke | the `dose` op, `DOSE_SETTLE_S`, the drop-placement model, the interleaved-vs-separate-pass comparison |
+| rod loading | `a_g` stroke, `a_w` yaw, `a_f` jaws | the gripper, and the kit handling for the truss build |
+| the cut | — (it was a hot wire, not an axis) | `Cutter` entirely, and its material problem |
+| the anchor | — | `Process.ANCHOR_S`, `ANCHOR_LEGS`, and `approach.post_loop` — the solved rectangle the head ran round the post, six moves per chord, which had a recorded failure: the hand-drawn version *"hooked the ring on the post, jammed the x axis, and put the first look 60 mm from its joint"* |
+| loading the spool | — | any machine-loadable groove; the target becomes **hand**-loadable (F5) |
+
+**The cell goes from nine actuators to five: X, Y, Z, ring, cage.** Hand-index
+the cage on a pin and it is four. The magazine and the gripper survive only
+if the **mount** phase stays machine-built, which is a separate decision
+(F10.4).
+
+**A knock-on to PART E that must not rot.** E1's case for keeping a ball
+screw on Z listed four reasons, and one of them was: *"`dose` is the single
+accuracy-critical op that approaches its height from above."* With the
+dispenser off the machine, **that reason is void.** The other three — one
+part family across three axes, angular stiffness where the loading is
+angular, and no spec change — stand, as does the backdriving cost. The
+decision does not reverse; one of its legs is gone.
+
+---
+
+### F5. How a hand loads the thread, three times
+
+The requirement changes from "a machine must load the groove" to "a person
+must load it in under a minute, three times per truss, without dismantling
+the drive." That is a much easier target, and it makes the **cartridge** the
+right answer rather than a nicety.
+
+**The lay is shallow, which is the fact that makes this work.** Ask not
+"how much fits at 60% packing" — the question nobody needed answered, whose
+answer (10.67 m, 136 channel-lengths coiled into 79 mm) is what made the
+groove look unworkable — but **how much fits in a single flat layer that
+cannot nest on itself**:
+
+| | 0.15 mm Kevlar | 0.11 mm nylon |
+|---|---|---|
+| strands abreast in the 2 mm channel | 13 | 18 |
+| **one flat layer** | **1.05 m** | **1.43 m** |
+| one chord run, 2.72 m | 2.6 layers = **0.39 mm** | 1.9 layers = **0.21 mm** |
+| a whole truss, 8.16 m | 7.8 layers = 1.17 mm | 5.7 layers = 0.63 mm |
+| the channel's depth | 2.0 mm | 2.0 mm |
+
+One chord's thread occupies **under a fifth of the channel's depth** in two
+or three shallow layers. The snarl risk was self-inflicted by a capacity
+figure.
+
+**This relaxes a stated intent, so it is recorded rather than assumed.**
+`spec.CHECKS` asserts *"...and holds a whole truss of thread, so nothing is
+reloaded mid-cycle"* (`groove_capacity(0.15) > 8.0`). The assertion still
+passes — the channel *can* hold 10.67 m. What F5 proposes is not using that
+capacity.
+
+**The cartridge, as a proposal (not yet measured or drawn):**
+
+- a thin C-shaped shell that carries the channel, keyed to the ring's gap by
+  one pin and pushed on **axially from the work side** — the rail covers only
+  r 18.2 to 30, so the ring's face inboard of that is open, and a cartridge
+  living at r 12 to 18 can go on and off with the ring still captive in its
+  rail;
+- **a lip or peg at each end of the channel.** This is the retention problem
+  the bare groove has and does not solve: a channel open on one face that
+  simply stops at ±30° has nothing stopping the lay sliding out
+  circumferentially. A cartridge can have end stops because it clears
+  nothing;
+- the free end pokes out of a hole near the bore, for the hand to thread
+  through the exit guide and loop round the post.
+
+**And the bench jig that loads it is trivial.** One revolution of the
+cartridge lays one 79 mm circuit, so 2.72 m is **34 revolutions** — about
+35 seconds at 60 rpm off a cordless drill. The traverse across a 2 mm
+channel over 13 revolutions is slow enough to guide with a finger. A plate
+with a boss and a crank, three times per truss.
+
+---
+
+### F6. The one thing hand-dosing genuinely changes
+
+It is **not** wet-versus-dry winding. The plan already winds dry and doses
+afterwards (`P.add("wind", …)` then `dose(…)`), so hand-dosing moves *when*
+the resin arrives, not *whether* the band is wetted after the fact.
+
+What it changes is **how long a dry band must hold its position**: about a
+second in the interleaved plan, versus the full winding pass — of order
+twenty minutes — if a person doses all thirty afterwards. That makes one
+existing question load-bearing that was not before. `check_ring` already
+asks it: *"whether the wound band alone holds them once the keeper lets
+go."* It now has to hold for twenty minutes across thirty joints rather
+than momentarily across one.
+
+The separate dosing pass is already plannable as `interleave=False`, so both
+orders can be compared on the clock and, more importantly, on the bench.
+**Measure it at P0** (F7): wind a coupon dry, leave it twenty minutes, then
+dose, and see whether the band moved and whether the resin still wets
+through 193 mm of thread. It is a free column in the DoE and it gates the
+whole hand-glue plan.
+
+---
+
+### F7. The purchase order is an uncertainty order, not a budget
+
+The whole cell is in scope. What is staged is the *order*, so that a wrong
+assumption is found on the cheapest possible purchase.
+
+**P0 — the lathe. No C-ring at all.** Spin the **work**, not the ring: two
+rods in a V-jig on a spindle, thread off a stationary bobbin through a
+felt-pad tensioner. This is what `check_ring` already does in simulation and
+for this reason: *"a spinning ring with a spool on its rim needs its pay-out
+reserve carried round with it… So the rig turns the work instead."*
+
+Why it can never be the machine: a rod already built into a truss is held at
+both ends and cannot be spun. **That single fact is the entire justification
+for the C-ring**, and it is worth keeping in view, because it is the only
+reason any of the ring, rail, pinion and belt complexity exists.
+
+But for a coupon it beats winding by hand, because tension and turn count
+become repeatable. It retires the five numbers the whole structural design
+rests on and that nobody has measured: `tension = 2.0 [VERIFY by DoE]`,
+`turns = 18`, `band = 8.0`, the 145 mg dose, and the 50 N qualification
+pull — plus F6's dry-hold question. Cost: a V-jig, a bobbin, a felt washer
+and a spring on a motor already owned.
+
+**P1 — the C-ring turning, on a bench.** The parts in `sim/cad/`. This
+answers what nothing in simulation can: does the thread catch at the 60°
+gap; does the ring wedge in its rail; does a pinion lose a tooth
+re-entering; does a hand-loaded lay pay out at a constant tension. Print the
+rail in four clearance variants — which of them turns *is* the measurement.
+
+**P2 — one real axis.** The 250–300 mm MGN12 + SFU1605, used as the band
+feed. It tests the rail/screw/driver combination all three axes will use, on
+the cheapest possible sample. If the band pitch turns out not to matter
+(P1 can test that by winding a pile instead of a band), the feed can even be
+geared off the ring's own rotation the way a thread-cutting lathe is:
+`8.0 / 18 = 0.444 mm per ring revolution`, which on a 2 mm screw is a 4.5:1
+belt and no second controller.
+
+**P3 — the rest of the axes, the cage, and the machine.** Nothing here is
+in doubt that the simulation has not already measured: `check_approach` puts
+the descent at 1.94 mm and the seated pose at 1.91 mm over all 30 joints.
+
+---
+
+### F8. What this part adds to the open list
+
+1. **The spec and the schedule do not yet say any of this.** `spec.CHECKS`
+   still asserts that nothing is reloaded mid-cycle; the schedule still
+   plans a machine anchor (`post_loop`, `ANCHOR_S`) and a machine cut
+   (`Cutter`); the HAL still carries nine actuators. **This is a design
+   decision recorded in prose and not yet in code**, and prose is where
+   decisions rot. Until it lands, `check_hal`'s actuator contract and
+   `check_schedule`'s op list describe a machine nobody intends to build.
+2. **The live tail is not modelled as an obstacle anywhere.**
+   `approach.head_distance` models the ring's annulus, the raceway's, three
+   pinion discs and the head box — not the thread. The MJCF cell does draw
+   the wound band, but `contype=0 conaffinity=0`: *"a visual band inside the
+   section, adding nothing to the envelope."* So nothing checks that the
+   strand from the exit guide to the work is clear of the descent. This is
+   the cheapest check left to add — the strand is one capsule from `EXIT_R`
+   to the joint — and it is worth more now, because a hand doing the anchor
+   means a human is judging that clearance by eye, three times.
+3. **The cartridge is a proposal, not a design.** F5 has no drawing, no
+   retention measurement and no check. It needs the same treatment the rail
+   and pinion got: derived from `spec.Ring`, emitted as an STL, and checked.
+4. **The mount phase has not been divided.** F1's table covers building the
+   truss. Putting the camera bracket on it is 20 parts placed to 0.80 mm and
+   0.2° (measured), and it is the reason the magazine and the gripper exist.
+   Whether that is hand work or machine work is undecided, and it decides
+   whether four of the freed actuators come back.

@@ -615,6 +615,64 @@ exactly the 0.0200 mm/step the ball screw gives — but its 10.3° lead angle is
 the "borderline" row in E1's own table, so the self-locking benefit, which is
 the whole reason for the change, would have been a coin toss.
 
+**TWO TRAPS IN BUYING ONE, BOTH FOUND ON A LISTING.**
+
+**Trap 1 — "2 mm pitch" is not a 2 mm lead.** The common Robu/AliExpress T8
+screw is sold as *"Trapezoidal **4 Start** Lead Screw 8 mm Thread **2 mm
+Pitch**"*, and its own diagram spells out the catch: *"for a multi-start
+screw, the lead and pitch are related by the number of starts"* — **lead =
+4 × 2 = 8 mm.** On a 7.0 mm pitch diameter that is a **20.0° lead angle**,
+which is exactly the "no" row of the table above. A screw bought on the
+word "pitch" un-does the whole of E2.
+
+| starts | lead | lead angle | mm/step | self-locking |
+|---|---|---|---|---|
+| **1** | 2 mm | **5.20°** | 0.0100 | only against a plastic nut — see trap 2 |
+| 2 | 4 mm | 10.31° | 0.0200 | borderline |
+| **4** (what is on the shelf) | **8 mm** | **19.99°** | 0.0400 | **no, at any friction** |
+
+**Trap 2 — the NUT'S MATERIAL matters as much as the lead**, and E1's own
+table missed it by quoting one friction angle. Self-locking needs the lead
+angle below φ = atan(μ):
+
+| μ | | φ |
+|---|---|---|
+| 0.08 | steel on brass, **oiled** | 4.57° |
+| 0.10 | steel on brass | 5.71° |
+| 0.20 | steel on **POM / plastic** | 11.31° |
+| 0.25 | steel on POM, dry | 14.04° |
+
+So a single-start Tr8×2 at 5.20° is **solidly** self-locking against a
+plastic nut and **marginal** against an oiled brass one. **If a Tr8×2 is
+bought, it must be bought with the POM anti-backlash nut** — which E2's
+parts list already specified, for backlash, and which turns out to carry the
+self-locking too. A brass "copper nut" comes with most of these screws and
+is the wrong nut for both reasons.
+
+**If the 8 mm-lead screw is used anyway — three ways out, and the third is
+the cheap one:**
+
+1. **Holding current** on the Z stepper. Simplest; costs standby heat and
+   leaves the E-stop hazard exactly as E1 described it.
+2. **A brake.** Correct and the most expensive.
+3. **A counterbalance.** Z carries about **1.55 kg = 15.2 N** (yaw stage
+   plus head), and Z's measured stroke is **37 mm** (I2), over which an
+   extension spring's force barely changes. ~15 N of spring or a
+   counterweight removes the backdrive **passively**: no standby power, and
+   cutting motor power no longer drops the head on the work. **For a 1.55 kg
+   head over 37 mm this is the answer** — and it also makes the 8 mm lead's
+   0.0400 mm/step (80 % of `REPEAT`, still passing) the only remaining cost.
+
+**And Z's backlash stays benign either way**, brass nut included, for E2's
+own reason: gravity preloads the nut downward and every accuracy-critical Z
+op descends, so the play is taken up the same way on every approach.
+
+**For the YAW lever the 8 mm lead is fine as bought.** On a 100 mm arm
+0.0400 mm/step is **0.023°/step**, inside H3's 0.05° requirement, and the
+spring preload H3 already specifies takes up the brass nut's backlash in one
+direction — which is what a closed loop needs, since it removes error and
+not hysteresis.
+
 | | before (SFU1204) | after (Tr8×2) |
 |---|---|---|
 | mm per full step, Z | 0.0200 | **0.0100** |

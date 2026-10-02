@@ -6,9 +6,9 @@ change to sim/batline.
 
 Same discipline as sim/scripts/check_all.py and the truss cell's: one
 entry, no choosing which suite is relevant.  M0 has two suites, M1 one
-(check_gantry, Tier 1: a few minutes on four cores, and it runs every
-time); the plan's slow ones (the cloth, the rollers, the swing) join SLOW
-when their rigs exist.
+(check_gantry) and M2 one (check_cameras), each Tier 1, several minutes on
+four cores, and they run every time; the plan's slow ones (the cloth, the
+rollers, the swing) join SLOW when their rigs exist.
 """
 import os
 import subprocess
@@ -22,6 +22,8 @@ FAST = [
     ("check_line", "the line sized from the bat, and a month of it at 300 and 1,000"),
     ("check_gantry", "the station module: repeatability, lost steps, commissioning and every op, "
                      "on two travels"),
+    ("check_cameras", "the calibration station's rig: placement, self-calibration, pose, drift and colour, "
+                      "on two bats, model and rendered cameras"),
 ]
 SLOW = []
 

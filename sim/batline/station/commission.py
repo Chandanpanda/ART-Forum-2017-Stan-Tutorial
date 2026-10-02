@@ -173,7 +173,7 @@ def commission(ex, mod, log=None):
     fx = mod.regions["fixture"]
     fid = fx.fiducial_points()[0]
     z_top = fx.top
-    d = yield from ex.look(fid[:2], z_top)
+    d = yield from ex.look(fid[:2], z_top, over="fixture")
     if not d.ok:
         return None, {"failed": "camera: " + d.why}
     H0 = np.array(d.data["head"])
@@ -226,7 +226,7 @@ def commission(ex, mod, log=None):
     # ------------------------------------------------- 3. the reference pin
     pin = mod.regions["pin"]
     pin_top = pin.top + Artefact.PIN_H
-    d = yield from ex.look(pin.centre, pin_top)
+    d = yield from ex.look(pin.centre, pin_top, over="pin")
     if not d.ok:
         return None, {"failed": "pin: " + d.why}
     P = np.array(d.data["p"])
@@ -242,7 +242,7 @@ def commission(ex, mod, log=None):
             continue
         seen = []
         for p in pts:
-            d = yield from ex.look(p[:2], r.top)
+            d = yield from ex.look(p[:2], r.top, over=name)
             if not d.ok:
                 return None, {"failed": "%s fiducial: %s" % (name, d.why)}
             seen.append(d.data["p"])

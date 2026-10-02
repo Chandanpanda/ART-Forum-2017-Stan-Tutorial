@@ -459,6 +459,32 @@ class Build:
     HOME        = 0.5          # mm, where a home switch trips
 
 
+class RigBuild:
+    """How far the built camera rig lies from its drawing, 1 sigma
+    [estimate: measure the first build].  Self-calibration finds all of it;
+    the simulation draws it once per build, from its own random stream,
+    so there is something to find."""
+    CAM_POS     = 5.0          # mm, a camera on its bracket
+    CAM_TILT    = 1.0          # deg
+    FOCAL       = 0.015        # of the focal length (an M12 lens's +-5%, as 3 sigma)
+    CENTRE_PX   = 15.0         # px, the principal point: lens thread to sensor
+    DIST        = (0.02, 0.01, 0.003, 5e-4, 5e-4)   # k1 k2 k3 p1 p2, about the lens's curve
+    COLOUR_GAIN = 0.05         # of each channel's gain: the sensor's white balance
+    COLOUR_MIX  = 0.03         # each off-diagonal of the sensor's colour mixing
+    MARKER      = 0.3          # mm, a marker's stem in its tapped hole
+    AXIS_SKEW   = 0.1          # deg, the inner axis off square to the outer
+    AXIS_OFFSET = 0.5          # mm, the inner axis off the outer
+    ENCODER_ZERO = 0.2         # deg, each axis' encoder zero
+    CENTRE      = 1.0          # mm, the gimbal's centre off its drawing
+    LIGHT       = 0.05         # of a ring light's output
+    # of the pull a marker's stem puts on its centroid, about the area
+    # model (rig/vision.stem_bias_px): its scale, one number for the rig,
+    # set by how bright a ball's edge is against its middle and by how the
+    # centroider weights it [estimate: the rendered ring pulls 1.28 of the
+    # model, check_cameras].  Self-calibration solves it
+    STEM        = 0.3
+
+
 class Artefact:
     """The module's own test pieces: what it commissions itself against and
     what check_gantry exercises every tool on (plan: "calibrated by the
@@ -478,6 +504,90 @@ class Artefact:
     NUT_H       = 8.0
     PAD_W       = 12.0         # mm, the plate the pogo block lands on
     PAD_T       = 2.0          # mm thick
+
+
+# ------------------------------------- the calibration station's camera rig
+# Station 4 is the station module plus a two-axis gimbal that turns the bat
+# through every orientation, and eight cameras round it that measure the
+# clamp's pose in every frame (plan, "Calibration and test", milestone M2).
+# What follows is that rig's hardware as bought.  rig/spec.py derives the
+# rig from it and the bat -- the rings' radii, the gimbal's height, the
+# marker size, the lens and how far the cameras stand off -- and
+# rig/place.py places the cameras.  None of it is typed there.
+
+class RingCam:
+    """One of the eight: a global-shutter colour module, 1920 x 1200 at
+    3.0 um (AR0234 class), an M12 lens, a ring light round the lens, all
+    eight on one hardware trigger [VERIFY: the chosen module's datasheet]."""
+    W, H        = 1920, 1200
+    PIXEL       = 3.0e-3       # mm
+    BITS        = 10
+    FULL_WELL   = 10000.0      # e- at the gain the rig runs [VERIFY]
+    READ_NOISE  = 4.0          # e- rms [VERIFY]
+    TRIGGER_SKEW = 1.0e-6      # s, 1 sigma, between cameras on one trigger line [VERIFY]
+    # The M12 lenses stocked for a 1/2.6" sensor: (focal mm, k1, k2), the
+    # radial terms fitted to each datasheet's distortion curve -- the
+    # drawing a lens starts from; RigBuild says how far one lies from it.
+    # Short lenses barrel hard [VERIFY: the supplier's curves]
+    LENSES      = ((2.8, -0.30, 0.09), (3.6, -0.24, 0.06), (4.0, -0.20, 0.04), (6.0, -0.11, 0.015),
+                   (8.0, -0.06, 0.005), (12.0, -0.03, 0.0), (16.0, -0.02, 0.0), (25.0, -0.01, 0.0))
+    # px across a ball's image for its centroid to hold, taken from the
+    # head camera's until check_cameras' pixels rig measures this one
+    MIN_PX      = HeadCam.MIN_PX
+    # a ball's centroid, 1 sigma per axis, against where the model camera
+    # puts it.  Measured, not chosen: check_cameras' pixels rig holds the
+    # model camera against PixelVision on rendered, distorted, noisy frames
+    # and re-measures it every run [VERIFY: on the camera]
+    CENTROID_PX = 0.07
+    BODY        = (36.0, 36.0, 45.0)   # mm: board square, and its depth with lens and ring light
+    LIGHT_D     = 60.0         # mm, the ring light's outside diameter
+    MASS        = 90.0
+
+
+class Marker:
+    """A retroreflective ball on a threaded stem: what motion capture
+    tracks.  Lit by a ring light round the lens that sees it, it returns
+    hundreds of times what a white diffuse surface does, so a short exposure
+    sees a uniformly bright disc on a dark frame [VERIFY: the supplier]."""
+    D_MENU      = (6.4, 9.5, 12.7, 14.0, 19.0)   # mm, the sizes sold
+    STEM_D      = 3.0          # mm, M3
+    RETRO_GAIN  = 300.0        # its return over a white diffuse surface's, same light [VERIFY]
+
+
+class Gimbal:
+    """The two-axis gimbal: an outer ring on two bearings turning about the
+    aisle's direction, an inner ring on two bearings in it, each axis a
+    stepper with an absolute encoder.  Square aluminium tube [VERIFY]."""
+    SECTION     = 20.0         # mm, the rings' square tube
+    HUB         = (40.0, 30.0) # mm, a bearing housing's diameter and length
+    POST        = 40.0         # mm, the outer axis' two posts, square
+    ENCODER_BITS = 17          # absolute, per turn [VERIFY]
+
+
+class Clamp:
+    """What holds the bat in the inner ring: V-jaws closing on the handle
+    against a stop at the pommel, the pogo block on the jaw over the
+    window; a live centre engaging the tip [VERIFY: the build, M3]."""
+    JAW_L       = 40.0         # mm along the handle the jaws hold
+    JAW_T       = 12.0         # mm, a jaw outside the grip
+    STOP_T      = 8.0          # mm, the pommel stop's plate
+    BACK        = 30.0         # mm, stop to ring: the jaws' actuator
+    CENTRE_D    = 24.0         # mm, the live centre's body
+    # a colour card on the jaws' flanks and underside, four patches in a
+    # row on each: matte white, red, green and blue, each a printed ink
+    # with a measured reflectance (ISO 13655) [VERIFY: the card's certificate]
+    CARD_PATCH  = 12.0         # mm, square
+    CARD_RGB    = ((0.90, 0.90, 0.90), (0.75, 0.12, 0.10), (0.12, 0.60, 0.20), (0.10, 0.15, 0.65))
+
+
+class CalBar:
+    """The certified bar the gimbal turns for self-calibration: a carbon
+    tube between the clamp's stop and the live centre, as long as the bat,
+    with balls on short stems, each ball's place measured on a CMM
+    [VERIFY: the certificate]."""
+    BALLS       = 8
+    CERT        = 0.005        # mm, 1 sigma, each ball's certified place (a CMM to ISO 10360)
+    TUBE_D      = 25.0         # mm
 
 
 # ===================================================== THE MODULE'S RULES
@@ -507,6 +617,39 @@ class Module:
                                # before it may call anything a contact
     TOUCH_POINTS = 3           # readings in contact a touch fits: a line needs two, the third
                                # is what tells a contact from a spike
+
+
+class Rig:
+    """What the calibration station's camera rig is held to.  Rules, each
+    with its reason; rig/spec.py derives a rig that meets them or reports
+    which one it misses."""
+    CAMERAS     = 8            # the plan's ring
+    # cameras that make a marker CHECKED: two triangulate it, the third is
+    # what tells a wrong match or a glint from a marker without the rest
+    MIN_VIEWS   = 3
+    # checked markers the pose must rest on at every pose with any one
+    # camera lost (blocked, knocked, dead): three not in a line fix a rigid
+    # body, and PER_GAP keeps any three off a line.  The plan asked for
+    # every marker checked at every pose; the ring hides its own balls from
+    # too many directions for eight cameras to do that (README, M2)
+    MIN_CHECKED = 3
+    # balls between each neighbouring pair of the inner ring's four fixtures
+    # (its two bearings, the clamp, the live centre), alternately above and
+    # below the ring's plane: two per gap is the fewest that leaves no three
+    # in a line and no four in a plane, so a pose never rests on a degenerate set
+    PER_GAP     = 2
+    # ball diameters of stem between a ball and the tube it stands on, as a
+    # motion-capture base holds its ball: the tube then cuts into a ball's
+    # outline only from behind the tube
+    STANDOFF    = 1.0
+    # of each calibration target (imu_fusion_sim.CALIBRATED) the rig's own
+    # error may take: a 4:1 test uncertainty ratio, which grows the total
+    # by 3% (sqrt(1 + 1/16)).  The plan's "well inside"
+    SHARE       = 0.25
+    # [OPEN] the CIE76 difference a band's colour may read back with: one
+    # just-noticeable difference (Mahy et al. 1994), so the stored colour is
+    # the printed one to the eye, until the app's band finder asks for less
+    DE_MAX      = 2.3
 
 
 # ======================================================= PRODUCT RULES

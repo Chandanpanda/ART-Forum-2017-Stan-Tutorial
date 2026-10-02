@@ -319,12 +319,13 @@ def scene(mod, build=None, pieces=(), render=(HeadCam.W, HeadCam.H)):
     # ------------------------------------------------------ the frame
     # two X rails on posts, one each side of the travel, high enough for
     # the bridge to carry Y and Z over everything: drawn, not collided
-    rail_z = A["z"].hi + _z_stack(mod)
-    ry0, ry1 = A["y"].lo - 60.0, A["y"].hi + H.camera[1] + 60.0
+    fr = SS.frame(mod)
+    rail_z = fr["rail_z"]
+    ry0, ry1 = fr["rails"]
     for i, yy in enumerate((ry0, ry1)):
-        world.append(box("xrail%d" % i, ((A["x"].lo + A["x"].hi) / 2.0, yy, rail_z),
-                         ((A["x"].hi - A["x"].lo) / 2.0 + 60.0, Frame.BEAM / 2.0, Frame.BEAM / 2.0), C_FRAME))
-        for j, xx in enumerate((A["x"].lo - 60.0, A["x"].hi + 60.0)):
+        world.append(box("xrail%d" % i, ((fr["posts"][0] + fr["posts"][1]) / 2.0, yy, rail_z),
+                         ((fr["posts"][1] - fr["posts"][0]) / 2.0, Frame.BEAM / 2.0, Frame.BEAM / 2.0), C_FRAME))
+        for j, xx in enumerate(fr["posts"]):
             world.append(box("post%d%d" % (i, j), (xx, yy, rail_z / 2.0), (Frame.BEAM / 2, Frame.BEAM / 2,
                                                                             rail_z / 2.0), C_FRAME))
 
@@ -505,7 +506,7 @@ def scene(mod, build=None, pieces=(), render=(HeadCam.W, HeadCam.H)):
 
 def _z_stack(mod):
     """mm from the head point up to the Y carriage: the Z plate's height."""
-    return mod.axes["z"].travel + 2.0 * Rail.BLOCK_L + LoadCell.SIZE[2] + Frame.PLATE_T
+    return SS.frame(mod)["stack"]
 
 
 def _gravcomp(mod, m):

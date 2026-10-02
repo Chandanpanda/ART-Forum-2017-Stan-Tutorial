@@ -29,6 +29,7 @@ clear itself, the person's own time limit, and anything a station does
 inside a job -- those are its job time, from line.py.
 """
 import heapq
+import zlib
 from dataclasses import dataclass, field
 from math import ceil
 
@@ -138,8 +139,8 @@ class LineSim:
     def __init__(self, plan, seed=0, faults=True, outage_day=None, days=None):
         self.P = P = plan
         self.ln = P.line
-        self.rng = np.random.default_rng(seed)
         self.seed = seed
+        self._streams = {}
         self.faults = faults
         self.k = self.ln.bats_per_tray
         self.window = self.ln.days_month
@@ -248,7 +249,7 @@ class LineSim:
         lam = self.ln.demand_month / (self.ln.days_month * DAY)
         t = 0.0
         while True:
-            t += self.rng.exponential(1.0 / lam)
+            t += self._rng("orders").exponential(1.0 / lam)
             if t >= self.horizon:
                 break
             self.at(t, self._order)
@@ -312,11 +313,23 @@ class LineSim:
     def _room(self, what):
         self._full.pop(what, None)
 
+    def _rng(self, stream):
+        """One source of chance's own random stream -- the orders, one
+        resource's faults, one station's rejects, one part's plates.  Common
+        random numbers, the standard way to compare two variants of one
+        simulation: a change elsewhere in the line (a station's time, the
+        floor) then deals the same month, not a new one, so a board moves
+        because the line changed and not because the dice were re-rolled."""
+        g = self._streams.get(stream)
+        if g is None:
+            g = self._streams[stream] = np.random.default_rng([self.seed, zlib.crc32(stream.encode())])
+        return g
+
     # =========================================================== faults
     def _next_fault(self, r, t):
         mtbf = Faults.ROBOT_MTBF_H if r.name == "robot" else Faults.STATION_MTBF_H
         # running hours to wall-clock: the line runs hours_day of every 24
-        dt = self.rng.exponential(mtbf * 3600.0 * 24.0 / self.ln.hours_day)
+        dt = self._rng("fault " + r.name).exponential(mtbf * 3600.0 * 24.0 / self.ln.hours_day)
         self.at(t + dt, self._fault, r)
 
     def _fault(self, r):
@@ -430,7 +443,7 @@ class LineSim:
         return self._start("frame", dt, self._built, mt, i)
 
     def _built(self, mt, i):
-        ok = self.rng.random() >= Faults.REJECT["frame"]
+        ok = self._rng("reject frame").random() >= Faults.REJECT["frame"]
         mt.slots[i] = (self.t + Epoxy.HANDLING_H * 3600.0, ok)
         self.last_dose = self.t
         self.built += 1
@@ -504,7 +517,7 @@ class LineSim:
             if pt is not None:
                 pt.kits -= 1
             dt = st.job_s("bat")
-            if name == "calibration" and self.rng.random() < 1.0 / Est.SWING_EVERY:
+            if name == "calibration" and self._rng("swing").random() < 1.0 / Est.SWING_EVERY:
                 dt += st.job_s("swing")
             return self._start(name, dt, self._did, name, bt, i)
         bt.done.add(name)
@@ -522,7 +535,7 @@ class LineSim:
                 self.bulk[k] -= 1
                 self._mark("store " + k, self.bulk[k])
             self.cons["labels"] -= 1
-        if self.rng.random() < Faults.REJECT[name]:
+        if self._rng("reject " + name).random() < Faults.REJECT[name]:
             bat.ok = False
             self.rejects += 1
             order.bat, bat.order = None, None
@@ -788,7 +801,7 @@ class LineSim:
                     break
                 if pr["part"] == part and pr["t_done"] is None:
                     pr["t_done"] = self.t + v["plate_h"] * 3600.0
-                    pr["good"] = self.rng.random() >= Faults.PRINT_FAIL
+                    pr["good"] = self._rng("print " + part).random() >= Faults.PRINT_FAIL
                     self.plates += 1
                     self.plates_failed += 0 if pr["good"] else 1
                     want -= 1

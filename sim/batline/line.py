@@ -219,6 +219,10 @@ class Station:
     fixture: tuple       # (u, v) centre
     fixture_size: tuple  # (u, v)
     footprint: tuple
+    # the part of the fixture the head works on, when it is not all of it:
+    # ((along the bat, across), its top above the floor datum)
+    work: tuple = None
+    sweep: tuple = None       # ((u, v, z), r): a ball the fixture sweeps while the head waits (station/spec.py)
     reach: tuple = (0.0, 0.0, 0.0)
     travel: tuple = (0.0, 0.0, 0.0)
     module: object = None
@@ -257,12 +261,14 @@ class _Head:
     def z(self):
         return (motion.trap_time(self.lift, self.v["z"], self.a["z"]) + Gantry.SETTLE_S) * Est.PACE
 
-    def transfer(self, a, b):
+    def transfer(self, a, b, rise=0.0):
         """The head at b goes to a, takes the part, brings it to b and
         leaves it there: two crossings, four strokes of the lift, a grip
-        and a release."""
+        and a release.  Where b stands `rise` above a, the head goes down
+        it empty and up it carrying."""
         self.at(a), self.at(b)
-        return 2.0 * self.move(a, b) + 4.0 * self.z() + 2.0 * Gripper.JAW_CLOSE_S
+        climb = 2.0 * (motion.trap_time(rise, self.v["z"], self.a["z"]) * Est.PACE if rise > 0.0 else 0.0)
+        return 2.0 * self.move(a, b) + 4.0 * self.z() + climb + 2.0 * Gripper.JAW_CLOSE_S
 
     def slide(self, length):
         """A free move along the bat's axis -- the module's x."""
@@ -273,16 +279,18 @@ def _stroke(length, v=None):
     return length / (Est.INSERT_V if v is None else v)
 
 
-def _station(name, docks, fixture_ab, dg, lift, limits=None):
+def _station(name, docks, fixture_ab, dg, lift, limits=None, around=0.0):
     """Lay a station out: docks side by side along the aisle, the fixture
-    behind them.  fixture_ab is the fixture's (along the bat, across it)."""
+    behind them.  fixture_ab is the fixture's (along the bat, across it);
+    `around` is how far round the fixture's centre the station must own the
+    floor -- the calibration station's cameras -- short of the aisle."""
     fu, fv = fixture_ab if dg.along else fixture_ab[::-1]
-    width = max(len(docks) * dg.pitch, fu)
+    width = max(len(docks) * dg.pitch, fu, 2.0 * around)
     u0 = (width - len(docks) * dg.pitch) / 2.0
     dock_u = {k: u0 + (i + 0.5) * dg.pitch for i, k in enumerate(docks)}
     fixture = (width / 2.0, dg.depth + Dock.CLEAR + fv / 2.0)
     st = Station(name, tuple(docks), dock_u, fixture, (fu, fv),
-                 (width, dg.depth + Dock.CLEAR + fv))
+                 (width, max(dg.depth + Dock.CLEAR + fv, fixture[1] + around)))
     return st, _Head(dg, lift, None if limits is None else limits.get(name))
 
 
@@ -295,8 +303,8 @@ def _slots(st, dg, dock):
     return [(u, v + o) if dg.along else (u + o, v) for o in dg.slots]
 
 
-def _mean_transfer(head, slots, b):
-    return sum(head.transfer(a, b) for a in slots) / len(slots)
+def _mean_transfer(head, slots, b, rise=0.0):
+    return sum(head.transfer(a, b, rise) for a in slots) / len(slots)
 
 
 # ============================================================ THE FRAME
@@ -456,14 +464,22 @@ def _layout(d, limits=None):
     out["sleeve"] = (st, h)
 
     # ---------------------------------------------------------------- 4
-    # The gimbal turns the bat about its middle, so it sweeps a disc as
-    # wide as the bat is long; the camera ring stands outside that (M2).
-    sweep = L + 2.0 * Dock.CLEAR
-    st, h = _station("calibration", ("bats",), (sweep, sweep), dg, lift, limits)
+    # The gimbal turns the bat about its middle through every orientation,
+    # so it sweeps a ball; its eight cameras stand round it (rig/spec.py
+    # derives both from the bat).  The fixture is the gimbal on its posts;
+    # the station owns the floor out to its cameras; the head works only on
+    # the bat in the parked gimbal's clamp, and waits at home, above the
+    # sweep, while the gimbal turns.
+    from .rig import spec as rig_spec
+    rig = rig_spec.design(d)
+    st, h = _station("calibration", ("bats",), rig.footprint(), dg, lift, limits, around=rig.reach())
+    st.work = rig.work()
+    st.sweep = (st.fixture + (rig.h_c,), rig.R_s + rig.clear)
     F = st.fixture
+    rise = rig.work()[1]
     step = degrees(sqrt(4.0 * pi / Est.STILL_POSES))   # mean spacing of N directions on a sphere
     st.jobs["bat"] = [
-        Op("the bat from its slot into the gimbal's clamp", _mean_transfer(h, _slots(st, dg, "bats"), F),
+        Op("the bat from its slot into the gimbal's clamp", _mean_transfer(h, _slots(st, dg, "bats"), F, rise),
            "move"),
         Op("the pogo clamp closed and opened", 2.0 * h.z(), "move"),
         Op("held still at each pose", Est.STILL_POSES * Est.STILL_S, "est"),
@@ -471,7 +487,7 @@ def _layout(d, limits=None):
         Op("spun about each axis", Est.SPIN_AXES * Est.SPIN_TURNS / Est.SPIN_RPS, "est"),
         Op("spun with the IMU off the axis", Est.LEVER_SPINS * Est.LEVER_S, "est"),
         Op("the factory iPhone's test", Est.IPHONE_S, "est"),
-        Op("the bat back into its slot", _mean_transfer(h, _slots(st, dg, "bats"), F), "move")]
+        Op("the bat back into its slot", _mean_transfer(h, _slots(st, dg, "bats"), F, rise), "move")]
     st.jobs["swing"] = [Op("a full-speed swing in the enclosed rig", Est.SWING_S, "est")]
     st.jobs["day"] = [Op("the golden bat, before the day's first", Est.GOLDEN_S, "est")]
     st.jobs["tray"] = [Op("the tray's tag read", Est.TAG_READ_S, "est")]

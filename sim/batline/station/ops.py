@@ -177,18 +177,21 @@ class Executor:
         return self._record(Done(ok, "extend" if out else "retract", "" if ok else "no reed switch", {"tool": kind}), t0)
 
     # ============================================================= LOOKING
-    def look(self, p, z_surface, looks=2):
+    def look(self, p, z_surface, looks=2, over=None):
         """Where the disc nearest station point p (x, y) is, in the station
-        frame: the camera put over p from the carrying height and the disc
-        found, then the camera centred on it and the disc found again, so
-        the answer never leans on the lens's edges or on a tall disc's side."""
+        frame: the camera put over p from the carrying height -- or, given
+        the region `over`, from that region's own (StationModule.z_over) --
+        and the disc found, then the camera centred on it and the disc found
+        again, so the answer never leans on the lens's edges or on a tall
+        disc's side."""
         t0 = self.clock.now()
         if self.vision is None:
             return self._record(Done(False, "look", "no camera"), t0)
         target = np.asarray(p[:2], float)
+        z_look = self.mod.z_over.get(over, self.mod.z_carry) if over is not None else self.mod.z_carry
         for _ in range(looks):
-            hx, hy = self.frame.camera_head(target, self.mod.z_carry, z_surface)
-            d = yield from self.travel((hx, hy, None))
+            hx, hy = self.frame.camera_head(target, z_look, z_surface)
+            d = yield from self.travel((hx, hy, None if abs(z_look - self.mod.z_carry) < 1e-6 else z_look))
             if not d.ok:
                 return self._record(Done(False, "look", d.why), t0)
             uv = self.vision.locate()

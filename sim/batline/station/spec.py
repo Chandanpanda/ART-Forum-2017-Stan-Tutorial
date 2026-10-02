@@ -127,6 +127,16 @@ class StationSpec:
     drives: tuple = Module.DRIVES
     payload: float = 0.0       # g, the heaviest part a tool carries
     force: float = 0.0         # N, the largest process force a tool applies
+    # a ball a fixture sweeps while the head waits at home, ((x, y, z), r):
+    # the calibration station's gimbal turns the bat through every
+    # orientation.  Z homes high enough for the retracted tips to clear its
+    # top, and the frame's posts stand outside it
+    sweep: tuple = None
+
+    @property
+    def overhead(self):
+        """mm above the floor datum the head must clear at home."""
+        return 0.0 if self.sweep is None else self.sweep[0][2] + self.sweep[1]
 
 
 # ================================================================ HEAD
@@ -408,6 +418,7 @@ class StationModule:
     look: dict                 # region -> mm, the lens to the region's top at z_carry
     counterbalance: float      # N holding Z up: the Z assembly's weight and Z's preload
     fits: list = field(default_factory=list)
+    z_over: dict = field(default_factory=dict)   # region -> the head z it looks down at it from
 
     def tip(self, kind, extended=True):
         return self.head.tip(kind, extended)
@@ -546,7 +557,20 @@ def derive(spec):
     z_low = min(tops) - max(sink(k) for k in spec.tools) - gaps()[0] - head.z_extended
     z_safe = tallest + clear - head.z_retracted       # retracted tips clear of everything
     z_carry = z_safe + part                           # ... with a part hanging from one
-    look = {r.name: z_carry + head.camera[2] - r.top for r in spec.regions}
+    # over each region, the height that clears what stands on it and on
+    # every region the head overlaps there, a part hanging: where the head
+    # looks down from.  Where every region stands at one height it is
+    # z_carry; where they do not (the calibration station's clamp stands a
+    # gimbal's height over its dock), a camera looking from the highest
+    # sees the lowest too small to find a fiducial
+    grow = np.hypot(head.plate[0], head.plate[1] + 2.0 * head.camera[1]) / 2.0
+
+    def over(r):
+        near = [q for q in spec.regions
+                if all(q.lo[i] - grow <= r.hi[i] and r.lo[i] <= q.hi[i] + grow for i in range(2))]
+        return max(q.top + q.tall for q in near) + clear - head.z_retracted + part
+    z_over = {r.name: over(r) for r in spec.regions}
+    look = {r.name: z_over[r.name] + head.camera[2] - r.top for r in spec.regions}
 
     # ------------------------------------------- masses, from the parts
     # Z: everything below the load cell, the load cell, the Z plate and its
@@ -571,8 +595,10 @@ def derive(spec):
 
     # Z carries the Z assembly, its weight counterbalanced and its preload
     # pulling it up, against which it carries the heaviest part a tool
-    # picks up.  It homes at the top: homing never lowers a tool
-    axes["z"] = build("z", z_low, z_carry, m_z, 1, 2.0 * Rail.DRAG, spec.payload * G, False)
+    # picks up.  It homes at the top: homing never lowers a tool -- and
+    # home is high enough that the retracted tips clear the overhead
+    z_top = max(z_carry, spec.overhead + clear - head.z_retracted) if spec.overhead > 0.0 else z_carry
+    axes["z"] = build("z", z_low, z_top, m_z, 1, 2.0 * Rail.DRAG, spec.payload * G, False)
     # Y carries Z, its drive, the Y carriage plate and its blocks
     yp = (zp[0] + 2.0 * Frame.BEAM, zp[1])
     m_y = (m_z + axes["z"].drive.fixed_mass() + 2.0 * Rail.BLOCK_MASS
@@ -586,7 +612,8 @@ def derive(spec):
     axes["x"] = build("x", lo[0], hi[0], m_x, Module.X_DRIVES, 2.0 * Module.X_DRIVES * Rail.DRAG, 0.0, True)
 
     counterbalance = m_z * G + axes["z"].preload
-    mod = StationModule(spec, head, axes, regions, fids, clear, z_safe, z_carry, look, counterbalance)
+    mod = StationModule(spec, head, axes, regions, fids, clear, z_safe, z_carry, look, counterbalance,
+                        z_over=z_over)
     mod.fits = fits(mod)
     return mod
 
@@ -636,6 +663,16 @@ def fits(mod):
         fit("the load cell reads the largest press", LoadCell.RATED - sp.force)
         fit("z holds the largest press with the margin",
             z.drive.f_magnet() / (sp.force + z.preload) - Module.TORQUE_SF)
+    # a fixture that moves while the head waits at home
+    if sp.overhead > 0.0:
+        z = mod.axes["z"]
+        lowest = z.hi + mod.head.z_retracted
+        fit("the head at home clears what moves under it by %.1f mm" % mod.clear,
+            lowest - sp.overhead - mod.clear, "retracted tips at %.1f, over %.1f" % (lowest, sp.overhead))
+        (sx, sy, _), r = sp.sweep
+        fr = frame(mod)
+        near = min(np.hypot(px - sx, py - sy) for px in fr["posts"] for py in fr["rails"]) - Frame.BEAM / sqrt(2.0)
+        fit("the frame's posts stand outside what moves", near - r, "nearest post %.1f from it" % near)
     # the camera: a fiducial wide enough to find, from the look height
     for name, rng in mod.look.items():
         if not mod.regions[name].fiducials:
@@ -644,6 +681,30 @@ def fits(mod):
         fit("the camera sees a fiducial on %s at %.0f px, from %.0f mm" % (name, HeadCam.MIN_PX, rng),
             px - HeadCam.MIN_PX, "%.1f px" % px)
     return out
+
+
+def frame(mod):
+    """The module's fixed frame, as station/mjcf.py draws it: two X rails
+    on four posts, one each side of the travel, high enough for the bridge
+    to carry Y and Z over everything.  {"rail_z", "rails" (y of each),
+    "posts" (x of each pair), "beam"}, in the station frame."""
+    A, H = mod.axes, mod.head
+    stack = A["z"].travel + 2.0 * Rail.BLOCK_L + LoadCell.SIZE[2] + Frame.PLATE_T
+    edge = 60.0                # mm the frame stands past the travel: a drawing, as station/mjcf.py's
+    rails = [A["y"].lo - edge, A["y"].hi + H.camera[1] + edge]
+    posts = (A["x"].lo - edge, A["x"].hi + edge)
+    sw = mod.spec.sweep
+    if sw is not None:
+        # a post inside the swept ball's plan would stand in its way: the
+        # rails move out until their posts clear it
+        (sx, sy, _), r = sw
+        reach = r + Frame.BEAM / sqrt(2.0)
+        dx = min(abs(p - sx) for p in posts)
+        if dx < reach:
+            half = sqrt(reach ** 2 - dx ** 2)
+            rails = [min(rails[0], sy - half), max(rails[1], sy + half)]
+    return {"rail_z": A["z"].hi + stack, "stack": stack, "rails": tuple(rails), "posts": posts,
+            "beam": Frame.BEAM}
 
 
 def thermal_reach():
@@ -713,10 +774,22 @@ def from_line(st, dg, d, tools=None, drives=None):
         regions.append(Region(k, xy(st.dock_u[k], dg.depth / 2.0), tray, 0.0, lift, reach(k)))
     fc = xy(*st.fixture)
     fs = xy(*st.fixture_size)
-    regions.append(Region("fixture", fc, fs, 0.0, lift, reach("fixture")))
+    # where the station says the head works on only part of its fixture
+    # (the calibration station's head reaches the gimbal's clamp, not the
+    # gimbal), that part is the region, at its own height
+    work = getattr(st, "work", None)
+    if work is not None:
+        fs, top = work
+    else:
+        top = 0.0
+    regions.append(Region("fixture", fc, fs, top, lift, reach("fixture")))
     regions.append(pin_region(regions[-1], tools))
+    sweep = getattr(st, "sweep", None)
+    if sweep is not None:
+        (u, v, z), r = sweep
+        sweep = (xy(u, v) + (z,), r)
     return StationSpec(st.name, tools, tuple(regions), Module.DRIVES if drives is None else tuple(drives),
-                       payload=payload(d, st.docks))
+                       payload=payload(d, st.docks), sweep=sweep)
 
 
 def keepout(tools):

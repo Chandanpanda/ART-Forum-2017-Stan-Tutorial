@@ -1,18 +1,51 @@
 # IMU bat: automated build and calibration line
 
-A snapshot, 1 October 2026, of the design doc of the same name.
+A snapshot, 1 October 2026, of the design doc of the same name; and, from 2 October, the first milestone (M0) of its simulation plan, "IMU bat line: MuJoCo implementation plan". Where the two differ, the plan wins: it keeps a person for six manual tasks, including the sleeves, and builds every station as a gantry module. Whether the 5-DOF arm stays is still open; M0 does not depend on it.
 
-`sim/batline` is the design of an unattended line that builds, calibrates and tests the IMU bat, and the study that decided the bat. Nothing in it is wired into the check suites yet.
+`sim/batline` is the design of an unattended line that builds, calibrates and tests the IMU bat, the study that decided the bat, and the specs, the derived bat and the fast line model that the rest of the simulation builds on.
+
+    python3 sim/scripts/batline/check_all.py                # check_bat and check_line, under a minute
+    python3 sim/scripts/batline/demo_bat.py [--bat adult]   # the bat rendered: twelve views, one contact sheet
+    cd sim && python3 -m batline.line [--demand 1000]       # the bat and the line sized for it, as text
 
 | file | what it is |
 | --- | --- |
-| `README.md` | this design: the bat, the stations, transport, calibration, testing, unattended running, capacity, how it maps onto `sim/truss` and `sim/rfgyc26`, build order, risks |
-| `imu_fusion_sim.py` | Monte Carlo of how well an IMU bat, anchored by the phone camera, knows its sweet spot at contact. numpy only: `python3 sim/batline/imu_fusion_sim.py [--quick]` |
+| `README.md` | this design: the bat, the stations, transport, calibration, testing, unattended running, capacity, how it maps onto `sim/truss` and `sim/rfgyc26`, build order, risks; and what M0 found |
+| `spec.py` | the facts (an AA cell's IEC envelope, the printer, the board's placeholder drawing, the knit), the product rules, the two task specs (`Bat`, `Line`), and the estimates (`Est`, `Faults`, `Person`), each naming the milestone that replaces it |
+| `product.py` | the bat derived from a `Bat`: the handle's section, the board slot and its snap, the cell stack, the frame's truss, the sleeve blank, the bands' zones, the tube and the tray, every part's mass, and every fit as a margin |
+| `mjcf.py` | the derived bat in MuJoCo, one body per part, with liners that measure the fits to the micrometre, and the views `demo_bat.py` renders |
+| `line.py` | the line sized from a `Line` and a derived bat: station times, the floor, printers, mandrels, stores, trays, racks, the person's minutes, and which station saturates first |
+| `executive/des.py` | the fast line model: a month of the line, with faults, rejects and a robot outage, in under a second |
+| `imu_fusion_sim.py` | Monte Carlo of how well an IMU bat, anchored by the phone camera, knows its sweet spot at contact. numpy only: `python3 sim/batline/imu_fusion_sim.py [--quick]`. `product.py` sizes the frame against its hardest swing |
 | `imu_fusion_results.md` | what that simulation found |
 | `results_raw.md` | its full output |
 | `line-layout.png` | the line at a glance |
+| `../scripts/batline/` | `check_all.py`, `check_bat.py`, `check_line.py`, `demo_bat.py` |
 
 Every number in this folder is a model or a planning estimate, not a measurement.
+
+## Milestone 0: the specs, the bat and the line model
+
+Nothing in M0 is placed or sized by hand. The bat is derived from its envelope (length, handle, grip, width, depth) and the facts in `spec.py`; the line is sized from the derived bat and a `Line`. A second bat size is a second `Bat`, not a second drawing: `check_bat` derives an adult's bat the code was never developed on, and it passes unchanged.
+
+**The kid's bat** (770 mm, handle 270, grip 32) weighs 214 g with two AA cells and 168 g as shipped, and balances at 0.26 of its length. Its frame is a 48 mm triangle of 2 mm chords and 1 mm diagonals with 30 joints, 14 g, inside the truss cell's gantry reach (891 x 216 mm of 1,400 x 300). Under the hardest swing in the accuracy study it takes 4.2 N m at the shoulder, with a buckling margin of 5.13 against the truss cell's rule of 5. All 33 fits pass. The adult's bat (860 mm, handle 300, grip 34) weighs 255 g, gets 3 mm chords and a buckling margin of 10.
+
+**What M0 found that needs a decision or a later milestone:**
+
+1. **The printed handle bends.** Under the rated swing the sweet spot moves 0.4 mm with the blade's bend but about 3.8 mm with the handle's (an estimate, for PETG at 2 GPa), against the 0.5 mm of lever-arm error the accuracy study assumed. M5 (`check_frame`) has to settle it; a stiffer handle may be needed.
+2. **The bands have no room for the knit's stretch.** Each band's zone (5 mm either way) is used up by printing and placement scatter, and band 1 moves about 1 mm for every 0.01 of error in how much the knit narrows when it is stretched. M7's sleeve rig has to measure that, or the zone has to grow.
+3. **The core only fits a 256 mm printer bed on the diagonal**, one a plate, so 13 of the 16 printers at 300 a month print cores.
+4. **Cutting rods by hand is the person's biggest task**: about 5 of the 11.5 minutes a bat the event model measures (the sleeves are another 4). Rods bought cut to length would roughly halve the person's time.
+5. **A tray of four bats is 816 x 296 mm and has to span the 700 mm between a dock's rails**, so bats lie along the aisle and docks sit 0.82 m apart. Each station's gantry is then longer than the truss cell's (0.8 to 3.3 m along the aisle, against 1.4 m), and the aisle is about 26 m long at 300 a month (41 m at 1,000).
+6. **The 3-day promise has no slack for a bat that fails after its sleeve is fitted**: the new sleeve waits for the next visit. In ten simulated months that made one order late, by 0.9 days.
+
+**The line at 300 a month** (16 hours a day, a visit each morning, a restock each week): station 1, the frame, takes 28 minutes a bat (23 by the truss cell's own planner, 4.5 of moves) and is the only busy station, at 31%; the other four are under 5% and the robot 8%. It needs 16 printers, 16 mandrels, a stock of 25 frames, and 13 bat, 8 tube, 8 stretcher, 4 mandrel and 11 parts trays. Ten simulated months with station and robot faults and an 8-hour robot outage shipped every order inside the promise apart from the one above, with no store running dry and no rack overflowing.
+
+**At 1,000 a month station 1 saturates first**: it can build about 970 a month. The robot comes next by the plan's estimate (about 3,800), though the event model measures it 17% busier than that estimate at 300; then the sleeve station (about 6,700). At 1,000 the event model's frame stock runs dry every month.
+
+**The checks.** `check_bat` (188 checks) holds every fit, overlap, mass and band on both bats, then builds both in MuJoCo and measures the fits against liners and the masses against the derivation. It also derives 13 bats that must fail; nine of them have one spec pushed 0.05 mm (or 0.05 g) past the room their fit reports, and must fail by exactly that much, which shows each margin is the real room. `check_line` (73 checks) tests the sizing maths against a direct sum and a simulation of the print farm, every fit of the plan, ten months at 300, and three lines that must fail: one asked for more than station 1 can build, one restocked short and one with too few stretchers.
+
+**What is still an estimate:** every station's work inside a job (`spec.Est`), every fault and reject rate (`spec.Faults`), the person's minutes (`spec.Person`), the board's drawing, the knit, the robot's speed, and the dock. Each names the milestone that replaces it.
 
 ## Summary
 

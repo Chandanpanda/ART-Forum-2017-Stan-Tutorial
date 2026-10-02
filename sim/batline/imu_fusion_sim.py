@@ -402,6 +402,17 @@ def pct(x, q):
     return float(np.percentile(x, q))
 
 
+def swings():
+    """The study's four swings.  A function, so the bat's frame (batline
+    product.py) is sized against the same swing this study's accuracy was
+    estimated for, rather than a copy of its numbers."""
+    fast_hands = dict(hand_a=0.5, hand_b=0.6)     # hands about 6.5 m/s at contact for Td 0.2
+    return [Swing('kid, straight drive', Td=0.30),
+            Swing('adult, straight drive', Td=0.20, **fast_hands),
+            Swing('hard, straight drive', Td=0.13, **fast_hands),
+            Swing('adult, pull (flat swing)', Td=0.20, plane_tilt_deg=70.0, **fast_hands)]
+
+
 # ------------------------------------------------------------------ report
 def main():
     ap = argparse.ArgumentParser()
@@ -409,12 +420,8 @@ def main():
     args = ap.parse_args()
     N = 400 if args.quick else 1500
 
-    fast_hands = dict(hand_a=0.5, hand_b=0.6)     # hands about 6.5 m/s at contact for Td 0.2
-    swings = [Swing('kid, straight drive', Td=0.30),
-              Swing('adult, straight drive', Td=0.20, **fast_hands),
-              Swing('hard, straight drive', Td=0.13, **fast_hands),
-              Swing('adult, pull (flat swing)', Td=0.20, plane_tilt_deg=70.0, **fast_hands)]
-    truths = {sw.name: Truth(sw) for sw in swings}
+    swings_ = swings()
+    truths = {sw.name: Truth(sw) for sw in swings_}
     anchors = [camera_anchor('top'), camera_anchor('stance')]
 
     out = []
@@ -432,7 +439,7 @@ def main():
     w('## Swings\n')
     w('| swing | peak gyro (dps) | peak accel at IMU (g) | sweet-spot speed at contact (m/s) |')
     w('|---|---|---|---|')
-    for sw in swings:
+    for sw in swings_:
         t = truths[sw.name]
         w(f'| {sw.name} | {t.gyro_peak_dps:.0f} | {t.acc_peak_g:.1f} | {t.tip_speed:.1f} |')
     w('')
@@ -448,7 +455,7 @@ def main():
     w('## Error at contact\n')
     w('| swing | IMU | anchor | lateral p50 / p95 (mm) | depth p50 / p95 (mm) | bat axis p95 (deg) | face angle p95 (deg) |')
     w('|---|---|---|---|---|---|---|')
-    for sw in swings:
+    for sw in swings_:
         t = truths[sw.name]
         for grade in (DATASHEET, CALIBRATED, CAL_WIDE):
             for an in anchors:

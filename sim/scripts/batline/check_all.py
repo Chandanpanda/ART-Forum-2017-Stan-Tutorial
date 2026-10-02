@@ -5,9 +5,10 @@ change to sim/batline.
     python3 sim/scripts/batline/check_all.py -v       # and every line of each
 
 Same discipline as sim/scripts/check_all.py and the truss cell's: one
-entry, no choosing which suite is relevant.  M0 has two suites, both fast;
-the plan's slow ones (the cloth, the rollers, the swing) join SLOW when
-their rigs exist.
+entry, no choosing which suite is relevant.  M0 has two suites, M1 one
+(check_gantry, Tier 1: a few minutes on four cores, and it runs every
+time); the plan's slow ones (the cloth, the rollers, the swing) join SLOW
+when their rigs exist.
 """
 import os
 import subprocess
@@ -19,6 +20,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 FAST = [
     ("check_bat",  "the bat derived from its spec, two sizes, and built in MuJoCo"),
     ("check_line", "the line sized from the bat, and a month of it at 300 and 1,000"),
+    ("check_gantry", "the station module: repeatability, lost steps, commissioning and every op, "
+                     "on two travels"),
 ]
 SLOW = []
 

@@ -44,6 +44,7 @@ stands behind its docks with the gantry's x along the aisle.  dock_geometry
 works that out for any robot and tray -- a robot narrower than a tray of
 bats turns them across the aisle and packs the docks far closer.
 """
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from functools import lru_cache
 from math import ceil, degrees, exp, floor, lgamma, log, pi, sqrt
@@ -54,7 +55,7 @@ from truss import motion, approach, schedule, structure, fixture as truss_fixtur
 from truss.geometry import TrussGeometry
 from truss.spec import Gantry, Gripper, Ring, Dispenser
 from .spec import (Line, Est, Faults, Person, Robot, Dock, Printer, Print, Rules, Epoxy, Thread,
-                   Rod, Label, CapSpring, Tube)
+                   Rod, Label, CapSpring, Tube, Module)
 from . import product
 
 STATIONS = ("frame", "electronics", "sleeve", "calibration", "pack")
@@ -207,16 +208,21 @@ class Op:
 @dataclass
 class Station:
     """One copy of the module: its docks in a row along the aisle, its
-    fixture behind them, and its jobs as lists of ops.  `travel` is what
-    the head must cover, (x along the bat, y across it, z); `footprint` is
-    (along the aisle, into the room)."""
+    fixture behind them, and its jobs as lists of ops.  `reach` is what the
+    head point must cover, (x along the bat, y across it, z); `travel` is
+    the module's, derived from it with the tools, the camera, the overshoot
+    and the home switch (station/spec.py), and `module` is that module.
+    `footprint` is (along the aisle, into the room)."""
     name: str
     docks: tuple
     dock_u: dict
     fixture: tuple       # (u, v) centre
     fixture_size: tuple  # (u, v)
     footprint: tuple
+    reach: tuple = (0.0, 0.0, 0.0)
     travel: tuple = (0.0, 0.0, 0.0)
+    module: object = None
+    limits: tuple = None                          # (v, a) of each axis, from the module
     jobs: dict = field(default_factory=dict)      # job -> [Op]
 
     def job_s(self, job):
@@ -226,12 +232,14 @@ class Station:
 class _Head:
     """A station's gantry, in the station's floor frame: u along the aisle,
     v into the station.  The module's x is the bat's axis, as in the truss
-    cell, so which floor direction x runs in follows the dock."""
+    cell, so which floor direction x runs in follows the dock.  `limits` is
+    the station's own (v, a) per axis; without it, the module's rated ones."""
 
-    def __init__(self, dg, lift):
+    def __init__(self, dg, lift, limits=None):
         self.dg = dg
         self.ax = ("x", "y") if dg.along else ("y", "x")
         self.lift = lift
+        self.v, self.a = limits if limits is not None else (Module.V_RATED, Module.A_RATED)
         self.points = []
 
     def at(self, p):
@@ -244,11 +252,10 @@ class _Head:
 
     def move(self, a, b):
         d = {self.ax[0]: b[0] - a[0], self.ax[1]: b[1] - a[1]}
-        return (motion.coordinated_time(d, Gantry.V_MAX, Gantry.A_MAX) + Gantry.SETTLE_S) * Est.PACE
+        return (motion.coordinated_time(d, self.v, self.a) + Gantry.SETTLE_S) * Est.PACE
 
     def z(self):
-        return (motion.trap_time(self.lift, Gantry.V_MAX["z"], Gantry.A_MAX["z"])
-                + Gantry.SETTLE_S) * Est.PACE
+        return (motion.trap_time(self.lift, self.v["z"], self.a["z"]) + Gantry.SETTLE_S) * Est.PACE
 
     def transfer(self, a, b):
         """The head at b goes to a, takes the part, brings it to b and
@@ -259,14 +266,14 @@ class _Head:
 
     def slide(self, length):
         """A free move along the bat's axis -- the module's x."""
-        return motion.trap_time(length, Gantry.V_MAX["x"], Gantry.A_MAX["x"]) * Est.PACE
+        return motion.trap_time(length, self.v["x"], self.a["x"]) * Est.PACE
 
 
 def _stroke(length, v=None):
     return length / (Est.INSERT_V if v is None else v)
 
 
-def _station(name, docks, fixture_ab, dg, lift):
+def _station(name, docks, fixture_ab, dg, lift, limits=None):
     """Lay a station out: docks side by side along the aisle, the fixture
     behind them.  fixture_ab is the fixture's (along the bat, across it)."""
     fu, fv = fixture_ab if dg.along else fixture_ab[::-1]
@@ -276,7 +283,7 @@ def _station(name, docks, fixture_ab, dg, lift):
     fixture = (width / 2.0, dg.depth + Dock.CLEAR + fv / 2.0)
     st = Station(name, tuple(docks), dock_u, fixture, (fu, fv),
                  (width, dg.depth + Dock.CLEAR + fv))
-    return st, _Head(dg, lift)
+    return st, _Head(dg, lift, None if limits is None else limits.get(name))
 
 
 def _tray_centre(st, dg, dock):
@@ -293,17 +300,37 @@ def _mean_transfer(head, slots, b):
 
 
 # ============================================================ THE FRAME
-@lru_cache(maxsize=8)
-def _truss_plan(t):
+@contextmanager
+def _gantry(limits):
+    """The truss planner, timed on another gantry's axes: it reads
+    truss.spec.Gantry's limits when it plans, so they are swapped for the
+    station's own for as long as it does."""
+    if limits is None:
+        yield
+        return
+    old = Gantry.V_MAX, Gantry.A_MAX
+    Gantry.V_MAX, Gantry.A_MAX = dict(limits[0]), dict(limits[1])
+    try:
+        yield
+    finally:
+        Gantry.V_MAX, Gantry.A_MAX = old
+
+
+@lru_cache(maxsize=16)
+def _truss_plan(t, limits=None):
     g = TrussGeometry(t)
     fx = truss_fixture.Fixture(g)
-    P = schedule.plan(g, fx, approach.plan_truss(g, fx, span=0.0))
+    with _gantry(limits):
+        P = schedule.plan(g, fx, approach.plan_truss(g, fx, span=0.0))
     return schedule.summary(P)
 
 
-def frame_plan(d):
-    """The truss cell's own plan for the bat's frame: minutes by phase."""
-    return _truss_plan(d.frame.truss)
+def frame_plan(d, limits=None):
+    """The truss cell's own plan for the bat's frame, minutes by phase, on
+    station 1's axes when `limits` (v, a) gives them -- station 1 is the
+    truss cell made long enough to reach its docks."""
+    key = None if limits is None else tuple(tuple(sorted(x.items())) for x in limits)
+    return _truss_plan(d.frame.truss, key)
 
 
 def bom(d):
@@ -322,8 +349,31 @@ def bom(d):
 
 
 # ============================================================ THE STATIONS
-def stations(d):
-    """Every station's layout and jobs, computed from the derived bat."""
+def stations(d, drives=None, timed=True):
+    """Every station's layout, module and jobs, computed from the derived
+    bat.  Two passes: the layout and what each head must reach first, at
+    the module's rated speeds; then each station's module is derived from
+    that (station/spec.py) and every move is timed again on that station's
+    own axes, since an axis too long for its drive is slower than rated.
+    `drives` overrides Module.DRIVES, the order drives are tried in.
+    `timed=False` skips the second pass, for a caller that wants only the
+    modules: the jobs are then timed at the rated speeds."""
+    from .station import spec as station_spec
+    sts, dg = _layout(d)
+    mods = {k: station_spec.derive(station_spec.from_line(st, dg, d, drives=drives)) for k, st in sts.items()}
+    lim = {k: ({a: m.axes[a].v_max for a in "xyz"}, {a: m.axes[a].a_max for a in "xyz"})
+           for k, m in mods.items()}
+    if timed:
+        sts, dg = _layout(d, lim)
+    for k, st in sts.items():
+        st.module, st.limits = mods[k], lim[k]
+        st.travel = tuple(mods[k].axes[a].travel for a in "xyz")
+    return sts, dg
+
+
+def _layout(d, limits=None):
+    """Every station's layout and jobs, its moves timed at `limits`
+    (station -> (v, a) per axis) or at the module's rated speeds."""
     dg = dock_geometry(d)
     lay = d.lay
     L = d.tube["length"]
@@ -335,10 +385,11 @@ def stations(d):
     # build envelope (structure.reach, the loader's racks included), and
     # its build is the cell's own plan.
     xr, yr = d.frame.reach
-    st, h = _station("frame", ("cores", "mandrels A", "mandrels B", "frames"), (xr, 2.0 * yr), dg, lift)
+    st, h = _station("frame", ("cores", "mandrels A", "mandrels B", "frames"), (xr, 2.0 * yr), dg, lift,
+                     limits)
     F = st.fixture
     core_mid = h.bat_axis(F, -(L / 2.0) + lay.x_shoulder / 2.0)    # the core rides the mandrel's end
-    plan = frame_plan(d)
+    plan = frame_plan(d, None if limits is None else limits.get("frame"))
     thread_m = bom(d)["frame"]["thread_m"]
     reload_turns = thread_m * 1000.0 / (2.0 * pi * Ring.GROOVE_R)
     st.jobs["build"] = [
@@ -358,7 +409,7 @@ def stations(d):
     out["frame"] = (st, h)
 
     # ---------------------------------------------------------------- 2
-    st, h = _station("electronics", ("bats", "parts"), (L, dg.cradle), dg, lift)
+    st, h = _station("electronics", ("bats", "parts"), (L, dg.cradle), dg, lift, limits)
     F = st.fixture
     pommel = h.at(h.bat_axis(F, -L / 2.0))
     parts = _tray_centre(st, dg, "parts")
@@ -378,7 +429,7 @@ def stations(d):
 
     # ---------------------------------------------------------------- 3
     blade = lay.x_tip1 - lay.x_shoulder
-    st, h = _station("sleeve", ("bats", "stretchers", "parts"), (L + blade, dg.cradle), dg, lift)
+    st, h = _station("sleeve", ("bats", "stretchers", "parts"), (L + blade, dg.cradle), dg, lift, limits)
     F = st.fixture
     bat_mid = h.bat_axis(F, -blade / 2.0)        # the bat's cradle, the stretcher's holder ahead of it
     tip = h.at(h.bat_axis(bat_mid, L / 2.0))
@@ -408,7 +459,7 @@ def stations(d):
     # The gimbal turns the bat about its middle, so it sweeps a disc as
     # wide as the bat is long; the camera ring stands outside that (M2).
     sweep = L + 2.0 * Dock.CLEAR
-    st, h = _station("calibration", ("bats",), (sweep, sweep), dg, lift)
+    st, h = _station("calibration", ("bats",), (sweep, sweep), dg, lift, limits)
     F = st.fixture
     step = degrees(sqrt(4.0 * pi / Est.STILL_POSES))   # mean spacing of N directions on a sphere
     st.jobs["bat"] = [
@@ -427,7 +478,7 @@ def stations(d):
     out["calibration"] = (st, h)
 
     # ---------------------------------------------------------------- 5
-    st, h = _station("pack", ("bats", "parts", "tubes"), (2.0 * L, 2.0 * dg.cradle), dg, lift)
+    st, h = _station("pack", ("bats", "parts", "tubes"), (2.0 * L, 2.0 * dg.cradle), dg, lift, limits)
     F = st.fixture
     cradle = h.bat_axis(F, -L / 2.0)                            # the bat's cradle ...
     tube = h.bat_axis(F, L / 2.0)                               # ... in line with the tube's
@@ -453,7 +504,7 @@ def stations(d):
     st.jobs["tray"] = [Op("the trays' tags read", 3 * Est.TAG_READ_S, "est")]
     out["pack"] = (st, h)
 
-    # every station: the travel its head covers, as (x, y, z) in the
+    # every station: what its head point reaches, as (x, y, z) in the
     # module's axes -- the points it went to, the tray corners it picks
     # from and, for the frame, the truss cell's own reach
     hl, hw = d.tray["length"] / 2.0, d.tray["width"] / 2.0
@@ -468,7 +519,7 @@ def stations(d):
         x, y = (du, dv) if dg.along else (dv, du)
         if name == "frame":
             x, y = max(x, d.frame.reach[0]), max(y, 2.0 * d.frame.reach[1])
-        st.travel = (x, y, lift)
+        st.reach = (x, y, lift)
     return {k: v[0] for k, v in out.items()}, dg
 
 
@@ -581,10 +632,10 @@ class Plan:
     notes: list
 
 
-def plan_line(d, line=None):
-    """Size the line for a derived bat."""
+def plan_line(d, line=None, drives=None):
+    """Size the line for a derived bat.  `drives`: see stations()."""
     line = Line() if line is None else line
-    sts, dg = stations(d)
+    sts, dg = stations(d, drives)
     R = rates(line)
     B = bom(d)
     p = line.service
@@ -782,10 +833,13 @@ def plan_line(d, line=None):
     fit("a tray spans the dock's rails, robot clearance included", dg.span_margin,
         "%s: %.0f mm against %.0f" % ("lengthways" if dg.along else "across", d.tray["length"] if dg.along
                                       else d.tray["width"], Robot.DECK[1] + 2.0 * (Dock.CLEAR + Dock.RAIL_W)))
-    fit("every head lifts clear of a tray's bats inside its Z travel",
-        Gantry.Z_TRAVEL - d.tube["od"], "%.0f of %.0f mm" % (d.tube["od"], Gantry.Z_TRAVEL))
-    notes.append("frame build %.1f min by the truss cell's planner (its closed form says %.1f)"
-                 % (frame_plan(d)["total_min"], structure.cycle_estimate(d.frame.truss)))
+    for k in STATIONS:
+        mod = sts[k].module
+        for f in mod.fits:
+            fit("station %s's module: %s" % (k, f.name), f.margin, f.detail)
+    notes.append("frame build %.1f min by the truss cell's planner on station 1's axes (its closed form "
+                 "says %.1f on the cell's own)" % (frame_plan(d, sts["frame"].limits)["total_min"],
+                                                  structure.cycle_estimate(d.frame.truss)))
     return Plan(line, d.bat, d, sts, fl, R, B, t_bat, sizes, fits, notes)
 
 
@@ -812,8 +866,9 @@ def report(P):
         for job in st.jobs.values():
             for o in job:
                 by[o.how] = by.get(o.how, 0.0) + o.s
-        w("  %-12s %6.1f min  travel %4.0f x %4.0f x %3.0f mm  [%s]"
-          % (k, P.t_bat[k] / 60.0, st.travel[0], st.travel[1], st.travel[2],
+        dr = "/".join(st.module.axes[a].drive.kind for a in "xyz")
+        w("  %-12s %6.1f min  travel %4.0f x %4.0f x %3.0f mm (%s)  [%s]"
+          % (k, P.t_bat[k] / 60.0, st.travel[0], st.travel[1], st.travel[2], dr,
              "  ".join("%s %.0f s" % kv for kv in sorted(by.items()))))
     w("  %-12s %6.1f min  (trips, handovers and runs to the next tray)" % ("robot", P.t_bat["robot"] / 60.0))
     w("")

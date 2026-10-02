@@ -215,6 +215,300 @@ class Dock:
     CLEAR       = 20.0         # mm, robot to rail, each side: its arrival spread [VERIFY: M10]
 
 
+# ------------------------------------------- the station module's hardware
+# Every station is one machine, copied (plan, "The station module"): three
+# axes on MGN12 rails, each a NEMA 17 with an encoder on its shaft, a head
+# carrying that station's tools on a 3-axis load cell, one camera looking
+# down.  What follows is the hardware as bought.  station/spec.py derives a
+# station from it -- its travel, which drive each axis needs, its head, its
+# counterbalance, its stiffness -- and types none of it.
+
+class Stepper:
+    """The axis motor: a NEMA 17 hybrid stepper with an encoder on its
+    shaft, run in full steps as the truss cell's are (brief 4.3).  The
+    encoder is what catches a lost step (plan)."""
+    TEETH       = 50           # rotor teeth: what makes a hybrid stepper's step 1.8 degrees
+    HOLD_NM     = 0.45         # N m holding torque [VERIFY: the motor's datasheet]
+    # pull-out torque against speed, (rpm, N m), at the driver's supply: the
+    # torque a running motor has before it drops steps [VERIFY: the curve on
+    # the datasheet, at the driver's voltage]
+    PULLOUT     = ((0.0, 0.45), (300.0, 0.36), (600.0, 0.27), (900.0, 0.20), (1200.0, 0.14))
+    ROTOR_J     = 6.8e-6       # kg m^2, rotor inertia [VERIFY: 68 g cm^2 is a 48 mm NEMA 17's]
+    ENCODER_CPR = 4000         # counts a revolution: a 1000-line quadrature encoder [VERIFY]
+    # the driver spreads each full step it is sent over the step's own period
+    # in microsteps (Trinamic's MicroPlyer does this): the count, and every
+    # place an axis stops, stay whole full steps, as the brief has them, but
+    # the rotor no longer jerks a full step at a time.  check_gantry's rig:
+    # without it a carriage stepped away from home rattles across its play
+    # and the load cell reads 3.3 N of noise while it moves [VERIFY: the
+    # chosen driver interpolates]
+    INTERPOLATE = True
+    # ... and it takes microsteps too: a step pulse can be a sixteenth of a
+    # full step.  Only a touch uses them, creeping onto what it measures so
+    # each reading rises by a sixteenth of a step's force; every move still
+    # ends on a whole step [VERIFY: the driver's microstep setting]
+    MICROSTEPS  = 16
+    MASS        = 350.0        # g [VERIFY]
+    # how quickly an axis stops ringing, as a damping ratio: the driver's
+    # current loop and the rails' grease, which no drawing gives [VERIFY: a
+    # ring-down on the built axis, an accelerometer on the head]
+    ZETA        = 0.1
+
+
+@dataclass(frozen=True)
+class BallScrew:
+    """A rolled ball screw with a standard single nut.  The plan's axes are
+    SFU1204 [VERIFY: every column, from the screw's drawing]."""
+    name:       str
+    d0:         float          # mm, nominal diameter
+    lead:       float          # mm a revolution
+    d_root:     float          # mm: what whips, and what stretches
+    play:       float          # mm, the nut's axial play (no preload) [VERIFY: a dial gauge]
+    nut_k:      float          # N/um, the nut's axial stiffness
+    lead_err:   float          # mm over any 300 mm: the accuracy class (C7)
+    nut_l:      float          # mm, the nut's length
+
+
+SFU1204 = BallScrew("SFU1204", d0=12.0, lead=4.0, d_root=9.9, play=0.03, nut_k=100.0,
+                    lead_err=0.05, nut_l=35.0)
+# the same family a size and two up, at the same lead so a step is the same
+# 0.02 mm: what "bigger screws" would mean [VERIFY: both, from the drawings]
+SFU1604 = BallScrew("SFU1604", d0=16.0, lead=4.0, d_root=13.5, play=0.03, nut_k=150.0,
+                    lead_err=0.05, nut_l=42.0)
+SFU2004 = BallScrew("SFU2004", d0=20.0, lead=4.0, d_root=17.5, play=0.03, nut_k=200.0,
+                    lead_err=0.05, nut_l=42.0)
+SCREWS = (SFU1204, SFU1604, SFU2004)
+
+
+class ScrewEnds:
+    """BK10 at the motor end and BF10 at the other, as SFU screws are sold:
+    'fixed-supported' [VERIFY].  What sets how long a screw may be before
+    it whips is this mounting and its root diameter, by THK's formula."""
+    LAMBDA      = 15.1         # x 1e7: THK's critical-speed factor, fixed-supported, its 0.8 margin included
+    LAMBDA_FF   = 21.9         # ... and fixed at both ends, for a screw too long to be supported
+    DN_MAX      = 50000.0      # d0 (mm) x rpm: a rolled screw's ball-return limit [VERIFY: the vendor]
+    END_L       = 30.0         # mm of screw beyond the travel at each end: half a block, half the nut
+    BEARING_K   = 100.0        # N/um, the BK10's angular-contact pair, axially [VERIFY]
+    COUPLING_K  = 60.0         # N m/rad, the jaw coupling's torsional stiffness [VERIFY]
+    COUPLING_J  = 2.0e-6       # kg m^2 [VERIFY]
+    EFFICIENCY  = 0.90         # a ball screw, either way: it backdrives
+    E_STEEL     = 2.06e5       # N/mm^2
+    RHO_STEEL   = 7.85e-3      # g/mm^3
+
+
+class Rack:
+    """Rack and pinion through a planetary gearbox: the drive for an axis
+    too long to screw.  The plan had none; station/spec.py says when an axis
+    needs one [VERIFY: every number, from the rack's and the gearbox's
+    datasheets]."""
+    MODULE      = 1.0          # mm
+    PINION_Z    = 20
+    # the ratios a planetary catalogue offers, one and two stages
+    RATIOS      = (3, 4, 5, 7, 8, 10, 12, 15, 16, 20, 25, 28, 30, 35, 40, 50, 64, 70, 100)
+    GEAR_PLAY   = 15.0         # arcmin of backlash at the output: an economy planetary
+    GEAR_K      = 1.5          # N m/arcmin, torsional stiffness at the output
+    GEAR_J      = 1.0e-6       # kg m^2 at the input
+    GEAR_MASS   = 300.0        # g
+    MESH_C      = 14.0         # N/(mm um) per mm of face: ISO 6336's single-pair stiffness c'
+    FACE        = 10.0         # mm
+    MESH_PLAY   = 0.05         # mm, rack to pinion
+    EFFICIENCY  = 0.90         # gearbox and mesh
+    MASS        = 0.8          # g/mm of rack
+
+
+class Rail:
+    """MGN12H carriages on MGN12 rail, as the truss cell has (BOM I) [VERIFY]."""
+    DRAG        = 2.0          # N per carriage, light preload [VERIFY: pull one with a gauge]
+    ZETA        = 0.05         # damping ratio of a carriage ringing on its drive: the rails, the nut
+                               # and their grease [VERIFY: a ring-down on the built axis]
+    BLOCK_MASS  = 52.0         # g a carriage
+    MASS        = 0.65         # g/mm of rail
+    BLOCK_L     = Gantry.BLOCK_L
+
+
+class Frame:
+    """The module's frame: aluminium extrusion and plate [VERIFY]."""
+    BEAM        = 40.0         # mm, a 2040 profile's deep side
+    BEAM_MASS   = 0.98         # g/mm of 2040
+    PLATE_T     = 8.0          # mm, carriage plates
+    RHO_AL      = 2.70e-3      # g/mm^3
+
+
+class HomeSwitch:
+    """An inductive proximity switch at each axis' low end [VERIFY]."""
+    REPEAT      = 0.005        # mm, 1 sigma, where it trips at the creep speed below
+    CREEP_V     = 1.0          # mm/s, the speed that repeatability is quoted at
+
+
+class LoadCell:
+    """The 3-axis load cell between the Z carriage and the tool plate: what
+    every press, insertion and touch-off is judged by [VERIFY: the chosen
+    sensor's datasheet]."""
+    RATED       = 50.0         # N, each axis
+    DEFLECT     = 0.10         # mm at the rated load: a load cell is a spring
+    NOISE       = 0.02         # N rms, each axis, at the control rate
+    ZETA        = 0.05         # damping ratio of the tools ringing on it [VERIFY: tap the plate]
+    SIZE        = (40.0, 40.0, 20.0)   # mm
+    MASS        = 120.0        # g
+
+
+class HeadCam:
+    """One global-shutter camera on the Z carriage, looking straight down
+    (plan): an OV9281 module, 1280 x 800 at 3 um, an M12 lens [VERIFY]."""
+    W, H        = 1280, 800
+    PIXEL       = 3.0e-3       # mm
+    F           = 6.0          # mm
+    # a fiducial disc's centroid, 1 sigma, looked at centred.  Measured, not
+    # chosen: check_gantry's pixels rig holds the model camera against
+    # PixelVision on rendered frames, four sub-pixel phases of every disc,
+    # and finds 0.016 px rms on the kid's electronics station and 0.069 on
+    # the adult's pack station -- a bias common to its flat discs that is
+    # not the light's fall-off, the headlight's specular or the renderer's
+    # multisampling.  The larger is the one taken [VERIFY: on the camera]
+    CENTROID_PX = 0.07
+    MIN_PX      = 10.0         # px across a disc for that centroid to hold [VERIFY: with PixelVision]
+    BOARD       = 25.0         # mm, the module's board, square
+    LENS_L      = 20.0         # mm, board to the lens's front
+    MASS        = 30.0         # g
+
+
+class Fiducial:
+    """A dark disc on a light ground, printed or engraved, SMEMA's 1-3 mm."""
+    D           = 2.0          # mm
+    CLEAR       = 3.0          # its keep-out, in diameters (SMEMA)
+
+
+class Gripper2:
+    """A two-jaw electric parallel gripper [VERIFY: the chosen model]."""
+    STROKE      = 10.0         # mm, each jaw
+    FORCE       = 30.0         # N, each jaw
+    CLOSE_S     = 0.3
+    BODY        = (40.0, 30.0, 60.0)   # mm, x y z
+    JAW         = (12.0, 6.0, 20.0)    # mm: along the part, thick, long
+    MASS        = 250.0
+
+
+class Vacuum:
+    """A bellows cup on a vacuum generator [VERIFY]."""
+    CUP_D       = 10.0
+    KPA         = 60.0         # kPa of vacuum at the cup (truss spec.StationB.VAC_KPA)
+    TILT        = 5.0          # deg a face may lean and the bellows still seal
+    BODY        = (16.0, 16.0, 40.0)
+    MASS        = 40.0
+
+
+class Magnet:
+    """An electro-permanent magnet, switched by a pulse [VERIFY]."""
+    D           = 20.0
+    HOLD        = 30.0         # N on 2 mm mild steel, flush
+    GAP         = 0.5          # mm of air gap at which it still holds a part
+    BODY        = (20.0, 20.0, 25.0)
+    MASS        = 60.0
+
+
+class Pusher:
+    """A flat face on the head, for pushing along the bat [VERIFY]."""
+    FACE        = (20.0, 20.0)   # mm, y z
+    BODY        = (20.0, 20.0, 40.0)
+    MASS        = 80.0
+
+
+class Pogo:
+    """A block of spring probes, P75 class [VERIFY]."""
+    N           = 5
+    PITCH       = 2.54
+    TIP_D       = 0.9
+    TRAVEL      = 2.0          # mm, full compression
+    WORK        = (1.0, 1.6)   # mm, the compression it is rated to make contact at
+    FORCE       = 0.6          # N each, at the middle of WORK
+    BODY        = (20.0, 12.0, 25.0)
+    MASS        = 30.0
+
+
+class Spindle:
+    """A geared DC motor with a collet [VERIFY]."""
+    TORQUE      = 0.3          # N m at stall
+    RPM         = 60.0
+    COLLET_D    = 20.0
+    BODY        = (30.0, 30.0, 60.0)
+    MASS        = 150.0
+
+
+class ToolSlide:
+    """What lowers one tool below its neighbours: a compact two-position air
+    slide, one per tool [VERIFY]."""
+    STROKE      = 30.0         # mm
+    FORCE       = 40.0         # N at the supply pressure
+    TIME_S      = 0.3          # s, end to end
+    BODY        = (20.0, 40.0, 50.0)   # mm, x y z, retracted
+    MASS        = 90.0
+
+
+class Build:
+    """How far a built station lies from its drawing, 1 sigma [estimate:
+    measure the first build].  The station measures all of it itself at
+    commissioning (plan: "nothing is typed in"); the simulation draws it
+    once per build, so there is something to find."""
+    TOOL_XY     = 0.3          # mm, a tool on the plate
+    TOOL_Z      = 0.3
+    CAM_XY      = 0.5          # mm, the camera on the carriage
+    CAM_TILT    = 0.3          # deg
+    DOCK_XY     = 1.0          # mm, a dock's fiducials on the floor
+    DOCK_YAW    = 0.2          # deg
+    FIXTURE_XY  = 1.0          # mm
+    HOME        = 0.5          # mm, where a home switch trips
+
+
+class Artefact:
+    """The module's own test pieces: what it commissions itself against and
+    what check_gantry exercises every tool on (plan: "calibrated by the
+    station itself").  Bought or turned [VERIFY: each]."""
+    PIN_D       = 8.0          # mm, a hardened dowel standing on the fixture: touched from four
+    PIN_H       = 20.0         # sides and on top by every tool, seen from above by the camera
+    TOKEN_D     = 16.0         # mm, a mild-steel puck: gripped, sucked, held by the magnet, taken
+    TOKEN_H     = 10.0         # by the collet -- one piece every pick tool can take
+    TOKEN_RHO   = 7.85e-3      # g/mm^3
+    NEST_WALL   = 3.0          # mm, the printed nest a token waits in
+    PLUNGER_K   = 2.0          # N/mm, a spring plunger the press is checked against [VERIFY: its rate]
+    PLUNGER_TRAVEL = 6.0       # mm
+    PLUNGER_D   = 12.0
+    STUD_LEAD   = 1.5          # mm, an M10 stud and nut: the screw op's test thread
+    STUD_L      = 12.0         # mm of thread the nut runs down before it seats
+    NUT_AF      = 17.0         # mm across flats; the collet takes it as a cylinder
+    NUT_H       = 8.0
+    PAD_W       = 12.0         # mm, the plate the pogo block lands on
+    PAD_T       = 2.0          # mm thick
+
+
+# ===================================================== THE MODULE'S RULES
+class Module:
+    """What every copy of the station module is held to.  Rules, not facts:
+    each comes from the brief, the plan or a design margin with its reason.
+    station/spec.py derives a station that meets them or reports which one
+    it misses."""
+    REPEAT      = Gantry.REPEAT              # mm, bidirectional, anywhere in the travel (brief 4.3)
+    STEP_MAX    = Gantry.mm_per_step("x")    # mm: the plan's 0.02, the truss cell's X and Y
+    V_RATED     = Gantry.V_MAX               # what line.py's move times have assumed since M0:
+    A_RATED     = Gantry.A_MAX               # the truss cell's own axes
+    # Which drives an axis may have, in the order they are tried; the first
+    # that reaches the rated speed at the axis' length is fitted.  The plan
+    # specified 12 mm ball screws everywhere, and one of those whips long
+    # before the line's longest axes reach the rated speed (station/spec.py
+    # works out where).  chan chose rack and pinion for those, 2026-10-02.
+    DRIVES      = ("screw", "rack")
+    X_DRIVES    = 2            # X rides a rail each side and is driven on both, as a bridge is
+    TORQUE_SF   = 2.0          # pull-out force over what a move asks: a stepper loses steps
+                               # silently, so it is sized at half its curve (makers say 1.5-2)
+    Z_SIGMAS    = 4.0          # sigmas of what is not yet measured that a moving tool clears by
+    TOOL_GAP    = 5.0          # mm between neighbouring tools on the plate: room for a cap screw
+    OVERRUN     = 3.0          # an op taking this many times what its sensors should need has failed:
+                               # a watchdog, not a schedule (the schedule is the plan's times)
+    TOUCH_FREE  = 5            # readings of free travel a touch takes to learn its own noise
+                               # before it may call anything a contact
+    TOUCH_POINTS = 3           # readings in contact a touch fits: a line needs two, the third
+                               # is what tells a contact from a spike
+
+
 # ======================================================= PRODUCT RULES
 class Rules:
     """What the bat must be, from the brief and chan's decisions."""

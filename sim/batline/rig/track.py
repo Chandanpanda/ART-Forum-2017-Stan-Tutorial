@@ -26,17 +26,17 @@ made it.  Ambiguous blobs wait for a better prediction.
 THE STEMS' PULL.  A stem seen from its own side hides a strip of its
 ball and pulls the centroid away from it (vision.stem_bias_px), by up to
 several times the centroid's noise.  The pull's shape is known from the
-geometry and its scale is one number for the rig, so every centroid is
-corrected by the scale times the model's pull before it is used, and the
-scale is solved with the rest.
+geometry and its scale is one number for the rig: self-calibration solves
+it inside the bundle adjustment, with every camera, pose and ball
+(calib.bundle_adjust's pull), so its sigma is net of what they absorb, and
+tracking corrects every centroid by that scale times the model's pull.
 
 SELF-CALIBRATION.  The bar in the clamp, the gimbal over a grid of poses
 on both axes' whole turn; per round, associate against the current
-belief, bundle-adjust everything (calib.bundle_adjust), fit the stems'
-scale to what the solution leaves along each stem's pull, re-predict,
-until the scale stops moving by more than its own sigma and the
-association is one already solved (unchanged, or cycling: a ball on the
-edge of a test goes in and out with each round's small change).  The first round's belief is the drawing, wrong by
+belief, bundle-adjust everything with the stems' scale (calib.bundle_adjust),
+re-predict, until the association is one already solved (unchanged, or
+cycling: a ball on the edge of a test goes in and out with each round's
+small change).  The first round's belief is the drawing, wrong by
 tens of pixels (prior_px), and the area model's scale, 1; each camera's
 bulk shift is taken out first, as the median offset of its unambiguous
 matches.
@@ -106,6 +106,7 @@ class Predictor:
         self.d = mujoco.MjData(self.m)
         self.drawn = RM.RigBuildDraw.drawing(rig, cams_drawn)
         self.guard = guard_mm()
+        self.n_bar = len(rig.bar) if payload == "bar" else 0
 
     def __call__(self, cams, a, b, R, t, P, r):
         """Per camera (uv (K, 2), front (K,) bool, usable (K,) bool, pull
@@ -119,6 +120,8 @@ class Predictor:
         K = len(self.rig.markers)
         S = RM.stems(self.rig, P[:K], P[K:]) @ np.asarray(R).T
         L = RM.stem_lengths(self.rig, P[:K], P[K:])
+        own = RM.stem_ids(self.m, K, min(len(P) - K, self.n_bar))
+        own = np.r_[own, -np.ones(len(P) - len(own), int)]
         out = []
         for c in cams:
             u, v, z = c.project(X, r)
@@ -126,7 +129,7 @@ class Predictor:
             front = z > r
             ok = front & V.wholly_on(c, u, v, rr) & V.stem_clear(c, X, S, L, r)
             if ok.any():
-                ok[ok] = V.clear_of(self.m, self.d, c.centre, X[ok], r, rho=r + self.guard)
+                ok[ok] = V.clear_of(self.m, self.d, c.centre, X[ok], r, rho=r + self.guard, own=own[ok])
             ok = V.apart(u, v, rr, ok, front)
             bias, dirn = V.stem_bias_px(c, X, S, rr, r)
             out.append((np.stack([u, v], axis=1), front, ok, bias[:, None] * dirn))
@@ -164,41 +167,21 @@ class SelfCal:
     rounds: list = field(default_factory=list)    # (round, matched, inliers, rms px, stems' scale)
     snaps: list = None
     stem: float = 1.0          # the stems' pull, of the area model's (vision.stem_bias_px)
-    stem_sd: float = np.inf    # its 1 sigma
+    stem_sd: float = np.inf    # its 1 sigma, marginal (calib.Solution.stem_sd)
 
 
 def _matches(snaps, pr, gate, k, shifts=None):
-    """[Obs] of every sample and camera, each centroid less its stem's pull
-    at scale k, and (N, 2) that pull at scale 1."""
+    """[Obs] of every sample and camera, matched where each ball's blob
+    should be at the stems' scale k -- the blobs' own centroids -- and
+    (N, 2) each one's stem's pull at scale 1."""
     obs, pull = [], []
     for s, per in enumerate(pr):
         for c, (uv, front, ok, d) in enumerate(per):
             sh = (0.0, 0.0) if shifts is None else shifts[c]
             for i, j in associate(snaps[s][c], uv + k * d, front, ok, gate, sh):
-                obs.append(Obs(c, s, j, float(snaps[s][c][i, 0] - k * d[j, 0]),
-                               float(snaps[s][c][i, 1] - k * d[j, 1])))
+                obs.append(Obs(c, s, j, float(snaps[s][c][i, 0]), float(snaps[s][c][i, 1])))
                 pull.append(d[j])
     return obs, np.array(pull).reshape(-1, 2)
-
-
-def _stem_scale(sol, obs, pull, r):
-    """(change, its 1 sigma): the stems' scale fitted to what the solution
-    leaves along each inlier's pull -- least squares, one unknown."""
-    cam = np.array([o.cam for o in obs])
-    smp = np.array([o.sample for o in obs])
-    pt = np.array([o.point for o in obs])
-    uv = np.array([[o.u, o.v] for o in obs])
-    X = np.einsum("nij,nj->ni", sol.poses[smp, :, :3], sol.P[pt]) + sol.poses[smp, :, 3]
-    e = np.zeros_like(uv)
-    for c in np.unique(cam):
-        m = cam == c
-        u, v, _ = sol.cams[c].project(X[m], r)
-        e[m] = uv[m] - np.stack([u, v], axis=1)
-    use = sol.inliers & np.all(np.isfinite(e), axis=1)
-    den = float(np.sum(pull[use] ** 2))
-    if den <= 0.0:
-        return 0.0, np.inf
-    return float(np.sum(e[use] * pull[use])) / den, sol.cov["sigma"] / sqrt(den)
 
 
 def self_calibrate(vision, rig, site, poses, bar_cert, sigma_px=RingCam.CENTROID_PX, log=None, fix_dist=()):
@@ -207,8 +190,8 @@ def self_calibrate(vision, rig, site, poses, bar_cert, sigma_px=RingCam.CENTROID
     bar's certificate, its balls in the body frame.
 
     sigma_px is the centroid error the solution's covariance is stated at:
-    the rig's own, CENTROID_PX, which check_cameras measures on rendered
-    frames, what is left of the stems' pull included -- not the
+    the rig's budget, CENTROID_PX, which check_cameras holds rendered
+    frames to, what is left of the stems' pull included -- not the
     residuals' scatter, which is smaller and cannot see an error the
     solution absorbs."""
     say = log or (lambda m: None)
@@ -222,27 +205,29 @@ def self_calibrate(vision, rig, site, poses, bar_cert, sigma_px=RingCam.CENTROID
     gate = Module.Z_SIGMAS * prior_px(rig)
     cams, Rt = cams0, np.array([encoder_pose(a, b) for a, b in poses])
     P = P0
-    k, dk, sd = 1.0, np.inf, np.inf
+    k = 1.0
     sol, last, rounds = None, set(), []
     for rnd in range(ROUNDS):
         pr = [pred(cams, a, b, Rt[s][:, :3], Rt[s][:, 3], P, rig.ball_r) for s, (a, b) in enumerate(poses)]
         shifts = _shifts(snaps, pr, gate, k) if rnd == 0 else None
         obs, pull = _matches(snaps, pr, gate, k, shifts)
         key = frozenset((o.cam, o.sample, o.point) for o in obs)
-        if key in last and abs(dk) <= sd:
+        if key in last:
             break                      # settled, or cycling between sets it has solved already
         last.add(key)
         # each round starts from the last one's solution: the gauge sample's
-        # pose is still the gimbal's reading, since the solve held it there
+        # pose is still the gimbal's reading, since the solve held it there;
+        # the stems' scale is solved with the rest
         sol = bundle_adjust(cams, Rt, Points(np.where(known[:, None], P0, P), points.radius, known), obs,
-                            sigma_px=sigma_px, fix_dist=fix_dist)
-        cams, Rt, P = sol.cams, sol.poses, sol.P
-        dk, sd = _stem_scale(sol, obs, pull, rig.ball_r)
+                            sigma_px=sigma_px, fix_dist=fix_dist, pull=pull, stem0=k)
+        cams, Rt, P, k = sol.cams, sol.poses, sol.P, sol.stem
         rounds.append((rnd, len(obs), int(sol.inliers.sum()), sol.rms_px, k))
-        say("round %d: %d matched, %d inliers, rms %.3f px, stems' scale %.3f" % rounds[-1]
-            + " (next %+.3f +- %.3f)" % (dk, sd))
-        k += dk
-    return SelfCal(sol, np.asarray(poses), Points(P.copy(), points.radius, known), obs, rounds, snaps, k, sd)
+        say("round %d: %d matched, %d inliers, rms %.3f px, stems' scale %.3f +- %.3f" % (rounds[-1] + (sol.stem_sd,)))
+    if sol is None:
+        raise ValueError("self-calibration matched nothing")
+    corrected = [Obs(o.cam, o.sample, o.point, o.u - k * d[0], o.v - k * d[1]) for o, d in zip(obs, pull)]
+    return SelfCal(sol, np.asarray(poses), Points(P.copy(), points.radius, known), corrected, rounds, snaps, k,
+                   sol.stem_sd)
 
 
 def _shifts(snaps, pr, gate, k):

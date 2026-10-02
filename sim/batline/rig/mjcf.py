@@ -13,12 +13,27 @@ The scene is kinematic: the gimbal's two hinges are set and mj_kinematics
 run; nothing is stepped, because nothing here is dynamics (CLAUDE.md:
 physics only for mechanisms).
 
-GEOM GROUPS.  0 the structure (rings, posts, clamp, stems, gantry, floor);
+GEOM GROUPS.  0 the structure (rings, posts, clamp, gantry, floor);
 1 the bat's own geoms, every part of it (thousands, for pictures and for
 the model camera's occlusion); 2 a few boxes enclosing the bat, for the
 placement solver's rays, never drawn; 3 the markers and the bar's balls,
 which no ray stops at, so a ray reaches a ball unless something else is in
-the way.  A renderer must show group 3 and hide group 2 (vision.py does).
+the way; 4 the balls' stems, apart so that a ball's own stem, which pulls
+its centroid (vision.stem_bias_px) but does not hide it from a camera,
+can be told from anything else in a ray's way (vision.clear_of).  A
+renderer must show groups 0, 1, 3 and 4 and hide group 2 (vision.py does).
+
+COLOURS ARE REFLECTANCES.  A designer gives the bat's colours (the bands,
+the sleeve) as sRGB, gamma-encoded; a print of one reflects its decoded,
+linear value, and that is what a geom's rgba is here, since MuJoCo lights
+linearly (colour.decode).  The card's patches are given as measured
+linear reflectances, and go in as they are.
+
+THE RING LIGHTS FALL OFF.  A ring light 60 mm across at a metre or more is
+a point at the lens: its light on a surface falls as the inverse square of
+the distance (attenuation 0 0 1, in metres).  The colour exposure is set
+for white at the nearest any surface of the bat can come to a camera,
+vision.expose_mm, so nothing nearer clips.
 
 A MARKER IS EMISSIVE.  A retroreflective ball lit by the ring light round
 the lens that looks at it returns that light to the lens far brighter than
@@ -42,7 +57,7 @@ C_RING = "0.62 0.64 0.68 1"
 C_CLAMP = "0.18 0.19 0.22 1"
 C_FLOOR = "0.20 0.20 0.21 1"
 C_BAR = "0.08 0.08 0.09 1"
-STRUCT, BAT, PROXY, BALL = 0, 1, 2, 3
+STRUCT, BAT, PROXY, BALL, STEM = 0, 1, 2, 3, 4
 N_RING = 72                    # boxes a ring is drawn with: a 5-degree polygon
 
 
@@ -119,7 +134,7 @@ def _stem(name, ball, R_ring, S, r_ball):
     foot = _ring_foot(p, R_ring, S)
     d = p - foot
     end = foot + d * (1.0 - r_ball / np.linalg.norm(d))
-    return _cyl(name, foot, end, Marker.STEM_D / 2.0, C_FRAME)
+    return _cyl(name, foot, end, Marker.STEM_D / 2.0, C_FRAME, group=STEM)
 
 
 # ============================================================ THE BUILD
@@ -168,8 +183,11 @@ class RigBuildDraw:
                 if _monotonic(L, r_corner):
                     break
             out.append(Camera.at(c.name, L, centre, R, **c.meta))
+        # a channel leaks into its neighbours, never against them: no light
+        # reads below dark (drawn signed, a 1 % green under a red read 2-5 %
+        # once the sensor clipped the impossible negative light)
         colour = [np.eye(3) * (1.0 + rng.normal(0.0, B.COLOUR_GAIN, 3))
-                  + (1.0 - np.eye(3)) * rng.normal(0.0, B.COLOUR_MIX, (3, 3)) for _ in cams]
+                  + (1.0 - np.eye(3)) * np.abs(rng.normal(0.0, B.COLOUR_MIX, (3, 3))) for _ in cams]
         light = 1.0 + rng.normal(0.0, B.LIGHT, len(cams))
         centre = rng.normal(0.0, B.CENTRE, 3)
         axis_o = rodrigues(np.array([0.0, *rng.normal(0.0, radians(B.AXIS_SKEW), 2)])) @ np.array([1.0, 0.0, 0.0])
@@ -223,9 +241,12 @@ def bat_geoms(rig):
     parts = dict(RS.cal_parts(d))
     parts.update(bat_mjcf.band_parts(d))
     g = []
+    from .colour import decode
     for name in bat_mjcf.ORDER:
         if name in parts:
-            g += [s.replace("<geom ", '<geom group="%d" ' % BAT, 1) for s in bat_mjcf.part_geoms(name, parts[name])]
+            lin = tuple(decode(parts[name].rgba[:3])) + tuple(parts[name].rgba[3:])
+            g += [s.replace("<geom ", '<geom group="%d" ' % BAT, 1)
+                  for s in bat_mjcf.part_geoms(name, parts[name], rgba=lin)]
     proxy = []
     n = 12
     xs = np.linspace(rig.x0, rig.x1, n + 1)
@@ -311,7 +332,8 @@ def scene(rig, site, cams, b=None, payload="bat", size=None, overview=True):
             rho = np.hypot(p[1], p[2])
             u = np.array([0.0, p[1] / rho, p[2] / rho])
             foot = _bar_foot(p)
-            inner.append("  " + _cyl("bar_stem%d" % k, foot, np.asarray(p) - u * r, Marker.STEM_D / 2.0, C_FRAME))
+            inner.append("  " + _cyl("bar_stem%d" % k, foot, np.asarray(p) - u * r, Marker.STEM_D / 2.0, C_FRAME,
+                                     group=STEM))
             inner.append("  " + _ball("bar%d" % k, p, r))
     inner.append("</body>")
     outer += ["  " + s for s in inner]
@@ -325,6 +347,7 @@ def scene(rig, site, cams, b=None, payload="bat", size=None, overview=True):
                      % (c.name, _v(c.centre), " ".join("%.9f" % v for v in list(xa) + list(ya)), fovy))
         half_diag = degrees(atan(np.hypot(Wc, Hc) / 2.0 / f))
         world.append('<light name="light%d" pos="%s" dir="%.9f %.9f %.9f" cutoff="%.3f" exponent="0" '
+                     'attenuation="0 0 1" '
                      'diffuse="%.4f %.4f %.4f" specular="0 0 0" ambient="0 0 0" castshadow="false"/>'
                      % ((k, _v(c.centre)) + tuple(c.axis) + (min(half_diag + 5.0, 89.0),) + (b.light[k],) * 3))
     if overview:
@@ -377,6 +400,14 @@ def body_pose(m, d):
     """(R, t mm): the inner body's pose in the rig frame, truth."""
     bid = m.body("inner").id
     return d.xmat[bid].reshape(3, 3).copy(), d.xpos[bid] * 1000.0
+
+
+def stem_ids(m, n_markers, n_bar=0):
+    """(n_markers + n_bar,) the geom id of each ball's own stem, the ring's
+    markers then the bar's balls (-1 where the scene has none)."""
+    import mujoco
+    names = ["stem%d" % k for k in range(n_markers)] + ["bar_stem%d" % k for k in range(n_bar)]
+    return np.array([mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_GEOM, n) for n in names], int)
 
 
 def balls_world(m, d, names):

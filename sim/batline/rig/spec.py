@@ -30,7 +30,8 @@ only the cameras say where the body is.
 WHY THE MARKERS ARE ON THE RING.  The bat is the thing calibrated; it
 cannot carry the targets that measure it.  The inner ring is the stiffest,
 widest thing that turns with it: 0.1 mm of noise on balls 0.5 m apart is
-0.01 degrees, the order the budget asks for (README, "the rig's budget").
+0.01 degrees, the order the budget asks for (place.budget, the rig's share
+of the calibration targets; README, Milestone 2).
 The clamp fixes the bat to the ring; how the bat sits in the clamp is
 M3's to measure from the bands.
 """

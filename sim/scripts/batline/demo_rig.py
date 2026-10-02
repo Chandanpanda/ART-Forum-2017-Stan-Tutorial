@@ -9,7 +9,7 @@ measuring a bat, filmed through its own eight cameras.
 The same placement, build draw and sequence as check_cameras: the solver
 places the cameras, the certified bar turns through the 8 x 8 grid of
 gimbal poses and the rig calibrates itself from it, then the bat turns
-through the 4 x 4 grid half a step over.  The gimbal turns both axes at
+through the 4 x 4 grid a quarter step over (no pose calibration saw).  The gimbal turns both axes at
 once at Est.GIMBAL_RATE and holds each pose Est.STILL_S, so the frames are
 at 0.1 fps of that time (truss/filmstrip.py).  Each frame is the overview
 and the eight cameras' colour exposures, rendered and warped through each
@@ -95,7 +95,7 @@ def main():
     b = RM.RigBuildDraw.draw(rig, cams, np.random.default_rng(seed))
     print("%s: cameras placed, %.0f s" % (bat.name, time.time() - t_wall))
 
-    bar_poses, bat_poses = RS.grid(8), RS.grid(4, 0.5)
+    bar_poses, bat_poses = RS.grid(8), RS.grid(4, 0.25)
     s_bar = timeline(bar_poses)
     s_bat = timeline(bat_poses, s_bar[-1][1], bar_poses[-1])
     fps = [(0.1, None)] + ([(1.0, tuple(a.window))] if a.window else [])
@@ -142,8 +142,8 @@ def main():
     pv.close()
     del pv
     print("bar filmed, %.0f s; calibrating" % (time.time() - t_wall))
-    cal = T.self_calibrate(V.ModelVision(rig, site, cams, b, "bar", np.random.default_rng(1)), rig, site,
-                           bar_poses, b.bar_cert)
+    cal = T.self_calibrate(V.Contract(V.ModelVision(rig, site, cams, b, "bar", np.random.default_rng(1))), rig,
+                           site, bar_poses, b.bar_cert)
     print("calibrated: rms %.3f px, stems' scale %.3f, %.0f s" % (cal.sol.rms_px, cal.stem, time.time() - t_wall))
 
     # the bat: the calibrated rig's prediction at the pose it tracked
@@ -153,7 +153,7 @@ def main():
     for f, w in fps:
         for t in times(s_bat, f, w):
             aa, bb, what = at(s_bat, t)
-            tr = T.track(pv, cal, rig, pred, aa, bb)
+            tr = T.track(V.Contract(pv), cal, rig, pred, aa, bb)
             cr = [[] for _ in cams]
             if tr.fit is not None:
                 pr = pred(cal.sol.cams, aa, bb, tr.fit.R, tr.fit.t, P, rig.ball_r)

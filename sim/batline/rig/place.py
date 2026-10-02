@@ -56,7 +56,7 @@ from . import spec as RS
 from . import vision as V
 
 LIMB = V.RIM                   # points round a ball's outline a view must clear, besides its centre: the tracker's
-PROXY_GROUPS = np.array([1, 0, 1, 0, 0, 0], np.uint8)    # the structure and the boxes round the bat
+PROXY_GROUPS = np.array([1, 0, 1, 0, 1, 0], np.uint8)    # the structure, the stems and the boxes round the bat
 
 
 def fibonacci(n):
@@ -121,6 +121,7 @@ def coverage(rig, site, cams, poses, payload="proxy"):
     S0 = RM.stems(rig, rig.markers)
     L0 = RM.stem_lengths(rig, rig.markers)
     rho = r + RS.clear()                                 # the tracker's guard band (track.guard_mm)
+    own = RM.stem_ids(m, K)
     for ip, (a, b_) in enumerate(poses):
         RM.set_gimbal(m, d, a, b_, b)
         Rb, tb = RM.body_pose(m, d)
@@ -137,7 +138,7 @@ def coverage(rig, site, cams, poses, payload="proxy"):
             if not ok.any():
                 continue
             clear = np.zeros(K, bool)
-            clear[ok] = V.clear_of(m, d, cam.centre, X[ok], r, rho=rho, groups=PROXY_GROUPS, n=LIMB)
+            clear[ok] = V.clear_of(m, d, cam.centre, X[ok], r, rho=rho, groups=PROXY_GROUPS, n=LIMB, own=own[ok])
             vis = V.apart(u, v, V.image_radius(cam, X, r), ok & clear, z > r)
             seen[ic, ip] = vis
             if vis.any():
@@ -164,18 +165,25 @@ def _skew(v):
     return np.array([[0.0, -v[2], v[1]], [v[2], 0.0, -v[0]], [-v[1], v[0], 0.0]])
 
 
-def pose_sigma(info_sum, at=None):
+def pose_sigma(info_sum, at=None, R=None):
     """(deg, mm) per pose: the 1-sigma rotation of the body (its largest
-    axis) and the 1-sigma position of the body point `at` (its largest
-    axis; the origin if None), from summed information (P, 6, 6)."""
+    axis) and the 1-sigma position of the body points `at` (the largest
+    axis of the worst; the origin if None), from summed information (P, 6,
+    6).  The information is about a turn and a shift of the rig frame
+    about its origin (_pose_info), so each body point is taken where it is
+    at each pose: R (P, 3, 3), the body's rotation there (identity if
+    None)."""
     bad = np.linalg.matrix_rank(info_sum) < 6
     cov = np.linalg.pinv(info_sum)
     rot = np.sqrt(np.linalg.eigvalsh(cov[:, :3, :3])[:, -1])
     pts = [np.zeros(3)] if at is None else at
-    pos = np.zeros(len(info_sum))
+    n = len(info_sum)
+    pos = np.zeros(n)
+    I3 = np.broadcast_to(np.eye(3), (n, 3, 3))
     for p in pts:
-        A = np.hstack([-_skew(p), np.eye(3)])
-        Cp = A @ cov @ A.T
+        q = np.broadcast_to(np.asarray(p, float), (n, 3)) if R is None else np.asarray(R) @ np.asarray(p, float)
+        A = np.concatenate([-np.array([_skew(x) for x in q]), I3], axis=2)
+        Cp = A @ cov @ A.transpose(0, 2, 1)
         pos = np.maximum(pos, np.sqrt(np.linalg.eigvalsh(Cp)[:, -1]))
     rot[bad], pos[bad] = np.inf, np.inf
     return np.degrees(rot), pos
@@ -258,9 +266,10 @@ def _score(cov, S, at):
     views = seen[S].sum(axis=0)
     short = int(_short(views))
     total = cov.info[S].sum(axis=0)
+    Rb = np.array([RS.body_R(a, b) for a, b in cov.poses])
     rot, pos = 0.0, 0.0
     for c in S:
-        r_, p_ = pose_sigma(total - cov.info[c], at)
+        r_, p_ = pose_sigma(total - cov.info[c], at, Rb)
         rot, pos = max(rot, float(r_.max())), max(pos, float(p_.max()))
     return deficit(seen, S), short, rot, pos, views
 

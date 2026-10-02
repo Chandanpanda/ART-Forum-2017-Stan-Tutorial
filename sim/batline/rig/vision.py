@@ -4,8 +4,12 @@ Two implementations of one contract (RigVisionHAL), as station/vision.py
 has for the head camera:
 
   ModelVision   the cameras as built (their poses and true lenses, which
-                no procedure here may read), each marker ball that is wholly
-                in view projected through them with the centroid's noise
+                no procedure here may read), each marker ball that is in
+                view (its centre and RIM rays round its outline clear: a
+                cap under 1 % of its disc can hide between two rays, which
+                a rendered blob would show as a shift of up to 0.17 px; the
+                tracker's guard band refuses those balls) projected
+                through them with the centroid's noise
                 (RingCam.CENTROID_PX), and colours by casting the pixel's
                 ray into the scene and lighting what it hits.  Fast; what
                 self-calibration and the checks run on.
@@ -14,8 +18,9 @@ has for the head camera:
                 camera's true lens, given the light, the sensor's colour
                 response, shot and read noise, and cut to 10 bits; blobs are
                 found in it and their centroids weighted by how bright each
-                pixel is.  Slow; check_cameras holds the model camera to it,
-                which is what makes CENTROID_PX a measurement.
+                pixel is.  Slow; check_cameras holds its centroids to the
+                CENTROID_PX budget the model camera draws its noise at
+                (they come in at about a third of it).
 
 Neither returns anything labelled: a snap is, per camera, the blobs in no
 order, and a colour read is the raw sensor values at the pixels asked
@@ -29,9 +34,16 @@ colour snap: one camera at a time with its own light, long enough that a
 white diffuse surface facing the light fills the same level.
 
 EXPOSURE.  The brightest thing an exposure is for -- a marker, or white
-facing the light -- is set to EXPOSE of the sensor's full well, so a light
+facing the light at expose_mm, the nearest the inner member's surfaces
+come to a camera -- is set to EXPOSE of the sensor's full well, so a light
 or a channel Module.Z_SIGMAS brighter than drawn (RigBuild.LIGHT,
-COLOUR_GAIN) still does not clip.
+COLOUR_GAIN) still does not clip.  A ring light falls off as the inverse
+square of the distance (rig/mjcf.py), so the same white further off reads
+less, in both cameras.
+
+COLOUR.  A surface's rgba in the scene is its linear reflectance
+(rig/mjcf.py; colour.decode of a designer's sRGB), and a raw read is
+linear in it.
 """
 from abc import ABC, abstractmethod
 from math import sqrt
@@ -44,13 +56,25 @@ from . import mjcf as RM
 
 EXPOSE = 1.0 / (1.0 + Module.Z_SIGMAS * sqrt(RigBuild.LIGHT ** 2 + RigBuild.COLOUR_GAIN ** 2))
 RIM = 8                        # rays round a ball's outline the model camera checks, besides its centre
+CANVAS_BITS = 8                # what MuJoCo's renderer writes per channel
+# the colour canvas's second, brighter draw: enough that the canvas's step
+# is a quarter of the sensor's (PixelVision._colour_canvas)
+BRACKET = 2.0 ** (RingCam.BITS + 2 - CANVAS_BITS)
 HOT = 0.1                      # of a marker's level: canvas pixels a marker frame warps round (far above
                                # the diffuse world's 1 / RETRO_GAIN, far below a ball's edge pixels)
 HALO = 6                       # px round them: a blob, the two-pixel ring its centroid reads, and its ground
 RING = 2                       # px round a blob its centroid reads: an edge pixel is part ball
 GAP = RING + 1.0               # px two balls' images keep apart to be read alone: the ring, and a pixel of blur
-SEEN_GROUPS = np.array([1, 1, 0, 0, 0, 0], np.uint8)     # what a ray stops at: structure and the bat
-LIT_GROUPS = np.array([1, 1, 0, 1, 0, 0], np.uint8)      # what a colour ray hits: and the balls
+SEEN_GROUPS = np.array([1, 1, 0, 0, 1, 0], np.uint8)     # what a ray stops at: structure, the bat, stems
+LIT_GROUPS = np.array([1, 1, 0, 1, 1, 0], np.uint8)      # what a colour ray hits: and the balls
+STEM_GROUP = np.array([0, 0, 0, 0, 1, 0], np.uint8)      # rig/mjcf.py's group 4
+
+
+def expose_mm(rig):
+    """mm: the distance the colour exposure is set at -- the nearest any
+    surface on the gimbal's inner member (the bat, the clamp, the card)
+    can come to a camera."""
+    return rig.standoff - rig.R_inner
 
 
 def rim(n=RIM):
@@ -82,22 +106,40 @@ def outline_rays(C0, X, rho, n=RIM):
     return vec / dist[:, None], dist
 
 
-def clear_of(m, d, C0, X, r, rho=None, groups=SEEN_GROUPS, n=RIM):
+def clear_of(m, d, C0, X, r, rho=None, groups=SEEN_GROUPS, n=RIM, own=None):
     """(K,) bool: which balls (centres X, mm, radius r) C0 sees whole.  Rays
     go to each centre and n points rho round it (FILL r if None); one is
     blocked when it meets anything before the ball's own near surface on
     that ray -- or, for rho past the ball's edge (a guard band), before the
-    ball's front.  Balls themselves stop no ray (rig/mjcf.py's group 3)."""
+    ball's front.  Balls themselves stop no ray (rig/mjcf.py's group 3).
+
+    own (K,): each ball's own stem's geom id (mjcf.stem_ids), or -1.  A
+    ball's own stem does not hide it: seen from its own side it crosses
+    the disc, and what it does there is pull the centroid, which
+    stem_bias_px models and the tracker corrects.  A ray whose first hit is
+    the ball's own stem is cast again past the stems, so whatever stands
+    behind that stem (the ring at its foot) still counts.  Without `own`
+    a stem hides its own ball: then whether a ball is seen depends on how
+    its stem's image falls between the n rays, not on the geometry."""
     import mujoco
     rho = FILL * r if rho is None else rho
     vec, dist = outline_rays(C0, X, rho, n)
     q = np.hypot(*rim(n).T) * rho
-    front = np.where(q < r, np.sqrt(np.maximum(r * r - q * q, 0.0)), r)
+    front = np.tile(np.where(q < r, np.sqrt(np.maximum(r * r - q * q, 0.0)), r), len(X))
     N = len(vec)
     gid = np.zeros(N, np.int32)
     hit = np.zeros(N)
     mujoco.mj_multiRay(m, d, C0 / 1000.0, vec.ravel(), groups, 1, -1, gid, hit, None, N, -1)
-    blocked = (hit >= 0.0) & (hit * 1000.0 < dist - np.tile(front, len(X)))
+    if own is not None and groups[4]:
+        mine = (hit >= 0.0) & (gid == np.repeat(np.asarray(own, int), n + 1)) & (np.repeat(np.asarray(own), n + 1) >= 0)
+        if mine.any():
+            k = np.flatnonzero(mine)
+            g2 = np.zeros(len(k), np.int32)
+            h2 = np.zeros(len(k))
+            rest = (np.asarray(groups, np.uint8) & (1 - STEM_GROUP)).astype(np.uint8)
+            mujoco.mj_multiRay(m, d, C0 / 1000.0, vec[k].ravel(), rest, 1, -1, g2, h2, None, len(k), -1)
+            hit[k] = h2
+    blocked = (hit >= 0.0) & (hit * 1000.0 < dist - front)
     return ~blocked.reshape(len(X), n + 1).any(axis=1)
 
 
@@ -196,6 +238,33 @@ def audit(backend):
     return [n for n in ("snap", "colour") if not callable(getattr(backend, n, None))]
 
 
+class Contract(RigVisionHAL):
+    """A backend seen through the contract alone: its cams, snap and colour.
+    What the checks hand the procedures, so one that reached past the
+    contract for the scene (its model, its build, its truth) raises where it
+    reached, instead of passing on what a real rig would not have told it."""
+    __slots__ = ("_backend",)
+
+    def __init__(self, backend):
+        object.__setattr__(self, "_backend", backend)
+
+    @property
+    def cams(self):
+        return self._backend.cams
+
+    def snap(self, a, b):
+        return self._backend.snap(a, b)
+
+    def colour(self, a, b, cam, uv):
+        return self._backend.colour(a, b, cam, uv)
+
+    def __getattr__(self, name):
+        raise AttributeError("%r is not the rig's to read: a procedure has cams, snap and colour" % name)
+
+    def __setattr__(self, name, value):
+        raise AttributeError("a procedure does not change its cameras (%r)" % name)
+
+
 class _Scene:
     """The as-built scene both cameras look into, and the truth a check may
     read of it (never the procedures: track, calibrate, colour)."""
@@ -230,9 +299,16 @@ class _Scene:
         return self.build.cams
 
     def paint(self, part, rgb):
-        """Print part (a bat part's name: "band1", "sleeve") in rgb: what
-        the line put on this bat, which the cameras then read."""
+        """Print part (a bat part's name: "band1", "sleeve") in rgb, sRGB
+        as a designer gives it: what the line put on this bat, which the
+        cameras then read.  The print reflects its decoded value."""
+        from .colour import decode
+        self.paint_linear(part, decode(rgb))
+
+    def paint_linear(self, part, lin):
+        """Print part with linear reflectance `lin`."""
         import mujoco
+        rgb = np.asarray(lin, float)
         n = 0
         for g in range(self.m.ngeom):
             name = mujoco.mj_id2name(self.m, mujoco.mjtObj.mjOBJ_GEOM, g) or ""
@@ -252,6 +328,8 @@ class ModelVision(RigVisionHAL, _Scene):
         self.rng = rng if rng is not None else np.random.default_rng(1)
         self.sigma = RingCam.CENTROID_PX
         self.stems = RM.stems(rig, build.markers, build.bar if payload == "bar" else ())
+        self.own = RM.stem_ids(self.m, len(build.markers), len(build.bar) if payload == "bar" else 0)
+        self.d_exp = expose_mm(rig)
 
     def snap(self, a, b):
         self.pose(a, b)
@@ -264,7 +342,7 @@ class ModelVision(RigVisionHAL, _Scene):
             rr = image_radius(c, X, self.r)
             ok = (z > self.r) & wholly_on(c, u, v, rr)
             if ok.any():
-                ok[ok] = clear_of(self.m, self.d, c.centre, X[ok], self.r)
+                ok[ok] = clear_of(self.m, self.d, c.centre, X[ok], self.r, own=self.own[ok])
             ok = apart(u, v, rr, ok, z > self.r)
             bias, dirn = stem_bias_px(c, X, S, rr, self.r)
             bias = bias * self.build.stem
@@ -280,7 +358,9 @@ class ModelVision(RigVisionHAL, _Scene):
         lens, lights what it hits by the camera's own light: the surface's
         colour times the light times the cosine between its normal and the
         ray (the light sits at the lens), then the sensor's response, then
-        noise.  A marker returns what it returns to its own lens."""
+        noise.  The light falls off as the inverse square of the hit's
+        distance, white at expose_mm filling EXPOSE.  A marker returns what
+        it returns to its own lens."""
         import mujoco
         self.pose(a, b)
         c = self.build.cams[cam]
@@ -304,18 +384,22 @@ class ModelVision(RigVisionHAL, _Scene):
             # a geom's own rgba wins over its material's unless it is MuJoCo's default
             own = self.m.geom_rgba[g]
             col = self.m.mat_rgba[mat, :3] if mat >= 0 and np.allclose(own, (0.5, 0.5, 0.5, 1.0)) else own[:3]
-            rgb[i] = col * max(0.0, float(-nrm[i] @ vec[i]))
+            rgb[i] = col * max(0.0, float(-nrm[i] @ vec[i])) * (self.d_exp / (hit[i] * 1000.0)) ** 2
         raw = EXPOSE * self.build.light[cam] * rgb @ self.build.colour[cam].T
         return _sensor(raw, self.rng)
 
 
 def _sensor(raw, rng):
-    """Light (1.0 the full well) to what the sensor reads: shot noise,
-    read noise, clipped and cut to BITS."""
+    """Light (1.0 the full well) to what the sensor reads: shot noise and
+    read noise, on the sensor's black level, cut to BITS and clipped, the
+    black level taken off again -- so a dark pixel reads its noise either
+    side of zero, and 1.0 is still the full well."""
     e = np.clip(raw, 0.0, None) * RingCam.FULL_WELL
     e = e + rng.normal(0.0, 1.0, e.shape) * np.sqrt(e + RingCam.READ_NOISE ** 2)
     top = 2 ** RingCam.BITS - 1
-    return np.clip(np.round(e / RingCam.FULL_WELL * top), 0, top) / top
+    span = top - RingCam.BLACK_LEVEL
+    code = np.clip(np.round(e / RingCam.FULL_WELL * span + RingCam.BLACK_LEVEL), 0, top)
+    return (code - RingCam.BLACK_LEVEL) / span
 
 
 # ================================================================ PIXELS
@@ -409,16 +493,17 @@ class PixelVision(RigVisionHAL, _Scene):
         self.renderer = mujoco.Renderer(self.m, Hc, Wc)
         self.opt = mujoco.MjvOption()
         self.opt.geomgroup[:] = 0
-        for g in (RM.STRUCT, RM.BAT, RM.BALL):
+        for g in (RM.STRUCT, RM.BAT, RM.BALL, RM.STEM):
             self.opt.geomgroup[g] = 1
         self.luts = [warp_lut(c.lens, f, Wc, Hc) for c, f in zip(build.cams, self.info["f_canvas"])]
         self.retro = [i for i in range(self.m.nmat) if self.m.mat_emission[i] > 0.0]
         self.base = self.m.light_diffuse.copy()
+        self.d_exp = expose_mm(rig)
         self._img = {}
         self._col = None
-        top = 2 ** RingCam.BITS - 1
+        span = 2 ** RingCam.BITS - 1 - RingCam.BLACK_LEVEL
         # one pixel's noise at the background, in the image's units
-        self.noise = sqrt(RingCam.READ_NOISE ** 2) / RingCam.FULL_WELL + 0.5 / top
+        self.noise = sqrt(RingCam.READ_NOISE ** 2) / RingCam.FULL_WELL + 0.5 / span
         self.last = None
 
     def close(self):
@@ -431,11 +516,33 @@ class PixelVision(RigVisionHAL, _Scene):
         m = self.m
         m.light_active[:] = 0
         m.light_active[cam] = 1
-        m.light_diffuse[cam] = light
+        m.light_diffuse[cam] = light * (self.d_exp / 1000.0) ** 2    # its fall-off is in metres
         for i in self.retro:
             m.mat_emission[i] = retro
         self.renderer.update_scene(self.d, camera=self.build.cams[cam].name, scene_option=self.opt)
         return self.renderer.render()
+
+    def _colour_canvas(self, cam):
+        """The colour exposure's canvas (float, 1.0 the canvas's top), fine
+        enough for the sensor: the renderer writes 8 bits, coarser than the
+        sensor's 10 in a dark channel (a 1 % green under the light reads a
+        few counts), so it is drawn twice, the second time BRACKET times
+        brighter, and each pixel's channel taken from the bright one unless
+        that one clipped."""
+        lo = self._render(cam, 1.0, EXPOSE).astype(np.float32) / 255.0
+        hi = self._render(cam, 1.0, EXPOSE * BRACKET).astype(np.float32) / 255.0
+        return np.where(hi < 1.0, hi / BRACKET, lo)
+
+    def floor(self, cam, raw):
+        """(N, 3): the variance the canvas's 8-bit step adds to colour reads
+        `raw` of camera `cam`, beyond the sensor's own noise -- a renderer's
+        floor, not a camera's, the same in every pixel of a flat patch, so
+        a check states it rather than expect the sensor's noise alone."""
+        raw = np.atleast_2d(np.asarray(raw, float))
+        M = self.build.light[cam] * np.asarray(self.build.colour[cam])
+        c = np.clip(raw, 0.0, None) @ np.linalg.inv(M).T                # the canvas each read came from
+        step = np.where(c < 1.0 / BRACKET, 1.0 / BRACKET, 1.0) / (2 ** CANVAS_BITS - 1)
+        return (step ** 2 / 12.0) @ (M ** 2).T
 
     def frame(self, a, b, cam, mode="marker"):
         """The sensor's frame (H, W) or (H, W, 3), 0-1, as it reads it.
@@ -469,7 +576,7 @@ class PixelVision(RigVisionHAL, _Scene):
                 g = raw.astype(np.float32).mean(axis=2) / 255.0
                 img[ri, rj] = _sensor(k * remap(g, U[ri, rj], V[ri, rj]), self.rng)
         else:
-            canvas = self._render(cam, 1.0, EXPOSE).astype(np.float32) / 255.0
+            canvas = self._colour_canvas(cam)
             rgb = remap(canvas, U, V)
             img = _sensor(k * rgb @ self.build.colour[cam].T, self.rng)
         self._img = {key: img}
@@ -492,7 +599,7 @@ class PixelVision(RigVisionHAL, _Scene):
         key = (a, b, cam)
         if self._col is None or self._col[0] != key:
             self.pose(a, b)
-            self._col = (key, self._render(cam, 1.0, EXPOSE).astype(np.float32) / 255.0, {})
+            self._col = (key, self._colour_canvas(cam), {})
         _, canvas, done = self._col
         L = self.build.cams[cam].lens
         x, y = uv[:, 0] - 0.5, uv[:, 1] - 0.5

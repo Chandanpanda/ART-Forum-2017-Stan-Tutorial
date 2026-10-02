@@ -146,6 +146,8 @@ class Solution:
     converged: bool = True
     used: np.ndarray = None    # (N,) bool: observations the data could use (pruning, not rejection);
     #                            used & ~inliers are the ones the outlier test rejected
+    stem: float = np.nan       # the stems' pull, of the area model's, when it was solved (bundle_adjust's pull)
+    stem_sd: float = np.nan    # its 1 sigma, marginal over everything else
 
 
 def _arrays(obs):
@@ -165,6 +167,7 @@ class _State:
     Rb: np.ndarray             # (S, 3, 3) body -> world
     tb: np.ndarray             # (S, 3)
     P: np.ndarray              # (K, 3) body frame
+    k: float = 1.0             # the stems' scale
 
     def cameras(self, like):
         return [Camera(c.name, c.lens.with_params(self.lp[i]), self.Rc[i].copy(), self.tc[i].copy(), dict(c.meta))
@@ -290,7 +293,7 @@ def _connected(cam, smp, use, held=None):
 
 # ======================================================= BUNDLE ADJUSTMENT
 def bundle_adjust(cams0, poses0, points, obs, fix_dist=(), fix_intrinsics=False, sigma_px=None, max_iter=50,
-                  log=None) -> Solution:
+                  log=None, pull=None, stem0=1.0) -> Solution:
     """Calibrate every camera, every sample's body pose and the free balls'
     body-frame positions from observations of the balls.
 
@@ -305,6 +308,12 @@ def bundle_adjust(cams0, poses0, points, obs, fix_dist=(), fix_intrinsics=False,
     sigma_px    the centroid noise for the Huber knee and the rejection
                 (a floor: see pose._scale); None estimates it each round
     max_iter    linearisations, all phases together
+    pull        (N, 2) px or None: each observation's stem's pull at scale 1
+                (vision.stem_bias_px).  With it each blob is the ball's image
+                plus one scale times its pull, and that scale, from stem0,
+                is solved with everything else -- so its sigma is the
+                marginal one, net of what the cameras, poses and balls
+                absorb of the pull (Solution.stem, stem_sd)
     """
     say = log or (lambda m: None)
     C, S, K = len(cams0), len(poses0), len(points.P)
@@ -355,18 +364,29 @@ def bundle_adjust(cams0, poses0, points, obs, fix_dist=(), fix_intrinsics=False,
         if not known[k]:
             pt_col[k] = np.arange(ncol, ncol + N_POINT)
             ncol += N_POINT
-    cols = np.concatenate([cam_col[cam], smp_col[smp], pt_col[pt]], axis=1)
+    k_col = -1
+    extra = []
+    if pull is not None:
+        pull = np.asarray(pull, float).reshape(N, 2)
+        k_col = ncol
+        ncol += 1
+        extra = [np.full((N, 1), k_col)]
+    cols = np.concatenate([cam_col[cam], smp_col[smp], pt_col[pt]] + extra, axis=1)
     cols[cols < 0] = ncol                                       # a sink row and column, dropped
     hidx = (cols[:, :, None] * (ncol + 1) + cols[:, None, :]).reshape(N, -1)
 
     # ---------------------------------------------------- the three calls
     def residual(x):
-        return _predict(x.cameras(cams0), x.Rb, x.tb, x.P, cam, smp, pt, rad) - uv
+        r = _predict(x.cameras(cams0), x.Rb, x.tb, x.P, cam, smp, pt, rad) - uv
+        return r if pull is None else r + x.k * pull
+
+    def jac(x, rows):
+        Jc, Js, Jp = _blocks(x.cameras(cams0), x.Rb, x.tb, x.P, cam[rows], smp[rows], pt[rows], rad[rows])
+        return np.concatenate([Jc, Js, Jp] + ([] if pull is None else [pull[rows][:, :, None]]), axis=2)
 
     def normal(x, w, r, w2=None):
         sel = np.flatnonzero(np.any(w > 0, axis=1))
-        Jc, Js, Jp = _blocks(x.cameras(cams0), x.Rb, x.tb, x.P, cam[sel], smp[sel], pt[sel], rad[sel])
-        J = np.concatenate([Jc, Js, Jp], axis=2)
+        J = jac(x, sel)
 
         def accumulate(ww):
             Hl = np.einsum("nai,na,naj->nij", J, ww, J)
@@ -380,13 +400,12 @@ def bundle_adjust(cams0, poses0, points, obs, fix_dist=(), fix_intrinsics=False,
         dc, ds, dp = _expand(d, cam_col), _expand(d, smp_col), _expand(d, pt_col)
         return _State(np.stack([rodrigues(dc[c, :3]) @ x.Rc[c] for c in range(C)]), x.tc + dc[:, 3:6],
                       x.lp + dc[:, 6:], np.stack([rodrigues(ds[s, :3]) @ x.Rb[s] for s in range(S)]),
-                      x.tb + ds[:, 3:], x.P + dp)
+                      x.tb + ds[:, 3:], x.P + dp, x.k + (float(d[k_col]) if k_col >= 0 else 0.0))
 
     def hat(x, Hi, rows):
         # J_i Hinv J_i^T from each observation's 24 columns; the sink (held
         # parameters) is exact, so its row and column of Hinv are zero
-        Jc, Js, Jp = _blocks(x.cameras(cams0), x.Rb, x.tb, x.P, cam[rows], smp[rows], pt[rows], rad[rows])
-        J = np.concatenate([Jc, Js, Jp], axis=2)
+        J = jac(x, rows)
         Hp = np.zeros((ncol + 1, ncol + 1))
         Hp[:ncol, :ncol] = Hi
         G = np.empty((len(rows), 2, 2))
@@ -398,7 +417,7 @@ def bundle_adjust(cams0, poses0, points, obs, fix_dist=(), fix_intrinsics=False,
 
     x0 = _State(np.stack([c.R for c in cams0]).astype(float), np.stack([c.t for c in cams0]).astype(float),
                 np.stack([c.lens.params() for c in cams0]), poses0[:, :, :3].copy(), poses0[:, :, 3].copy(),
-                P0.copy())
+                P0.copy(), float(stem0))
     say("    bundle adjustment: %d cameras, %d samples, %d balls (%d free), %d observations (%d usable), %d unknowns"
         % (C, S, K, int((~known).sum()), N, int(use.sum()), ncol))
     fit = pose.robust_lm(x0, residual, normal, step, N, sigma_px=sigma_px, active=use, max_iter=max_iter, log=say,
@@ -447,8 +466,13 @@ def bundle_adjust(cams0, poses0, points, obs, fix_dist=(), fix_intrinsics=False,
     say("    rms %.4f px over %d inliers (%d rejected), sigma %.4f px, %d unknowns, %d linearisations"
         % (float(np.sqrt(np.mean(rr ** 2))), int(inl.sum()), int(use.sum() - inl.sum()), fit.scale, n_free,
            fit.iterations))
+    stem, stem_sd = np.nan, np.nan
+    if k_col >= 0:
+        stem, stem_sd = float(x.k), float(sig * np.sqrt(Hi[k_col, k_col]))
+        if not np.isfinite(stem_sd):
+            warnings.append("the stems' scale is not fixed by the data")
     return Solution(cams, poses, x.P.copy(), float(np.sqrt(np.mean(rr ** 2))), fit.scale, inl, fit.iterations,
-                    per_cam, cov, warnings, n_free, gauge, fit.converged, use)
+                    per_cam, cov, warnings, n_free, gauge, fit.converged, use, stem, stem_sd)
 
 
 def _covariance(Hi, sig, cams, cam_col, smp_col, pt_col, C):

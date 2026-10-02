@@ -4,31 +4,46 @@ The phone finds the bat by its two printed bands, so the line stores each
 band's colour as printed, and refuses a bat whose bands are not the colours
 the design gave them (spec.Rules.BAND_RGB, judged by Rig.DE_MAX).
 
-A camera's raw reading of a surface is its colour times the light on it
-times the cosine of the light's angle, through the sensor's own colour
-response.  Two things take those apart:
+ONE CONVENTION.  A designer's colours (the bands, the sleeve) are sRGB,
+gamma-encoded; what a print of one reflects is its decoded, linear value
+(decode), and a camera's raw reading is linear in that.  The card's patches
+are certified as linear reflectances (spec.Clamp.CARD_RGB).  So everything
+here is linear until the end, where a band's colour is encoded back to sRGB
+to be stored and compared with the design (CIE76 in CIELAB, D65).
 
-  THE CARD.  Patches of known colour in a row on each of the clamp's
+A camera's raw reading of a surface is its reflectance times the light on
+it -- the ring light's output, falling as the inverse square of the
+distance (vision.expose_mm) -- times the cosine of the light's angle,
+through the sensor's own colour response.  Three things take those apart:
+
+  THE CARD.  Patches of known reflectance in a row on each of the clamp's
   flanks and its underside (spec.Clamp: white, red, green, blue), each row
   flat.  The gimbal stops where each camera can read a row whole and
-  squarely (card_poses).  Their readings,
-  each over its cosine, fit A = s M: the sensor's response M (each
-  channel's gain and its mixing) times the light s, by least squares over
-  the patches' three channels -- four patches for nine unknowns.  A
-  camera's A is fitted over every pose its card faces it at.
+  squarely (card_poses).  Each patch's reading over its geometry (the
+  cosine and the fall-off, from the tracked pose) fits A = s M: the
+  sensor's response M (each channel's gain and its mixing) times the light
+  s, by weighted least squares over the patches' three channels, each
+  weighted by the sensor's own noise (spec.RingCam) -- four patches for
+  nine unknowns, over every pose the card faces the camera at.  What the
+  fit leaves is tested against that noise (CardFit.chi2).
+
+  THE SLEEVE.  A^-1 of a sleeve reading over its geometry is the sleeve's
+  reflectance, measured, not assumed: a white knit a little darker than
+  drawn would otherwise darken every band read against it.
 
   THE SLEEVE BESIDE THE BAND.  A band and the sleeve next to it on the
   same flat face share the face's normal, the light and the camera, so
   A^-1 of the band's reading over A^-1 of the sleeve's, channel by
-  channel, times the sleeve's own colour (the design's), is the band's
-  colour -- whatever s, the cosine and the renderer's shading are.
+  channel, each sample over its own geometry, times the sleeve's measured
+  reflectance, is the band's reflectance -- whatever is left of s, the
+  cosine and the renderer's shading.
 
 Samples stay EDGE_PX from every edge in the image: a face's, a band's.
 Each camera reads each face it sees squarely enough to keep that margin
 on a face's middle 70 % (FACE_USE); the reads are averaged, weighted by
-their samples.  The colour difference is CIE76 in CIELAB (D65), the
-colours taken as sRGB as a designer gives them, which is how the model's
-own colours are given.
+their samples.  Whether a camera sees a sample is cast in the rig as
+drawn, carried to the clamp's tracked pose (carry), with a guard band in
+the surface's own plane round it.
 """
 from dataclasses import dataclass, field
 from math import pi
@@ -81,16 +96,32 @@ def band_geometry(rig):
     return out
 
 
-def srgb_to_lab(rgb):
-    """CIELAB (D65) of sRGB colours (..., 3) in 0..1."""
+def decode(rgb):
+    """sRGB (0..1, gamma-encoded, as a designer gives a colour) to linear
+    (IEC 61966-2-1)."""
     c = np.clip(np.asarray(rgb, float), 0.0, None)
-    lin = np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
+    return np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
+
+
+def encode(lin):
+    """Linear to sRGB, decode's inverse."""
+    c = np.clip(np.asarray(lin, float), 0.0, None)
+    return np.where(c <= 0.0031308, 12.92 * c, 1.055 * c ** (1.0 / 2.4) - 0.055)
+
+
+def linear_to_lab(lin):
+    """CIELAB (D65) of linear sRGB-primaries colours (..., 3)."""
     M = np.array([[0.4124, 0.3576, 0.1805], [0.2126, 0.7152, 0.0722], [0.0193, 0.1192, 0.9505]])
-    xyz = lin @ M.T / np.array([0.95047, 1.0, 1.08883])
+    xyz = np.clip(np.asarray(lin, float), 0.0, None) @ M.T / np.array([0.95047, 1.0, 1.08883])
     e = 216.0 / 24389.0
     f = np.where(xyz > e, np.cbrt(xyz), (24389.0 / 27.0 * xyz + 16.0) / 116.0)
     return np.stack([116.0 * f[..., 1] - 16.0, 500.0 * (f[..., 0] - f[..., 1]), 200.0 * (f[..., 1] - f[..., 2])],
                     axis=-1)
+
+
+def srgb_to_lab(rgb):
+    """CIELAB (D65) of sRGB colours (..., 3) in 0..1."""
+    return linear_to_lab(decode(rgb))
 
 
 def delta_e(a, b):
@@ -98,21 +129,72 @@ def delta_e(a, b):
     return float(np.linalg.norm(srgb_to_lab(a) - srgb_to_lab(b)))
 
 
-def _visible(pred, cam, X, guard):
-    """Which surface points X (world) camera `cam` sees with a guard band:
-    rays to each point and to V.RIM points `guard` round it, square to the
-    line of sight, none stopping more than `guard` short on anything a
-    colour ray can hit (the marker balls too) -- in the rig as drawn, which
-    lies up to the build's tolerance from the rig as built."""
+def carry(pred, f):
+    """(M, c): the map Y -> M Y + c that carries a point of the calibration's
+    world, where the clamp was tracked at pose f, into the rig as drawn,
+    posed at the command (pred_set): so a ray cast there meets the drawn
+    clamp, bat and card where the tracked ones are.  The structure that does
+    not turn with the clamp is then off by the gimbal's few millimetres of
+    build, which the guard band is for."""
+    from . import mjcf as RM
+    R0, t0 = RM.body_pose(pred.m, pred.d)
+    M = R0 @ np.asarray(f.R).T
+    return M, t0 - M @ np.asarray(f.t)
+
+
+def _visible(pred, cam, X, guard, normal=None, carried=None):
+    """Which surface points X (calibration world) camera `cam` sees with a
+    guard band: rays to each point and to V.RIM points `guard` round it, in
+    the surface's own plane when its normal is given (else square to the
+    line of sight), none stopping more than `guard` short on anything a
+    colour ray can hit (the marker balls too) -- in the rig as drawn, posed
+    at the command, carried (carry) to the tracked pose."""
     import mujoco
-    C0 = cam.centre
-    vec, dist = V.outline_rays(C0, np.atleast_2d(X), guard)
+    X = np.atleast_2d(np.asarray(X, float))
+    C0 = np.asarray(cam.centre, float)
+    n = None if normal is None else np.asarray(normal, float)
+    if carried is not None:
+        M, c = carried
+        C0, X = M @ C0 + c, X @ M.T + c
+        n = None if n is None else M @ n
+    if n is None:
+        vec, dist = V.outline_rays(C0, X, guard)
+    else:
+        e1 = np.cross(n, (0.0, 0.0, 1.0))
+        if np.linalg.norm(e1) < 1e-6:
+            e1 = np.cross(n, (1.0, 0.0, 0.0))
+        e1 /= np.linalg.norm(e1)
+        e2 = np.cross(n, e1)
+        q = V.rim()
+        pts = X[:, None, :] + guard * (q[None, :, :1] * e1 + q[None, :, 1:] * e2)
+        vv = pts.reshape(-1, 3) - C0
+        dist = np.linalg.norm(vv, axis=1)
+        vec = vv / dist[:, None]
     N = len(vec)
     gid = np.zeros(N, np.int32)
     hit = np.zeros(N)
     mujoco.mj_multiRay(pred.m, pred.d, C0 / 1000.0, vec.ravel(), V.LIT_GROUPS, 1, -1, gid, hit, None, N, -1)
     blocked = (hit >= 0.0) & (hit * 1000.0 < dist - guard)
-    return ~blocked.reshape(len(np.atleast_2d(X)), -1).any(axis=1)
+    return ~blocked.reshape(len(X), -1).any(axis=1)
+
+
+def geometry(cam, W, nw, d_exp):
+    """(N,): what a sample at W (world) on a surface of normal nw reads per
+    unit reflectance, against white square to the light at d_exp: the
+    cosine times the light's fall-off."""
+    to = cam.centre - np.atleast_2d(W)
+    dist = np.linalg.norm(to, axis=1)
+    return (to @ nw) / dist * (d_exp / dist) ** 2
+
+
+def sensor_var(raw):
+    """(N, 3): the variance of a raw read (1.0 the full well), from the
+    sensor's own facts: shot noise, read noise and the step of its BITS
+    above the black level (vision._sensor)."""
+    from ..spec import RingCam
+    span = 2 ** RingCam.BITS - 1 - RingCam.BLACK_LEVEL
+    e = np.clip(np.asarray(raw, float), 0.0, None) * RingCam.FULL_WELL
+    return (e + RingCam.READ_NOISE ** 2) / RingCam.FULL_WELL ** 2 + 1.0 / (12.0 * span * span)
 
 
 def _face_samples(cam, R, t, x0, x1, face, n_x=N_X, n_t=N_T):
@@ -148,17 +230,22 @@ def _face_samples(cam, R, t, x0, x1, face, n_x=N_X, n_t=N_T):
 
 @dataclass
 class CardFit:
-    A: list                    # per camera (3, 3) or None: raw = A @ rgb, over the cosine
+    A: list                    # per camera (3, 3) or None: raw = A @ reflectance, over the geometry
     patches: list              # per camera: patches read
     resid: list                # per camera: rms of the fit, raw units
+    A_sd: list = field(default_factory=list)      # per camera (3, 3): A's 1 sigma, from the sensor's noise
+    chi2: list = field(default_factory=list)      # per camera: what the fit leaves, over that noise
+    dof: list = field(default_factory=list)
 
 
-def _patch(cam, R, t, c, nrm, pred, guard):
-    """(uv (9, 2), cos (9,)) of a card patch's samples -- a 3 x 3 grid
-    EDGE_PX in from its edges at its foreshortened scale -- through camera
+def _patch(cam, R, t, c, nrm, pred, guard, carried=None):
+    """(uv (n, 2), W (n, 3), nw (3,)) of a card patch's samples -- the
+    centres of the pixels that fall inside it, EDGE_PX in from its edges at
+    its foreshortened scale, each read alone (a read at a pixel's centre is
+    that pixel), so that no two share a pixel's noise -- through camera
     `cam` with the body at (R, t), or None when the camera cannot read the
-    patch whole (facing away, too oblique, off the sensor, or any of it
-    hidden in the scene `pred` is posed in)."""
+    patch (facing away, too oblique to keep a pixel inside, off the sensor,
+    or any of it hidden in the scene `pred` is posed in)."""
     c, nrm = np.asarray(c, float), np.asarray(nrm, float)
     e1 = np.array([1.0, 0.0, 0.0])
     e2 = np.cross(nrm, e1)
@@ -173,57 +260,102 @@ def _patch(cam, R, t, c, nrm, pred, guard):
     h = Clamp.CARD_PATCH / 2.0 - EDGE_PX * depth / (cam.lens.fx * cos)
     if h <= 0.0:
         return None
-    g = np.linspace(-h, h, 3)
-    G1, G2 = np.meshgrid(g, g)
-    P = face + G1.ravel()[:, None] * e1 + G2.ravel()[:, None] * e2
-    W = P @ R.T + t
-    u, v, z = cam.project(W)
+    sq = np.array([[-1, -1], [1, -1], [1, 1], [-1, 1]], float) * h
+    u, v, z = cam.project((face + sq[:, :1] * e1 + sq[:, 1:] * e2) @ R.T + t)
     if not (np.all(z > 0) and np.all(cam.lens.inside(u, v, EDGE_PX))):
         return None
-    if not _visible(pred, cam, W, guard).all():
+    jj, ii = np.meshgrid(np.arange(np.floor(u.min()), np.ceil(u.max()) + 1),
+                         np.arange(np.floor(v.min()), np.ceil(v.max()) + 1))
+    uv = np.column_stack([jj.ravel(), ii.ravel()]) + 0.5
+    d = cam.ray_world(uv[:, 0], uv[:, 1])
+    s = ((Wc - cam.centre) @ nw) / (d @ nw)
+    W = cam.centre + s[:, None] * d
+    q = (W - t) @ R - face
+    keep = (np.abs(q @ e1) <= h) & (np.abs(q @ e2) <= h)
+    if not keep.any():
+        return None
+    uv, W = uv[keep], W[keep]
+    if not _visible(pred, cam, W, guard, nw, carried).all():
         return None                                        # a patch partly hidden is not read
-    cs = ((cam.centre - W) @ nw) / np.linalg.norm(cam.centre - W, axis=1)
-    return np.stack([u, v], 1), cs
+    return uv, W, nw
 
 
-def fit_card(vision, cams, track_fits, poses, rig, pred, guard):
+def fit_card(vision, cams, track_fits, poses, rig, pred, guard, falloff=True, floor=None):
     """CardFit: each camera's response from the card, over the poses given
-    (the gimbal commands and the clamp's fitted pose at each)."""
+    (the gimbal commands and the clamp's fitted pose at each).  `falloff`
+    False ignores the light's fall-off with distance: a must-fail.
+    `floor`, if given, is what the camera adds beyond the sensor's own
+    noise, floor(cam, raw) -> (N, 3) variance, the same in every sample of
+    a read (a rendered canvas's 8-bit step); a real camera has none."""
     C = len(cams)
+    d_exp = V.expose_mm(rig)
     rows = [[] for _ in range(C)]
     n_seen = [0] * C
     for (a, b), f in zip(poses, track_fits):
         if f is None:
             continue
         pred_set(pred, a, b)
+        cr = carry(pred, f)
         for name, c, nrm, rgb in rig.card:
             for k, cam in enumerate(cams):
-                got = _patch(cam, f.R, f.t, c, nrm, pred, guard)
+                got = _patch(cam, f.R, f.t, c, nrm, pred, guard, cr)
                 if got is None:
                     continue
-                uv, cs = got
+                uv, W, nw = got
+                g = geometry(cam, W, nw, d_exp)
+                if not falloff:
+                    g = g * (np.linalg.norm(cam.centre - W, axis=1) / d_exp) ** 2
                 raw = vision.colour(a, b, k, uv)
-                rows[k].append((np.asarray(rgb, float), (raw / cs[:, None]).mean(axis=0)))
+                y = (raw / g[:, None]).mean(axis=0)
+                var = (sensor_var(raw) / g[:, None] ** 2).mean(axis=0) / len(g)
+                if floor is not None:
+                    var = var + (floor(k, raw) / g[:, None] ** 2).mean(axis=0)
+                rows[k].append((np.asarray(rgb, float), y, var))
                 n_seen[k] += 1
-    A, resid = [], []
+    out = CardFit([], n_seen, [], [], [], [])
     for k in range(C):
         if len({tuple(r[0]) for r in rows[k]}) < 3:
-            A.append(None)
-            resid.append(np.nan)
+            for lst in (out.A, out.A_sd):
+                lst.append(None)
+            out.resid.append(np.nan)
+            out.chi2.append(np.nan)
+            out.dof.append(0)
             continue
         X = np.array([r[0] for r in rows[k]])
         Y = np.array([r[1] for r in rows[k]])
-        At = np.linalg.lstsq(X, Y, rcond=None)[0]               # Y = X A^T
-        # a patch the drawing said was clear and was not reads far off the
-        # rest: drop any off by Z_SIGMAS times the median patch and fit again
-        e = np.linalg.norm(X @ At - Y, axis=1)
-        keep = e <= Module.Z_SIGMAS * np.median(e)
-        if not keep.all() and len({tuple(x) for x in X[keep]}) >= 3:
-            X, Y = X[keep], Y[keep]
-            At = np.linalg.lstsq(X, Y, rcond=None)[0]
-        A.append(At.T)
-        resid.append(float(np.sqrt(np.mean((X @ At - Y) ** 2))))
-    return CardFit(A, n_seen, resid)
+        Wt = 1.0 / np.array([r[2] for r in rows[k]])
+        keep = np.ones(len(X), bool)
+        for _ in range(2):
+            # a patch the drawing said was clear and was not reads far off
+            # the rest: drop any more than Z_SIGMAS of its own noise off and
+            # fit again
+            At, sd = _wls(X[keep], Y[keep], Wt[keep])
+            z = np.abs(X @ At - Y) * np.sqrt(Wt)
+            new = z.max(axis=1) <= Module.Z_SIGMAS * max(1.0, float(np.median(z)))
+            if new.all() or len({tuple(x) for x in X[new]}) < 3 or np.array_equal(new, keep):
+                break
+            keep = new
+        At, sd = _wls(X[keep], Y[keep], Wt[keep])
+        e = X[keep] @ At - Y[keep]
+        out.A.append(At.T)
+        out.A_sd.append(sd.T)
+        out.resid.append(float(np.sqrt(np.mean(e ** 2))))
+        out.chi2.append(float(np.sum(e * e * Wt[keep])))
+        out.dof.append(int(3 * (keep.sum() - 3)))
+    return out
+
+
+def _wls(X, Y, Wt):
+    """(A^T (3, 3), its sd): Y = X A^T, each channel by weighted least
+    squares with weights Wt (n, 3)."""
+    At, sd = np.zeros((3, 3)), np.zeros((3, 3))
+    for j in range(3):
+        w = Wt[:, j]
+        H = X.T @ (X * w[:, None])
+        Hi = np.linalg.inv(H)
+        At[:, j] = Hi @ (X.T @ (w * Y[:, j]))
+        sd[:, j] = np.sqrt(np.diag(Hi))
+    return At, sd
 
 
 def card_poses(rig, cams, pred, poses, guard, per_cam=2):
@@ -240,7 +372,7 @@ def card_poses(rig, cams, pred, poses, guard, per_cam=2):
             for k, cam in enumerate(cams):
                 got = _patch(cam, R, np.zeros(3), c, nrm, pred, guard)
                 if got is not None:
-                    score[k, i] += got[1].mean()
+                    score[k, i] += float(geometry(cam, got[1], got[2], V.expose_mm(rig)).mean())
     pick = set()
     for k in range(len(cams)):
         best = np.argsort(-score[k])[:per_cam]
@@ -265,20 +397,27 @@ def pred_set(pred, a, b):
 @dataclass
 class BandRead:
     name: str
-    rgb: np.ndarray            # the band's colour as read (sRGB, 0..1)
+    rgb: np.ndarray            # the band's colour as read, sRGB 0..1 (encode of lin)
     n: int                     # samples behind it
-    per_cam: dict = field(default_factory=dict)    # cam -> (rgb, samples)
+    per_cam: dict = field(default_factory=dict)    # cam -> (linear, samples)
+    lin: np.ndarray = None     # its linear reflectance
+    sleeve: np.ndarray = None  # the sleeve's linear reflectance, as measured (the same for every band)
 
 
-def read_bands(vision, cams, card, track_fits, poses, rig, pred, guard, sleeve_rgb, correct=True):
+def read_bands(vision, cams, card, track_fits, poses, rig, pred, guard, correct=True):
     """[BandRead]: each band's colour, from every camera that sees a flat
-    face of it squarely enough, against the sleeve beside it."""
+    face of it squarely enough, against the sleeve beside it, the sleeve
+    measured through the card.  `correct` False reads with no card (A the
+    identity): a must-fail."""
     geo = band_geometry(rig)
+    d_exp = V.expose_mm(rig)
     acc = {name: {} for name, *_ in geo}
+    sl, n_sl = np.zeros(3), 0
     for (a, b), f in zip(poses, track_fits):
         if f is None:
             continue
         pred_set(pred, a, b)
+        cr = carry(pred, f)
         for name, x0, x1, bf, sf, s0, s1 in geo:
             w = x1 - x0
             b0, b1 = max(x0, s0), min(x1, s1)                  # the band where it is outermost
@@ -289,25 +428,33 @@ def read_bands(vision, cams, card, track_fits, poses, rig, pred, guard, sleeve_r
                     continue
                 Ainv = np.linalg.inv(card.A[k]) if correct else np.eye(3)
                 for face_b, face_s in zip(bf, sf):
-                    Wb, uvb, okb, cos = _face_samples(cam, f.R, f.t, b0, b1, face_b)
+                    nw = f.R @ np.array([0.0, face_b[2][0], face_b[2][1]])
+                    Wb, uvb, okb, _ = _face_samples(cam, f.R, f.t, b0, b1, face_b)
                     if not okb.all():
                         continue                               # a face is read whole or not at all
-                    side = []
+                    side, side_w = [], []
                     for p0, p1 in strips:
                         Ws, uvs, oks, _ = _face_samples(cam, f.R, f.t, p0, p1, face_s)
-                        if oks.all() and _visible(pred, cam, Ws, guard).all():
+                        if oks.all() and _visible(pred, cam, Ws, guard, nw, cr).all():
                             side.append(uvs)
-                    if not side or not _visible(pred, cam, Wb, guard).all():
+                            side_w.append(Ws)
+                    if not side or not _visible(pred, cam, Wb, guard, nw, cr).all():
                         continue
-                    rb = (Ainv @ vision.colour(a, b, k, uvb).mean(axis=0))
-                    rs = (Ainv @ vision.colour(a, b, k, np.vstack(side)).mean(axis=0))
-                    rgb = rb / np.maximum(rs, 1e-9) * np.asarray(sleeve_rgb, float)
+                    Ws = np.vstack(side_w)
+                    gb, gs = geometry(cam, Wb, nw, d_exp), geometry(cam, Ws, nw, d_exp)
+                    rb = Ainv @ (vision.colour(a, b, k, uvb) / gb[:, None]).mean(axis=0)
+                    rs_all = (vision.colour(a, b, k, np.vstack(side)) / gs[:, None]) @ Ainv.T
+                    rs = rs_all.mean(axis=0)
+                    ratio = rb / np.maximum(rs, 1e-9)
                     n0 = acc[name].get(k, (np.zeros(3), 0))
-                    acc[name][k] = (n0[0] + rgb * len(uvb), n0[1] + len(uvb))
+                    acc[name][k] = (n0[0] + ratio * len(uvb), n0[1] + len(uvb))
+                    sl += rs_all.sum(axis=0)
+                    n_sl += len(rs_all)
+    sleeve = sl / n_sl if n_sl else np.full(3, np.nan)
     out = []
     for name, *_ in geo:
-        per = {k: (sm / n, n) for k, (sm, n) in acc[name].items()}
+        per = {k: (sm / n * sleeve, n) for k, (sm, n) in acc[name].items()}
         n = sum(v[1] for v in per.values())
-        rgb = sum(v[0] * v[1] for v in per.values()) / n if n else np.full(3, np.nan)
-        out.append(BandRead(name, rgb, n, per))
+        lin = sum(v[0] * v[1] for v in per.values()) / n if n else np.full(3, np.nan)
+        out.append(BandRead(name, encode(lin) if n else lin, n, per, lin, sleeve))
     return out

@@ -470,7 +470,7 @@ class RigBuild:
     CENTRE_PX   = 15.0         # px, the principal point: lens thread to sensor
     DIST        = (0.02, 0.01, 0.003, 5e-4, 5e-4)   # k1 k2 k3 p1 p2, about the lens's curve
     COLOUR_GAIN = 0.05         # of each channel's gain: the sensor's white balance
-    COLOUR_MIX  = 0.03         # each off-diagonal of the sensor's colour mixing
+    COLOUR_MIX  = 0.03         # each off-diagonal of the sensor's colour mixing (half-normal: a leak)
     MARKER      = 0.3          # mm, a marker's stem in its tapped hole
     AXIS_SKEW   = 0.1          # deg, the inner axis off square to the outer
     AXIS_OFFSET = 0.5          # mm, the inner axis off the outer
@@ -480,8 +480,8 @@ class RigBuild:
     # of the pull a marker's stem puts on its centroid, about the area
     # model (rig/vision.stem_bias_px): its scale, one number for the rig,
     # set by how bright a ball's edge is against its middle and by how the
-    # centroider weights it [estimate: the rendered ring pulls 1.28 of the
-    # model, check_cameras].  Self-calibration solves it
+    # centroider weights it [estimate: the rendered ring pulls 1.26-1.28 of
+    # the model, check_cameras].  Self-calibration solves it
     STEM        = 0.3
 
 
@@ -524,6 +524,10 @@ class RingCam:
     BITS        = 10
     FULL_WELL   = 10000.0      # e- at the gain the rig runs [VERIFY]
     READ_NOISE  = 4.0          # e- rms [VERIFY]
+    # codes the sensor adds to every pixel before it is cut to BITS, so the
+    # noise of a dark pixel is kept, not clipped at zero: clipped, a dark
+    # channel reads high on average (a band's 1 % green read 2 to 5 %)
+    BLACK_LEVEL = 42           # codes at 10 bits [VERIFY: the module's data pedestal]
     TRIGGER_SKEW = 1.0e-6      # s, 1 sigma, between cameras on one trigger line [VERIFY]
     # The M12 lenses stocked for a 1/2.6" sensor: (focal mm, k1, k2), the
     # radial terms fitted to each datasheet's distortion curve -- the
@@ -531,13 +535,17 @@ class RingCam:
     # Short lenses barrel hard [VERIFY: the supplier's curves]
     LENSES      = ((2.8, -0.30, 0.09), (3.6, -0.24, 0.06), (4.0, -0.20, 0.04), (6.0, -0.11, 0.015),
                    (8.0, -0.06, 0.005), (12.0, -0.03, 0.0), (16.0, -0.02, 0.0), (25.0, -0.01, 0.0))
-    # px across a ball's image for its centroid to hold, taken from the
-    # head camera's until check_cameras' pixels rig measures this one
+    # px across a ball's image for its centroid to hold: the head camera's,
+    # borrowed; nothing here has measured it for this camera and ball (the
+    # rendered rig's smallest ball is 11 px) [VERIFY: with PixelVision]
     MIN_PX      = HeadCam.MIN_PX
     # a ball's centroid, 1 sigma per axis, against where the model camera
-    # puts it.  Measured, not chosen: check_cameras' pixels rig holds the
-    # model camera against PixelVision on rendered, distorted, noisy frames
-    # and re-measures it every run [VERIFY: on the camera]
+    # puts it: a BUDGET, the head camera's measured figure carried over,
+    # not a measurement of this camera.  Every covariance here is stated at
+    # it and the model camera draws its noise at it, so the rig is judged
+    # at the worst it is allowed; check_cameras' rendered frames come in at
+    # about a third of it (0.023 px), and fail the suite if they ever
+    # exceed it [VERIFY: on the camera]
     CENTROID_PX = 0.07
     BODY        = (36.0, 36.0, 45.0)   # mm: board square, and its depth with lens and ring light
     LIGHT_D     = 60.0         # mm, the ring light's outside diameter

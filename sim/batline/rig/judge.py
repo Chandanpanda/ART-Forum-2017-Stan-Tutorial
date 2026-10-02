@@ -54,11 +54,15 @@ def reprojection(cal, scene, G):
 
 def intrinsics_z(cal, scene):
     """(C, 9): each camera's lens parameter error over its own stated
-    sigma (calib.Solution.cov), the lens being free of the world's gauge."""
+    sigma (calib.Solution.cov), the lens being free of the world's gauge.
+    A parameter held (sigma 0) has none; one the data did not fix (sigma
+    not finite) is infinitely far off, so no check passes it."""
     out = []
     for c, (est, true) in enumerate(zip(cal.sol.cams, scene.truth_cams())):
         sd = cal.sol.cov["cam"][c, 6:]
-        out.append((est.lens.params() - true.lens.params()) / np.where(sd > 0, sd, np.inf))
+        e = est.lens.params() - true.lens.params()
+        good = np.isfinite(sd) & (sd > 0)
+        out.append(np.where(good, e / np.where(good, sd, 1.0), np.where(sd == 0, 0.0, np.inf)))
     return np.array(out)
 
 

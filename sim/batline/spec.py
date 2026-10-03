@@ -120,6 +120,78 @@ class Board:
     FINGER_FREE = 1.5          # mm, a finger's free height below the board
     FINGER_MIN  = 0.3          # mm of deflection for its rated contact force
     FINGER_MAX  = 1.0          # mm of deflection before it yields
+    # the IMU's sensing centre above the board's top face, and its axes in
+    # the bat frame with the board fitted: rows are the chip's x, y and z
+    # [VERIFY: the board's drawing and the part's package drawing]
+    IMU_Z       = 0.46         # mm, half an LGA package 0.91 mm high
+    IMU_AXES    = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+    # the chip on its board, 1 sigma: where pick-and-place leaves it and how
+    # its solder tilts it [VERIFY: the board house's placement tolerance]
+    CHIP_POS    = 0.05         # mm, along and across
+    CHIP_ROT    = 0.5          # deg, about its normal
+    CHIP_TILT   = 0.2          # deg, about either edge
+    # how firmly what presses on the board holds it from sliding along its
+    # slot: the pogo tips on its pads, its fingers on their strips, as a
+    # friction coefficient [VERIFY: pull a clamped board along its slot]
+    PAD_MU      = 0.2
+
+
+class Imu:
+    """The board's IMU as the firmware runs it: a +-4000 dps / +-32 g part,
+    ICM-42686-P class (README: the study saturated a +-2000 dps one).  Every
+    number is the part's datasheet or the firmware's setting [VERIFY: every
+    one, from the chosen part's datasheet; where the study
+    (imu_fusion_sim.DATASHEET) had a value from memory, it is kept].  Spreads
+    are 1 sigma, part to part, before any calibration."""
+    GYRO_FS     = 4000.0       # dps, full scale
+    ACC_FS      = 32.0         # g
+    BITS        = 16           # signed codes, -32768..32767: one LSB is FS / 32768
+    ODR         = 1000.0       # Hz, the output rate the firmware sets (the study's)
+    FILTER_ORDER = 2           # the output path's low-pass, Butterworth
+    FILTER_BW   = 250.0        # Hz, its -3 dB point (the study's noise bandwidth)
+    GYRO_ND     = 0.0028       # dps/rtHz, white
+    ACC_ND      = 70e-6        # g/rtHz
+    GYRO_BIAS   = 0.5          # dps, zero-rate offset
+    ACC_BIAS    = 0.020        # g, zero-g offset
+    GYRO_SCALE  = 0.003        # of the sensitivity
+    ACC_SCALE   = 0.003
+    GYRO_CROSS  = 0.006        # each off-diagonal, the die's misalignment included
+    ACC_CROSS   = 0.005
+    GYRO_GSENS  = 0.05         # dps/g, each element
+    GYRO_TC     = 0.005        # dps/degC, the zero-rate offset against temperature
+    ACC_TC      = 0.15e-3      # g/degC
+    # one power-up's offsets about the part's own: what a stored bias is
+    # worth at the next power-up [VERIFY: power one part up twenty times]
+    GYRO_POWERUP = 0.02        # dps
+    ACC_POWERUP = 1.0e-3       # g
+    ODR_TOL     = 0.005        # of the output rate: the part's own oscillator
+    TEMP_LSB    = 1.0 / 132.48 # degC a code, the die's temperature, in every sample
+    TEMP_NOISE  = 0.02         # degC
+    # the die after power-up, in a bat in the clamp: how far it warms and
+    # how fast [VERIFY: a thermocouple on a board in a bat in the clamp]
+    SELF_HEAT   = 3.0          # degC
+    HEAT_TAU    = 120.0        # s
+    START_S     = 0.5          # s from power to its first sample: boot and configure [VERIFY: the firmware]
+
+
+class Material:
+    """Densities, g/mm^3 [handbook values; VERIFY the ball's]."""
+    ALU         = 2.70e-3
+    STEEL       = 7.85e-3
+    BALL        = 1.05e-3      # a retroreflective ball's moulded core
+
+
+class Site:
+    """Where the line stands [OPEN: chan's workshop; a Delhi placeholder].
+    Gravity and the Earth's turn there are computed from it (imu/kin.py);
+    the rig's heading is measured once when it is installed [VERIFY: a
+    compass along the rig's x axis]."""
+    LAT         = 28.6         # deg north
+    ALT         = 216.0        # m above sea level
+    HEADING     = 0.0          # deg, the rig's x axis from true north, clockwise seen from above
+    AMBIENT     = 25.0         # degC, the room
+    AMBIENT_SD  = 3.0          # degC, day to day
+    LEVEL       = 0.1          # deg, the rig's base off level, 1 sigma [VERIFY: a spirit level on the rig's base]
 
 
 class ContactSet:
@@ -249,6 +321,8 @@ class Stepper:
     # ends on a whole step [VERIFY: the driver's microstep setting]
     MICROSTEPS  = 16
     MASS        = 350.0        # g [VERIFY]
+    FRAME       = 42.3         # mm square, a NEMA 17's flange (NEMA ICS 16)
+    BODY_L      = 48.0         # mm, the can's length [VERIFY: the datasheet; a 0.45 N m NEMA 17 is a 48 mm can]
     # how quickly an axis stops ringing, as a damping ratio: the driver's
     # current loop and the rails' grease, which no drawing gives [VERIFY: a
     # ring-down on the built axis, an accelerometer on the head]
@@ -570,6 +644,17 @@ class Gimbal:
     HUB         = (40.0, 30.0) # mm, a bearing housing's diameter and length
     POST        = 40.0         # mm, the outer axis' two posts, square
     ENCODER_BITS = 17          # absolute, per turn [VERIFY]
+    WALL        = 1.5          # mm, the rings' tube wall [VERIFY]
+    # each axis: a Stepper through a timing belt, its encoder on the axis.
+    # The inner axis' motor rides the outer ring at one inner hub, with its
+    # own mass as a counterweight at the other, so the outer axis stays
+    # balanced [VERIFY: the build]
+    GEAR        = 4.0          # motor turns an axis turn [VERIFY: a 15 to 60 tooth belt]
+    ENCODER_HZ  = 1000.0       # Hz, how often the station reads both encoders [VERIFY: the controller]
+    # the pogo block's cable crosses both axes: how far each may turn from
+    # its zero, either way, before the wrap runs out [VERIFY: the wrap as
+    # built; a slip ring makes it unlimited]
+    WRAP        = 1.5          # turns
 
 
 class Clamp:
@@ -586,6 +671,11 @@ class Clamp:
     # with a measured reflectance (ISO 13655) [VERIFY: the card's certificate]
     CARD_PATCH  = 12.0         # mm, square
     CARD_RGB    = ((0.90, 0.90, 0.90), (0.75, 0.12, 0.10), (0.12, 0.60, 0.20), (0.10, 0.15, 0.65))
+    # where a bat sits in the jaws, bat to bat and re-clamp to re-clamp,
+    # 1 sigma: the V-jaws centre a grip that varies by Print.TOL [VERIFY:
+    # clamp one bat ten times under the cameras]
+    SEAT_POS    = 0.10         # mm, across the bat's axis
+    SEAT_ROT    = 0.10         # deg
 
 
 class CalBar:
@@ -680,6 +770,22 @@ class Rules:
     LOAD_WALLS  = 2            # walls in a face that carries a load: cap ends, floors
 
 
+class Quality:
+    """How sure the line must be that a calibrated bat meets its targets
+    (imu_fusion_sim.CALIBRATED: each a 1 sigma error over bats, as the
+    study drew them).  Policy, not physics [OPEN: chan's]."""
+    # a station is qualified on this many simulated bats, and a healthy one
+    # may fail that qualification this often (README, Milestone 3)
+    CAL_QUAL_BATS = 100
+    CAL_QUAL_ALPHA = 1e-3
+    # the golden bat: how many false stops a year a healthy rig may cause,
+    # and how surely it catches a drift that would put bats out of target
+    GOLDEN_STOPS_YEAR = 1.0
+    GOLDEN_POWER = 0.99
+    GOLDEN_RUNS = 20           # days at commissioning that certify it (imu/golden.py: on ten, the guard for
+                               # measuring their scatter costs more runs than ten more days do)
+
+
 # ============================================================ TASK SPECS
 @dataclass(frozen=True)
 class Bat:
@@ -755,19 +861,12 @@ class Est:
     LABEL_S      = 12.0        # s, print a label, press it on, read it back (M8)
     COLLAPSE_S   = 20.0        # s, the draw rod pulled and the mandrel folded (M5)
     NOZZLE_S     = 30.0        # s, the dispenser changes its own mixing nozzle and purges (M5)
-    # calibration (M3): the gimbal's recipe, from the design doc's steps
-    GIMBAL_RATE  = 180.0       # deg/s between poses
-    STILL_POSES  = 12
-    STILL_S      = 2.0         # s averaged at each pose
-    SPIN_AXES    = 3
-    SPIN_TURNS   = 5           # whole turns about each axis
-    SPIN_RPS     = 1.0
-    LEVER_SPINS  = 2           # spins with the IMU off the axis
-    LEVER_S      = 10.0
+    # calibration: the gimbal's motion is the IMU plan's (imu/plan.py) and
+    # the golden bat's day that plan's runs, as many as a drifted rig takes
+    # to show (imu/golden.py), both computed (M3)
     IPHONE_S     = 60.0        # s, pair, find the bands, a slow fused swing (M4)
     SWING_EVERY  = 20          # one bat in this many is swung at full speed (M4)
     SWING_S      = 120.0
-    GOLDEN_S     = 300.0       # s, the golden bat at the start of each line day (M3)
     TAG_READ_S   = 2.0         # s, a station reads a tray's tag
     DOCK_S       = 40.0        # s, a pose short of a dock to the tray seated and read (M9, M10)
     PACE         = 1.0         # measured pace correction, as truss.spec.Process.SPEED_FACTOR

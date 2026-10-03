@@ -477,19 +477,24 @@ def _layout(d, limits=None):
     st.sweep = (st.fixture + (rig.h_c,), rig.R_s + rig.clear)
     F = st.fixture
     rise = rig.work()[1]
-    step = degrees(sqrt(4.0 * pi / Est.STILL_POSES))   # mean spacing of N directions on a sphere
+    # the gimbal's motion is the IMU calibration's own plan, designed from
+    # the targets and the gimbal's limits (imu/plan.py), and the day starts
+    # with a golden bat run through it as often as catching a drifted rig
+    # takes (imu/golden.py)
+    from .imu import plan as imu_plan, golden as imu_golden
+    load = _mean_transfer(h, _slots(st, dg, "bats"), F, rise)
     st.jobs["bat"] = [
-        Op("the bat from its slot into the gimbal's clamp", _mean_transfer(h, _slots(st, dg, "bats"), F, rise),
-           "move"),
+        Op("the bat from its slot into the gimbal's clamp", load, "move"),
         Op("the pogo clamp closed and opened", 2.0 * h.z(), "move"),
-        Op("held still at each pose", Est.STILL_POSES * Est.STILL_S, "est"),
-        Op("turned between poses", Est.STILL_POSES * step / Est.GIMBAL_RATE, "est"),
-        Op("spun about each axis", Est.SPIN_AXES * Est.SPIN_TURNS / Est.SPIN_RPS, "est"),
-        Op("spun with the IMU off the axis", Est.LEVER_SPINS * Est.LEVER_S, "est"),
+        Op("the IMU calibration plan", imu_plan.for_design(d).duration_s, "plan"),
         Op("the factory iPhone's test", Est.IPHONE_S, "est"),
-        Op("the bat back into its slot", _mean_transfer(h, _slots(st, dg, "bats"), F, rise), "move")]
+        Op("the bat back into its slot", load, "move")]
     st.jobs["swing"] = [Op("a full-speed swing in the enclosed rig", Est.SWING_S, "est")]
-    st.jobs["day"] = [Op("the golden bat, before the day's first", Est.GOLDEN_S, "est")]
+    st.jobs["day"] = [
+        Op("a golden bat from its slot into the clamp, before the day's first", load, "move"),
+        Op("the pogo clamp closed and opened", 2.0 * h.z(), "move"),
+        Op("the golden bat's runs of the plan", imu_golden.for_design(d).duration_s, "plan"),
+        Op("the golden bat back into its slot", load, "move")]
     st.jobs["tray"] = [Op("the tray's tag read", Est.TAG_READ_S, "est")]
     out["calibration"] = (st, h)
 

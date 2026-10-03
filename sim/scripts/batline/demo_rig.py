@@ -10,7 +10,8 @@ The same placement, build draw and sequence as check_cameras: the solver
 places the cameras, the certified bar turns through the 8 x 8 grid of
 gimbal poses and the rig calibrates itself from it, then the bat turns
 through the 4 x 4 grid a quarter step over (no pose calibration saw).  The gimbal turns both axes at
-once at Est.GIMBAL_RATE and holds each pose Est.STILL_S, so the frames are
+once at the IMU plan's move rate and holds each pose for the settle after its hardest stop
+(imu/plan.py: limits, the gimbal's own), so the frames are
 at 0.1 fps of that time (truss/filmstrip.py).  Each frame is the overview
 and the eight cameras' colour exposures, rendered and warped through each
 camera's true lens.  On the bar, red crosses are where the drawing (the
@@ -39,23 +40,26 @@ import numpy as np                  # noqa: E402
 
 import check_cameras as CC          # noqa: E402
 from truss import filmstrip         # noqa: E402
-from batline.spec import Est        # noqa: E402
+from batline.imu import plan as P   # noqa: E402
 
 VIEW = (320, 200)                   # each camera's frame on the sheet, px
 OVER = (320, 400)                   # the overview's
 
 
-def timeline(poses, t0=0.0, start=(0.0, 0.0)):
+def timeline(poses, lim, t0=0.0, start=(0.0, 0.0)):
     """[(t0, t1, from, to, what)]: the gimbal turning to each pose, both
-    axes at once the shorter way round, then held still."""
+    axes at once the shorter way round at the plan's move rate (lim:
+    plan.Limits), then held still for the settle after its hardest stop."""
+    rate = float(np.degrees(np.min(lim.w_max)))
+    hold = P._typical_settle(lim, P.F.window_W())
     segs, t, prev = [], t0, np.asarray(start, float)
     for p in np.asarray(poses, float):
         dlt = (p - prev + 180.0) % 360.0 - 180.0
-        mv = float(np.abs(dlt).max()) / Est.GIMBAL_RATE
+        mv = float(np.abs(dlt).max()) / rate
         segs.append((t, t + mv, prev, prev + dlt, "turning"))
         t += mv
-        segs.append((t, t + Est.STILL_S, p, p, "held"))
-        t += Est.STILL_S
+        segs.append((t, t + hold, p, p, "held"))
+        t += hold
         prev = p
     return segs
 
@@ -96,8 +100,9 @@ def main():
     print("%s: cameras placed, %.0f s" % (bat.name, time.time() - t_wall))
 
     bar_poses, bat_poses = RS.grid(8), RS.grid(4, 0.25)
-    s_bar = timeline(bar_poses)
-    s_bat = timeline(bat_poses, s_bar[-1][1], bar_poses[-1])
+    lim = P.limits(d, rig)
+    s_bar = timeline(bar_poses, lim)
+    s_bat = timeline(bat_poses, lim, s_bar[-1][1], bar_poses[-1])
     fps = [(0.1, None)] + ([(1.0, tuple(a.window))] if a.window else [])
     K = len(rig.markers)
     sx, sy = VIEW[0] / cams[0].lens.W, VIEW[1] / cams[0].lens.H

@@ -47,7 +47,7 @@ from math import pi, sqrt, cos, sin, atan, degrees, radians, ceil
 import numpy as np
 
 from truss.spec import mm
-from ..spec import RingCam, Marker, Gimbal, Clamp, CalBar, RigBuild, Rig
+from ..spec import RingCam, Marker, Gimbal, Clamp, CalBar, RigBuild, Rig, Material, Print, Stepper
 from .. import mjcf as bat_mjcf
 from .lens import Camera, Lens, rodrigues, DIST
 from . import spec as RS
@@ -59,6 +59,7 @@ C_FLOOR = "0.20 0.20 0.21 1"
 C_BAR = "0.08 0.08 0.09 1"
 STRUCT, BAT, PROXY, BALL, STEM = 0, 1, 2, 3, 4
 N_RING = 72                    # boxes a ring is drawn with: a 5-degree polygon
+DEFAULT_DENSITY = 1000.0       # kg/m^3, MuJoCo's own default: what an unweighed geom weighs at
 
 
 def _v(p):
@@ -265,63 +266,83 @@ def bat_geoms(rig):
     return g, proxy
 
 
-def scene(rig, site, cams, b=None, payload="bat", size=None, overview=True):
-    """(xml, info) of the rig in its station, built as b says (as drawn if
-    b is None), the bat or the certified bar ("bar") in the clamp, only the
-    boxes enclosing the bat ("proxy": the placement solver's), or nothing
-    ("none").  `cams` are the cameras as drawn; their as-built
-    poses come from b.  `size` is the (W, H) every camera renders at -- the
-    canvas (vision.py) -- and the offscreen buffer is made that big."""
-    b = RigBuildDraw.drawing(rig, cams) if b is None else b
-    built = b.cams
-    if size is None:
-        Wc, Hc, fs = canvas(built)
-    else:
-        Wc, Hc = size
-        fs = [max(c.lens.fx, c.lens.fy) for c in built]
+# ============================================================ THE GIMBAL
+def _kgm3(g_mm3):
+    """kg/m^3 from spec's g/mm^3."""
+    return g_mm3 * 1.0e6
+
+
+def _printed(half):
+    """kg/m^3 of a printed block of half-sizes `half` (mm): its walls solid,
+    its inside at the slicer's infill (spec.Print)."""
+    full = 8.0 * half[0] * half[1] * half[2]
+    core = np.prod([max(2.0 * h - 2.0 * Print.WALL, 0.0) for h in half])
+    return _kgm3(Print.RHO) * (full - core * (1.0 - Print.INFILL)) / full
+
+
+def _weigh(line, rho=None, mass=None):
+    """A geom line with its density (kg/m^3) or its mass (kg) written in."""
+    if rho is not None:
+        return line.replace("<geom ", '<geom density="%.9g" ' % rho, 1)
+    return line.replace("<geom ", '<geom mass="%.9g" ' % mass, 1)
+
+
+def gimbal_xml(rig, b, payload="bat", weighed=False, inner_extra=()):
+    """[lines]: the gimbal's moving bodies, the outer member on its hinge
+    and the inner one on its own, the payload in the clamp, as built (b).
+
+    weighed: every geom given its material's density -- the rings square
+    aluminium tube (spec.Gimbal.WALL), the hubs aluminium, the stems and
+    the live centre steel, the balls their moulded cores, the clamp a
+    printed block, the bat its parts' own masses and the solver's proxy
+    boxes none -- and the inner axis' motor on the outer ring at one inner
+    hub with its counterweight at the other (spec.Gimbal).  Not in the
+    rendered scene: the cameras were placed against the gimbal as M2 drew
+    it, without that motor [VERIFY: the motor's mount, then re-place].
+    `inner_extra`: lines added to the inner body (sites)."""
+    if weighed and payload not in ("bat", "none"):
+        raise ValueError("only the bat, or nothing, is weighed in the clamp")
     S = Gimbal.SECTION
     r = rig.ball_r
-    world = []
-    # the floor, the gantry parked at home over the gimbal, the posts
-    world.append('<geom name="floor" type="plane" pos="0 0 %.6f" size="%.3f %.3f 0.01" rgba="%s" group="%d"/>'
-                 % (mm(-rig.h_c), mm(3.0 * rig.standoff), mm(3.0 * rig.standoff), C_FLOOR, STRUCT))
-    for o in site.occluders:
-        if o.name.startswith("gpost"):
-            continue
-        world.append(_box("gantry_" + o.name, o.c, o.half, C_FRAME))
-    for s in (-1.0, 1.0):
-        x = s * rig.post_x
-        top = Gimbal.HUB[0] / 2.0
-        world.append(_box("post%+d" % int(s), (x, 0.0, (-rig.h_c + top) / 2.0),
-                          (Gimbal.POST / 2.0, Gimbal.POST / 2.0, (rig.h_c + top) / 2.0), C_FRAME))
-    # the outer member, about its own axis
+    tube = _kgm3(Material.ALU) * (S * S - (S - 2.0 * Gimbal.WALL) ** 2) / (S * S)
+    W = (lambda line, **k: _weigh(line, **k)) if weighed else (lambda line, **k: line)
     c0 = b.centre
     outer = ['<body name="outer" pos="%s">' % _v(c0),
              '  <joint name="alpha" type="hinge" axis="%.9f %.9f %.9f" pos="0 0 0"/>' % tuple(b.axis_o)]
-    outer += ["  " + g for g in _ring("ring_o", rig.R_o, S, C_RING)]
+    outer += ["  " + W(g, rho=tube) for g in _ring("ring_o", rig.R_o, S, C_RING)]
     for s in (-1.0, 1.0):
-        outer.append("  " + _cyl("hub_o%+d" % int(s), (s * (rig.R_o + S / 2.0), 0.0, 0.0),
-                                 (s * (rig.post_x - Gimbal.POST / 2.0), 0.0, 0.0), Gimbal.HUB[0] / 2.0, C_FRAME))
-        outer.append("  " + _cyl("hub_i%+d" % int(s), (0.0, s * (rig.R_i + S / 2.0), 0.0),
-                                 (0.0, s * (rig.R_o - S / 2.0), 0.0), Gimbal.HUB[0] / 2.0, C_FRAME))
+        outer.append("  " + W(_cyl("hub_o%+d" % int(s), (s * (rig.R_o + S / 2.0), 0.0, 0.0),
+                                   (s * (rig.post_x - Gimbal.POST / 2.0), 0.0, 0.0), Gimbal.HUB[0] / 2.0, C_FRAME),
+                              rho=_kgm3(Material.ALU)))
+        outer.append("  " + W(_cyl("hub_i%+d" % int(s), (0.0, s * (rig.R_i + S / 2.0), 0.0),
+                                   (0.0, s * (rig.R_o - S / 2.0), 0.0), Gimbal.HUB[0] / 2.0, C_FRAME),
+                              rho=_kgm3(Material.ALU)))
+    if weighed:
+        y = rig.R_o + S / 2.0 + Stepper.BODY_L / 2.0
+        half = (Stepper.FRAME / 2.0, Stepper.BODY_L / 2.0, Stepper.FRAME / 2.0)
+        for name, s in (("motor_i", 1.0), ("counter_i", -1.0)):
+            outer.append("  " + _weigh(_box(name, (0.0, s * y, 0.0), half, C_CLAMP), mass=Stepper.MASS / 1000.0))
     # the inner member: ring, markers, clamp, card, live centre, payload
     inner = ['<body name="inner" pos="%s">' % _v(b.offset_i),
              '  <joint name="beta" type="hinge" axis="%.9f %.9f %.9f" pos="0 0 0"/>' % tuple(b.axis_i)]
-    inner += ["  " + g for g in _ring("ring_i", rig.R_i, S, C_RING)]
+    inner += ["  " + e for e in inner_extra]
+    inner += ["  " + W(g, rho=tube) for g in _ring("ring_i", rig.R_i, S, C_RING)]
     for k, p in enumerate(b.markers):
-        inner.append("  " + _stem("stem%d" % k, p, rig.R_i, S, r))
-        inner.append("  " + _ball("marker%d" % k, p, r))
+        inner.append("  " + W(_stem("stem%d" % k, p, rig.R_i, S, r), rho=_kgm3(Material.STEEL)))
+        inner.append("  " + W(_ball("marker%d" % k, p, r), rho=_kgm3(Material.BALL)))
     for bx in rig.clamp:
-        inner.append("  " + _box(bx.name, bx.c, bx.half, C_CLAMP))
+        inner.append("  " + W(_box(bx.name, bx.c, bx.half, C_CLAMP), rho=_printed(bx.half)))
     for name, c, n, rgb in rig.card:
         half = np.where(np.abs(n) > 0.5, 0.25, Clamp.CARD_PATCH / 2.0)      # thin along its normal
         cc = np.asarray(c, float) + 0.25 * np.asarray(n, float)
-        inner.append("  " + _box(name, cc, half, "%.4f %.4f %.4f 1" % tuple(rgb)))
+        inner.append("  " + W(_box(name, cc, half, "%.4f %.4f %.4f 1" % tuple(rgb)), rho=_kgm3(Print.RHO)))
     tip = rig.x1 - rig.x_mid
-    inner.append("  " + _cyl("live_centre", (tip, 0.0, 0.0), (rig.R_i - S / 2.0, 0.0, 0.0), Clamp.CENTRE_D / 2.0,
-                             C_CLAMP))
+    inner.append("  " + W(_cyl("live_centre", (tip, 0.0, 0.0), (rig.R_i - S / 2.0, 0.0, 0.0), Clamp.CENTRE_D / 2.0,
+                               C_CLAMP), rho=_kgm3(Material.STEEL)))
     if payload in ("bat", "proxy"):
         g, proxy = bat_geoms(rig)
+        if weighed:
+            proxy = [_weigh(p, mass=0.0) for p in proxy]
         inner.append('  <body name="bat" pos="%s">' % _v((-rig.x_mid, 0.0, 0.0)))
         inner += ["    " + s for s in (g if payload == "bat" else []) + proxy]
         inner.append("  </body>")
@@ -338,7 +359,37 @@ def scene(rig, site, cams, b=None, payload="bat", size=None, overview=True):
     inner.append("</body>")
     outer += ["  " + s for s in inner]
     outer.append("</body>")
-    world += outer
+    return outer
+
+
+def scene(rig, site, cams, b=None, payload="bat", size=None, overview=True):
+    """(xml, info) of the rig in its station, built as b says (as drawn if
+    b is None), the bat or the certified bar ("bar") in the clamp, only the
+    boxes enclosing the bat ("proxy": the placement solver's), or nothing
+    ("none").  `cams` are the cameras as drawn; their as-built
+    poses come from b.  `size` is the (W, H) every camera renders at -- the
+    canvas (vision.py) -- and the offscreen buffer is made that big."""
+    b = RigBuildDraw.drawing(rig, cams) if b is None else b
+    built = b.cams
+    if size is None:
+        Wc, Hc, fs = canvas(built)
+    else:
+        Wc, Hc = size
+        fs = [max(c.lens.fx, c.lens.fy) for c in built]
+    world = []
+    # the floor, the gantry parked at home over the gimbal, the posts
+    world.append('<geom name="floor" type="plane" pos="0 0 %.6f" size="%.3f %.3f 0.01" rgba="%s" group="%d"/>'
+                 % (mm(-rig.h_c), mm(3.0 * rig.standoff), mm(3.0 * rig.standoff), C_FLOOR, STRUCT))
+    for o in site.occluders:
+        if o.name.startswith("gpost"):
+            continue
+        world.append(_box("gantry_" + o.name, o.c, o.half, C_FRAME))
+    for s in (-1.0, 1.0):
+        x = s * rig.post_x
+        top = Gimbal.HUB[0] / 2.0
+        world.append(_box("post%+d" % int(s), (x, 0.0, (-rig.h_c + top) / 2.0),
+                          (Gimbal.POST / 2.0, Gimbal.POST / 2.0, (rig.h_c + top) / 2.0), C_FRAME))
+    world += gimbal_xml(rig, b, payload)
     # the cameras, as built, each with its ring light
     for k, (c, f) in enumerate(zip(built, fs)):
         fovy = 2.0 * degrees(atan((Hc / 2.0) / f))
@@ -371,13 +422,13 @@ def scene(rig, site, cams, b=None, payload="bat", size=None, overview=True):
     <material name="retro" rgba="1 1 1 1" emission="1" specular="0" shininess="0"/>
   </asset>
   <default>
-    <geom material="matte" contype="0" conaffinity="0" density="1000"/>
+    <geom material="matte" contype="0" conaffinity="0" density="%g"/>
   </default>
   <worldbody>
 %s
   </worldbody>
 </mujoco>
-""" % (zfar, Wc, Hc, "\n".join("    " + w for w in world))
+""" % (zfar, Wc, Hc, DEFAULT_DENSITY, "\n".join("    " + w for w in world))
     info = {"canvas": (Wc, Hc), "f_canvas": fs, "cams": [c.name for c in built],
             "markers": ["marker%d" % k for k in range(len(b.markers))],
             "bar": ["bar%d" % k for k in range(len(b.bar))] if payload == "bar" else []}

@@ -70,7 +70,7 @@ from ..rig.inertia import inertials
 from ..rig.pose import normal_quantile
 from . import kin as K
 from . import fit as F
-from .part import G0, D2R, lsb, unrailed, window_noise, impulse
+from .part import G0, D2R, lsb, usable, window_noise, impulse
 
 GOLDEN = (sqrt(5.0) - 1.0) / 2.0
 SPIN_RANK_PER_TURN = 128           # windows a turn keeps when a spin is ranked (nominal_obs): a
@@ -84,15 +84,21 @@ DESIGN_PLACE = "most"              # where between two codes the plan takes each
 
 
 # ================================================================ THE BAT
-def board_nominal(d, rig):
-    """(r m, R): the IMU's sensing centre in the clamp's frame and the
-    chip's axes there (columns), as drawn: the board on its stop, its top
-    face on the ledges, the chip at Board.IMU_AT on it."""
+def imu_in_bat(d):
+    """(p mm, R): the IMU's sensing centre in the bat's frame (product.py)
+    and the chip's axes there (columns), as drawn: the board on its stop,
+    its top face on the ledges, the chip at Board.IMU_AT on it."""
     lay, core = d.lay, d.core
     p = np.array([lay.x_imu, core.y_datum + Board.W / 2.0 + Board.IMU_AT[1], core.z_ledge + Board.IMU_Z])
     R = np.array(Board.IMU_AXES, float).T
     if abs(np.linalg.det(R) - 1.0) > 1e-9 or np.max(np.abs(R.T @ R - np.eye(3))) > 1e-9:
         raise ValueError("spec.Board.IMU_AXES is not a rotation")
+    return p, R
+
+
+def board_nominal(d, rig):
+    """(r m, R): imu_in_bat in the clamp's frame."""
+    p, R = imu_in_bat(d)
     return rig.bat_to_body(p) / 1000.0, R
 
 
@@ -275,14 +281,10 @@ def limits(d, rig=None):
     cands = []
     w_motor = Stepper.PULLOUT[-1][0] * 2.0 * pi / 60.0 / Gimbal.GEAR
     cands.append((w_motor, "the motor's pull-out curve ends at %.0f rpm" % Stepper.PULLOUT[-1][0]))
-    # the rate that keeps every gyro channel off its rail: less its offset
-    # and what the g-sensitivity makes of the largest force the accelerometer
-    # can read, over its scale and cross-axis gain
-    gyro_fs = (Imu.GYRO_FS * unrailed() - z * Imu.GYRO_BIAS - z * Imu.GYRO_GSENS * Imu.ACC_FS) * D2R \
-        / (1.0 + z * sqrt(Imu.GYRO_SCALE ** 2 + 2.0 * Imu.GYRO_CROSS ** 2))
+    # the rate and force that keep every channel off its rail (part.usable)
+    gyro_fs, acc_fs = usable(z)
     cands.append((gyro_fs, "the gyro's full scale"))
-    acc_fs = Imu.ACC_FS * unrailed() * G0 / (1.0 + z * sqrt(Imu.ACC_SCALE ** 2 + 2.0 * Imu.ACC_CROSS ** 2)) \
-        - z * Imu.ACC_BIAS * G0 - g
+    acc_fs = acc_fs - g
     cands.append((sqrt(acc_fs / r_max), "the accelerometer's full scale at the IMU"))
     hold = 2.0 * Board.PAD_MU * Pogo.N * Pogo.FORCE / (Board.MASS / 1000.0)
     cands.append((sqrt(max(hold - g, 0.0) / r_max), "the pogo block's grip on the board"))

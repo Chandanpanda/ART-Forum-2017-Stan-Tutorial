@@ -14,9 +14,12 @@ HOW A TIME IS MADE.  Every op says which of four sources it came from:
              computed from the station's layout -- never a typed duration
     stroke   a force-watched insertion at Est.INSERT_V, over a length the
              bat's own layout gives (product.Layout)
-    plan     the frame: the truss cell's planner (approach.plan_truss and
-             schedule.plan) run on the bat's frame, the same planner
-             check_schedule holds for the cell's own trusses
+    plan     a planner's own time on this bat: the frame's (the truss
+             cell's planner, approach.plan_truss and schedule.plan, the
+             same check_schedule holds for the cell's own trusses), the
+             IMU calibration's (imu/plan.py), and each station test's
+             procedure (board/procedures.py, phone/test.py,
+             swing/rig.py), each held to its simulation by its check
     est      a process nobody has timed: spec.Est, which names the
              milestone whose check replaces it
 
@@ -417,6 +420,7 @@ def _layout(d, limits=None):
     out["frame"] = (st, h)
 
     # ---------------------------------------------------------------- 2
+    from .board import procedures as board_procedures
     st, h = _station("electronics", ("bats", "parts"), (L, dg.cradle), dg, lift, limits)
     F = st.fixture
     pommel = h.at(h.bat_axis(F, -L / 2.0))
@@ -429,7 +433,7 @@ def _layout(d, limits=None):
         Op("the board from the parts tray to the slot's mouth", h.transfer(parts, pommel), "move"),
         Op("slid in until it snaps", _stroke(lay.x_stop - lay.x_face), "stroke"),
         Op("the pogo block down on the pads and up", 2.0 * h.z(), "move"),
-        Op("flashed, serial written, self-test", Est.FLASH_S, "est"),
+        Op("flashed, serial written, self-test (board/procedures.py)", board_procedures.plan_s(), "plan"),
         Op("the battery path checked with a dummy cell", Est.DUMMY_CELL_S, "est"),
         Op("the bat back into its slot", _mean_transfer(h, _slots(st, dg, "bats"), F), "move")]
     st.jobs["tray"] = [Op("the trays' tags read", 2 * Est.TAG_READ_S, "est")]
@@ -482,14 +486,26 @@ def _layout(d, limits=None):
     # with a golden bat run through it as often as catching a drifted rig
     # takes (imu/golden.py)
     from .imu import plan as imu_plan, golden as imu_golden
+    from .phone import test as phone_test
+    from .swing import rig as swing_rig
     load = _mean_transfer(h, _slots(st, dg, "bats"), F, rise)
+    bay = _stroke(lay.x_plus - lay.x_face)          # the pack's lead pip from the mouth to the + plate
     st.jobs["bat"] = [
         Op("the bat from its slot into the gimbal's clamp", load, "move"),
         Op("the pogo clamp closed and opened", 2.0 * h.z(), "move"),
         Op("the IMU calibration plan", imu_plan.for_design(d).duration_s, "plan"),
-        Op("the factory iPhone's test", Est.IPHONE_S, "est"),
+        Op("the factory iPhone's test (phone/test.py)", phone_test.plan_s(d), "plan"),
         Op("the bat back into its slot", load, "move")]
-    st.jobs["swing"] = [Op("a full-speed swing in the enclosed rig", Est.SWING_S, "est")]
+    # the swing rig stands beside the gimbal, its clamp where the head
+    # reaches as it reaches the gimbal's; the rig pushes its dummy pack
+    # home and closes the bay with a cap of its own carrying the product's
+    # spring (the pommel cap goes on at the pack station)
+    st.jobs["swing"] = [
+        Op("the bat from its slot into the swing rig's clamp", load, "move"),
+        Op("the dummy pack pushed home along the bay, the rig's cap closed", bay, "stroke"),
+        Op("the full-speed swing test (swing/rig.py)", swing_rig.plan_s(d), "plan"),
+        Op("the dummy pack drawn back out", bay, "stroke"),
+        Op("the bat back into its slot", load, "move")]
     st.jobs["day"] = [
         Op("a golden bat from its slot into the clamp, before the day's first", load, "move"),
         Op("the pogo clamp closed and opened", 2.0 * h.z(), "move"),

@@ -123,6 +123,18 @@ class Shape:
         R, rc = self.p
         return (-SQ3 * R / 2.0 - rc, SQ3 * R / 2.0 + rc, -R / 2.0 - rc, R + rc)
 
+    def corners(self):
+        """(k, 2) mm, (y, z): the convex polygon this shape is grown from by
+        its rounding -- a circle's centre, a rectangle's four corners, a
+        rounded triangle's chord axes -- so its extent along any direction
+        is theirs, widened by the rounding on each side."""
+        if self.kind == "circle":
+            return np.array([self.p[:2]], float)
+        if self.kind == "rect":
+            y0, y1, z0, z1 = self.p
+            return np.array([(y0, z0), (y1, z0), (y1, z1), (y0, z1)], float)
+        return np.array(_tri_vertices(self.p[0]), float)
+
     def r_max(self):
         """The farthest point from the bat's axis."""
         if self.kind == "circle":

@@ -53,6 +53,14 @@ class Cell:
     PIP_D       = 5.5          # mm, positive pip diameter, maximum
     PIP_H       = 1.0          # mm, positive pip projection, minimum
     MASS        = 23.0         # g, alkaline [VERIFY: weigh the brand the guide names]
+    # The cell as a source, alkaline, Energizer E91 class [VERIFY: the maker's datasheet and
+    # discharge curve at the bat's drain; marked (mem) from memory].  Open-circuit volts
+    # against the share of its capacity used, at a drain of a few mA where its own
+    # resistance drops a few mV: the curve is flat, then falls steeply past 90 %
+    CURVE       = ((0.0, 1.50), (0.50, 1.25), (0.75, 1.10), (0.875, 1.00), (1.0, 0.80))   # (mem)
+    CAPACITY_AH = 2.9          # Ah at 25 mA to 0.8 V (an older E91 engineering sheet)
+    R_FRESH     = 0.30         # ohm, DC pulse, the top of Energizer's 150-300 mohm
+    R_END       = 0.75         # ohm, late in its discharge (read off a graph: low confidence)
 
 
 class Print:
@@ -134,6 +142,18 @@ class Board:
     # slot: the pogo tips on its pads, its fingers on their strips, as a
     # friction coefficient [VERIFY: pull a clamped board along its slot]
     PAD_MU      = 0.2
+    # the bulk capacitor on the supply, which carries the board while a cell's
+    # contact is open.  A requirement until a board is chosen: board/power.py
+    # derives the least that rides through Rules.BOUNCE_S (206 uF streaming to
+    # the phone, its losses counted), and check_link holds this, at its low
+    # tolerance, to it: the smallest E6 value that clears it.  220 uF did not
+    # [VERIFY: the chosen board's BOM; 100-470 uF low-ESR is usual]
+    HOLD_C      = 330e-6       # F
+    HOLD_TOL    = 0.20         # of HOLD_C either way: a polymer or tantalum part's band
+    # the firmware's numbers the record and the self-test check against: the
+    # SWD port's IDCODE and the IMU's WHO_AM_I [VERIFY: the parts' datasheets]
+    SWD_IDCODE  = 0x2BA01477   # Arm's SW-DP for a Cortex-M4 (mem)
+    WHO_AM_I    = 0x44         # ICM-42686-P, register 0x75 (mem)
 
 
 class Imu:
@@ -172,6 +192,175 @@ class Imu:
     SELF_HEAT   = 3.0          # degC
     HEAT_TAU    = 120.0        # s
     START_S     = 0.5          # s from power to its first sample: boot and configure [VERIFY: the firmware]
+    # supply current (ICM-42686-P datasheet DS-000639 v1.0): both sensors in
+    # low-noise mode, and asleep with the accelerometer waking it on motion
+    I_RUN       = 0.70e-3      # A
+    I_WOM       = 15e-6        # A [VERIFY: the accelerometer's low-power mode at the wake rate;
+                               # the datasheet's sleep is 7.5 uA]
+    VDD_MIN     = 1.71         # V
+    # the part's own self-test: the response to its electrostatic actuation,
+    # as a share of the response trimmed at its factory [VERIFY: the datasheet's
+    # table; ST's LSM6DSV states a 50-1700 mg window, so a wide one is usual]
+    ST_RATIO    = (0.5, 1.5)
+    ST_S        = 0.4          # s its self-test takes, both sensors, on and off [VERIFY: the datasheet's procedure]
+
+
+class Mcu:
+    """The board's radio SoC, nRF52840 class, run straight from the cells on
+    VDD (normal mode: no regulator ahead of it, README).  [VERIFY: every
+    number, from Nordic's nRF52840 Product Specification; (mem) is from
+    memory, the rest from Nordic's product brief v3.0 and staff answers on
+    DevZone]  Currents typical, at 3 V on the DC/DC."""
+    VDD_MIN     = 1.7          # V, recommended operating range, normal mode
+    VDD_MAX     = 3.6
+    V_POR       = 1.75         # V, the least it comes out of power-on reset at
+    V_BOR       = 1.63         # V, the most its System ON brown-out reset trips at (typ 1.60) (mem)
+    I_IDLE      = 3.16e-6      # A, System ON idle, RAM kept, RTC running
+    I_CPU       = 3.3e-3       # A, the CPU running from flash at 64 MHz (52 uA/MHz)
+    I_TX        = 6.40e-3      # A, radio sending at 0 dBm, its 32 MHz clock included
+    I_RX        = 6.26e-3      # A, radio receiving
+    # flash, programmed through the SWD port by the station's probe
+    FLASH_WORD_S = 41e-6       # s, one 32-bit word written
+    ERASE_ALL_S = 0.170        # s (mem; a page is 85 ms)
+    SWD_HZ      = 8e6          # Hz, the port's fastest clock
+    SWD_WORD_BITS = 46         # bits a 32-bit SWD read or write moves: request, ack, data, parity,
+                               # turnarounds (Arm ADIv5)
+    UICR_SERIAL = 0x10001080   # the UICR's customer words, where the station writes the serial
+    UICR_WORDS  = 32
+    PAGE        = 4096         # bytes a flash page holds: the record's two pages are two of these
+    ERASE_PAGE_S = 0.085       # s, one page erased
+    CLOCK_PPM   = 40.0         # its 32 MHz crystal, all tolerances: what the radio needs (Nordic)
+    # the radio's cost in charge, measured with a Power Profiler Kit II on a
+    # development kit (DevZone 78918): one connectable advertising event, one
+    # connection event with nothing to send, and what a 20-byte notification
+    # adds to it -- 950, 277 and 485 uA at a 20 ms interval
+    Q_ADV       = 19.0e-6      # C
+    Q_EVENT     = 5.5e-6       # C
+    Q_NOTIFY    = 4.2e-6       # C, 20 bytes; each byte more costs its air time at I_TX
+
+
+class Link:
+    """Bluetooth LE as the bat uses it [the Core specification's rules;
+    the centrals' own marked VERIFY].  The bat streams at Imu.ODR over the
+    LE 2M PHY with data length extension, one notification a packet."""
+    CI_STEP     = 1.25e-3      # s, a connection interval is a whole number of these (Core spec)
+    CI_MIN      = 7.5e-3       # s, the Core spec's least: the station's own dongle
+    # Apple's Accessory Design Guidelines R7, 11.6: an interval at least 15 ms
+    # and a multiple of it, a supervision timeout of 2 to 6 s
+    PHONE_CI    = 15e-3        # s
+    SUPERVISION = 2.0          # s, the least either allows
+    # packets a central takes in one connection event: iOS about five (Apple
+    # staff, developer forums 773555); the station's dongle runs its own
+    # firmware, whose event length is a setting [VERIFY: both]
+    PER_EVENT   = {"phone": 5, "dongle": 6}
+    MTU         = 247          # ATT MTU the bat asks for: 244 bytes a notification
+    LL_PAYLOAD  = 251          # bytes, data length extension
+    PHY_BPS     = 2e6          # LE 2M
+    LL_OVERHEAD = 17           # bytes on air round a payload: preamble 2, access address 4,
+                               # header 2, MIC 4, CRC 3, plus the L2CAP header's 2
+    T_IFS       = 150e-6       # s between packets in an event (Core spec)
+    # a packet lost on air is resent until acknowledged: the application
+    # loses nothing, a lost packet costs latency, and the link drops only
+    # past the supervision timeout.  An event closes on two CRC errors running
+    PER         = 1e-2         # packets lost on air, indoors (Lodro et al. 2021) [VERIFY: at the
+                               # station and at playing distance, carbon beside the antenna]
+    CLOCK_PPM   = 50.0         # the most a central's active clock may be off (Core spec)
+    # advertising, Apple's guideline 11.5: fast for 30 s after waking, then slow
+    ADV_FAST_S  = 0.020
+    ADV_FAST_FOR = 30.0
+    ADV_SLOW_S  = 0.1525
+    ADV_JITTER  = 0.010        # s, the Core spec's random advDelay added to each advertising event
+    ADV_BYTES   = 31           # a legacy advertising payload
+
+
+class Firmware:
+    """The bat's firmware as the line builds it: settings within the parts'
+    limits [VERIFY: the firmware, once written; until then the plan's].  Its
+    boot, power to the first sample and to advertising, is Imu.START_S."""
+    VERSION     = 0x00010000   # u32, the record's byte 24: 0x00MMmmpp, here 1.0.0
+    IMAGE_BYTES = 225_000      # the SoftDevice S140 (about 156 kB) and the application [estimate]
+    QUEUE       = 6            # notifications the stack holds; past them a packet is dropped
+    CPU_PACKET_S = 0.3e-3      # s the CPU runs to read a packet's samples off the IMU's FIFO
+                               # and hand it to the stack [estimate: 228 bytes of SPI at 8 MHz]
+    WOM_G       = 0.05         # g off the rest reading that wakes it (the IMU's interrupt)
+    IDLE_S      = 60.0         # s with no motion and no link before it sleeps
+    ADV_FOR_S   = 120.0        # s it advertises after waking with no central before it sleeps
+
+
+class Probe:
+    """The station's SWD debug probe [VERIFY: the chosen probe; a J-Link
+    class reaches the port's 8 MHz, a CMSIS-DAP dongle about half]."""
+    SWD_HZ      = 4e6
+
+
+class Smu:
+    """What powers and measures the board through the pogo block: a
+    source-measure unit, Nordic Power Profiler Kit II class, which sources
+    0.8-5 V and samples the current at 100 kHz [VERIFY: every number, from
+    the chosen instrument's datasheet; from memory]."""
+    V_RANGE     = (0.8, 5.0)
+    I_MAX       = 1.0          # A
+    RATE        = 100e3        # Hz, current samples
+    ACC         = 0.10         # of the reading, the current's accuracy
+    FLOOR       = 0.2e-6       # A, its resolution at the bottom range
+
+
+class DummyCell:
+    """One cell of the swing rig's dummy pack: an AA-size supercapacitor,
+    weighted to an alkaline cell's mass (README, "a sample at full speed").
+    [VERIFY: an AA-size (14 x 50 mm) EDLC's datasheet; placeholders]"""
+    C           = 10.0         # F
+    V_RATED     = 2.7          # V
+    ESR         = 0.10         # ohm
+    D           = 14.0         # mm
+    L           = 50.0         # mm, pip included: it is made to the AA's IEC envelope
+
+
+class Servo:
+    """The swing rig's motors: AC servomotors with absolute encoders, each
+    through a single-stage planetary gearbox, run by drives that take a
+    torque command every cycle over EtherCAT (cyclic synchronous torque)
+    [VERIFY: every number, from the chosen maker's catalogue and the
+    drive's manual; the catalogue is a Delta ECMA-C2 series' from memory].
+    Rows: (name, rated N m, peak N m, rated rpm, max rpm, rotor kg m^2)."""
+    CATALOGUE   = (("200 W, 60 mm flange", 0.64, 1.92, 3000.0, 5000.0, 0.177e-4),
+                   ("400 W, 60 mm flange", 1.27, 3.82, 3000.0, 5000.0, 0.277e-4),
+                   ("750 W, 80 mm flange", 2.39, 7.16, 3000.0, 5000.0, 1.13e-4),
+                   ("1 kW, 100 mm flange", 3.18, 9.54, 3000.0, 5000.0, 2.65e-4),
+                   ("2 kW, 100 mm flange", 6.37, 19.1, 3000.0, 5000.0, 4.45e-4))
+    RATIOS      = (3.0, 4.0, 5.0, 7.0, 10.0)   # a single planetary stage's
+    GEAR_EFF    = 0.97         # a single planetary stage
+    # the load's inertia over the rotor's, reflected through the gearbox,
+    # that the drive's auto-tuning holds a stiff loop on [VERIFY: the
+    # drive's manual; makers state 10 for a stiff coupling]
+    INERTIA_RATIO = 10.0
+    CYCLE_S     = 1.0e-3       # s, the drive's command cycle
+    ENCODER_BITS = 17          # absolute, per motor turn
+
+
+class SwingRig:
+    """The enclosed swing rig at station 4 (README, "a sample at full
+    speed"): an arm on a hub carries the hands round the rated swing's arc,
+    and the bat's clamp turns on a wrist at its end, driven through a
+    timing belt by a second motor on the hub, so neither motor rides the
+    arm.  [VERIFY: every number, on the build]"""
+    TUBE        = (40.0, 2.0)  # mm, the arm's square aluminium tube, side and wall
+    WRIST_MASS  = 350.0        # g, the wrist's bearings and housing, at the arm's end
+    CLAMP_MASS  = 250.0        # g, the split collar on the grip and the wrist's pulley, turning with the bat
+    BELT_RATIO  = 1.0          # the wrist belt's pulleys, hub to wrist
+
+
+class Phone:
+    """The factory iPhone's wide camera as the app runs it [VERIFY: the phone
+    the line buys; chan's test phone is an iPhone 13; the study's values
+    (imu_fusion_sim.camera_anchor) are from memory]."""
+    W           = 1920         # px, 1080p
+    H           = 1080
+    F_PX        = 1500.0       # px, focal length at 1080p (about 65 deg across)
+    FPS         = 60.0
+    READOUT_S   = 1.0 / 120.0  # s, the rolling shutter's top row to its bottom (mem)
+    EXPOSURE_S  = 1.0 / 500.0  # s, under the station's lights (a setting the app locks)
+    SIGMA_PX    = 0.5          # px, a band's centroid, still (the study's)
 
 
 class Material:
@@ -204,6 +393,10 @@ class ContactSet:
     W           = 4.0          # mm, strip width
     RING_W      = 3.0          # mm, the return ring, along the bat
     RHO         = 7.85e-3      # g/mm^3, steel
+    # how a cell's end comes back off a contact it strikes: the share of
+    # its closing speed it leaves with [VERIFY: drop a cell onto a plate on
+    # a load cell; a placeholder]
+    RESTITUTION = 0.5
 
 
 class CapSpring:
@@ -497,6 +690,7 @@ class Pogo:
     FORCE       = 0.6          # N each, at the middle of WORK
     BODY        = (20.0, 12.0, 25.0)
     MASS        = 30.0
+    R_CONTACT   = 0.020        # ohm a pin, worst [INGUN GKS-100's datasheet: 20 mohm or less]
 
 
 class Spindle:
@@ -768,6 +962,21 @@ class Rules:
     D_CHORDS    = (2.0, 3.0)                 # structure.design's own menus
     D_DIAGS     = (1.0, 1.5, 2.0)
     LOAD_WALLS  = 2            # walls in a face that carries a load: cap ends, floors
+    # [OPEN] how long two fresh alkaline cells must last: streaming, and
+    # asleep in a cupboard.  The design doc's 200 h is its estimate of what
+    # the board achieves, used here as the floor until chan sets one
+    PLAY_H      = 200.0
+    SLEEP_DAYS  = 365.0
+    # [OPEN] the longest a cell's contact may open with the bat playing on:
+    # a drop can open a cell's contacts for as long as 10 ms (Maxim AN3209,
+    # 2004), and nothing here models a ball's impact [VERIFY: drop a bat]
+    BOUNCE_S    = 10e-3
+    # [OPEN] the share of the cells' capacity over which the bat rides
+    # through BOUNCE_S: hold-up shrinks to nothing as they near the board's
+    # least supply, so it is promised over most of their life, not all of it
+    HOLD_LIFE   = 0.90
+    # [OPEN] where the player's phone stands from the bat: the study's
+    PLAY_Z      = 4.0          # m
 
 
 class Quality:
@@ -784,6 +993,13 @@ class Quality:
     GOLDEN_POWER = 0.99
     GOLDEN_RUNS = 20           # days at commissioning that certify it (imu/golden.py: on ten, the guard for
                                # measuring their scatter costs more runs than ten more days do)
+    # a healthy board may fail the station's self-test, or the factory
+    # iPhone's test, this often: each test's limits split it by Bonferroni
+    TEST_ALPHA  = 1e-3
+    # the bat's clock against the phone's, 1 sigma: what the study's
+    # accuracy assumed (imu_fusion_sim.Anchor.sync_ms), so the link's clock
+    # recovery is held to it
+    SYNC_S      = 1e-3
 
 
 # ============================================================ TASK SPECS
@@ -852,7 +1068,6 @@ class Est:
     the gantry's trapezoid over a computed distance (line.py)."""
     INSERT_V     = 10.0        # mm/s, a force-watched insertion stroke (M6)
     PRESS_S      = 2.0         # s, a press fit to its stop, with the force curve (M6, M7)
-    FLASH_S      = 40.0        # s, firmware, serial and self-test over the pogo block (M4)
     DUMMY_CELL_S = 8.0         # s, the battery path checked with a dummy cell (M6)
     SLEEVE_FEED_V = 20.0       # mm/s, the frame driven through the stretcher (M7)
     STRETCHER_S  = 6.0         # s, the fixture opening the split stretcher (M7)
@@ -863,13 +1078,27 @@ class Est:
     NOZZLE_S     = 30.0        # s, the dispenser changes its own mixing nozzle and purges (M5)
     # calibration: the gimbal's motion is the IMU plan's (imu/plan.py) and
     # the golden bat's day that plan's runs, as many as a drifted rig takes
-    # to show (imu/golden.py), both computed (M3)
-    IPHONE_S     = 60.0        # s, pair, find the bands, a slow fused swing (M4)
-    SWING_EVERY  = 20          # one bat in this many is swung at full speed (M4)
-    SWING_S      = 120.0
+    # to show (imu/golden.py), both computed (M3); station 2's self-test, the
+    # factory iPhone's test and the swing rig's are their procedures' own
+    # plans (board/procedures.py, phone/test.py, swing/rig.py), each held to
+    # its simulation (check_link, check_swing) (M4)
+    # one bat in this many is swung at full speed: the README's "first of
+    # each batch, then as the bats' spread says" needs a few hundred
+    # measured bats to set [estimate until then]
+    SWING_EVERY  = 20
     TAG_READ_S   = 2.0         # s, a station reads a tray's tag
     DOCK_S       = 40.0        # s, a pose short of a dock to the tray seated and read (M9, M10)
     PACE         = 1.0         # measured pace correction, as truss.spec.Process.SPEED_FACTOR
+    # a central's host stack, air to the app's callback: a floor, then an
+    # exponential spread above it, and how well a lab characterisation of one
+    # central model knows its floor (M4) [estimate: time a pin the bat toggles
+    # as it sends against the app's callback, once per central model]
+    HOST_FLOOR_S = {"phone": 2.0e-3, "dongle": 1.0e-3}
+    HOST_SPREAD_S = {"phone": 3.0e-3, "dongle": 0.5e-3}
+    HOST_FLOOR_SD = 0.2e-3
+    # one board's currents about its parts' typical values, 1 sigma: datasheets
+    # state typical values only (M4) [estimate: measure the first boards]
+    CURRENT_SPREAD = 0.10
 
 
 class Faults:

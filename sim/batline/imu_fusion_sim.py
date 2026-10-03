@@ -162,6 +162,8 @@ R_MOUNT = exp_so3(np.array([0.6, -0.4, 0.9]) * D2R)   # how the IMU board actual
 DT_F = 1e-4      # truth grid
 SUB = 10         # truth steps per IMU sample
 DT = DT_F * SUB  # 1 kHz IMU
+LEVEL_S = 0.3    # s of still stance the filter levels over
+STANCE_FRAMES = 15   # still frames the camera's stance anchor averages
 
 
 class Truth:
@@ -260,7 +262,7 @@ def camera_anchor(at, f_px=1500.0, Z=4.0, L=0.45, sig_px=0.5, floor_lat=0.002,
     lat1 = Z * sig_px / f_px
     dep1 = Z ** 2 * np.sqrt(2) * sig_px / (f_px * L)
     if at == 'stance':
-        n = 15
+        n = STANCE_FRAMES
         vlat = vdep = 0.002    # bat at rest, and the IMU knows it
     else:
         n = 3
@@ -279,13 +281,29 @@ SOURCES = ['anchor_pos', 'anchor_vel', 'yaw', 'gyro_bias', 'gyro_scale', 'gyro_c
            'acc_nl', 'acc_noise', 'range', 'mount', 'lever', 'sync']
 
 
-def run(tr, grade, anchor, N=1500, seed=1, only=None, record_every=0.05):
+def run(tr, grade, anchor, N=1500, seed=1, only=None, record_every=0.05, l_imu=None, l_ss=None, r_mount=None,
+        g=G, anchor_cov=None, stance_g=False):
+    """The Monte Carlo on truth tr (any object with Truth's samples and
+    indices).  The bat's geometry is the study's unless given: l_imu and
+    l_ss in the bat's frame (m), r_mount the chip's axes in it, g the
+    gravity tr was made under (the factory iPhone test, phone/test.py,
+    runs it on the gimbal's slow swing).  anchor_cov, a stance anchor's
+    (4, 4) covariance of its sweet-spot error (m, world X Y Z) and its
+    heading error (rad), drawn jointly, replaces the Anchor's independent
+    pos_* and yaw_deg.  stance_g: each trial takes gravity's size from its
+    own stance (the norm of its levelling force), as the factory iPhone's
+    app does, rather than knowing g.  The returned e is each trial's
+    sweet-spot error vector at k_c, world axes."""
     rng = np.random.default_rng(seed)
+    L_imu = L_IMU if l_imu is None else np.asarray(l_imu, float)
+    L_ss = L_SS if l_ss is None else np.asarray(l_ss, float)
+    R_mnt = R_MOUNT if r_mount is None else np.asarray(r_mount, float)
+    gw = np.array([0.0, 0.0, -g])
 
     def on(s):
         return only is None or s in only
 
-    k_lev = 300                               # level over the last 0.3 s of stance
+    k_lev = int(round(LEVEL_S / DT))          # level over the stance's last LEVEL_S
     k0, k1 = tr.k_s - k_lev, tr.k_c
     w_t, f_t = tr.w[k0:k1], tr.f[k0:k1]
     I3 = np.eye(3)
@@ -335,15 +353,18 @@ def run(tr, grade, anchor, N=1500, seed=1, only=None, record_every=0.05):
 
     # what the filter believes about how the IMU sits in the bat
     dm = rng.normal(0, grade.mount_deg * D2R, (N, 3)) if on('mount') else np.zeros((N, 3))
-    Rm_est = R_MOUNT @ exp_so3(dm)
+    Rm_est = R_mnt @ exp_so3(dm)
     dl = rng.normal(0, grade.lever_mm / 1000, (N, 3)) if on('lever') else np.zeros((N, 3))
-    lev_b = L_SS - (L_IMU + dl)               # IMU -> sweet spot, bat frame, as believed
+    lev_b = L_ss - (L_imu + dl)               # IMU -> sweet spot, bat frame, as believed
 
     def bat_est(Ri_est):
         return Ri_est @ T(Rm_est)
 
     # level from the still stance, heading from the camera
     f_avg = f_m[:, :k_lev].mean(1)
+    if stance_g:
+        gw = np.zeros((N, 3))
+        gw[:, 2] = -np.linalg.norm(f_avg, axis=1)
     u = np.einsum('ij,nj->ni', tr.Ri[tr.k_s], f_avg)
     u /= np.linalg.norm(u, axis=1, keepdims=True)
     z = np.array([0.0, 0.0, 1.0])
@@ -351,14 +372,24 @@ def run(tr, grade, anchor, N=1500, seed=1, only=None, record_every=0.05):
     s = np.linalg.norm(ax, axis=1, keepdims=True)
     ang = np.arctan2(s, u @ z[:, None])
     Q = exp_so3(np.where(s > 1e-12, ax / np.where(s > 1e-12, s, 1) * ang, 0.0))
-    yaw = rng.normal(0, anchor.yaw_deg * D2R, N) if on('yaw') else np.zeros(N)
+    if anchor_cov is None:
+        yaw = rng.normal(0, anchor.yaw_deg * D2R, N) if on('yaw') else np.zeros(N)
+        dp_s = None
+    else:
+        if anchor.at != 'stance':
+            raise ValueError("anchor_cov states a stance anchor")
+        x = rng.multivariate_normal(np.zeros(4), anchor_cov, N)
+        yaw = x[:, 3] if on('yaw') else np.zeros(N)
+        dp_s = x[:, :3] if on('anchor_pos') else np.zeros((N, 3))
     R = rot_axis([0, 0, 1], yaw) @ Q @ tr.Ri[tr.k_s]
 
     def camera_reset(k, R_imu):
         """Position/velocity from the camera's view of the bands at sample k."""
         dp = np.zeros((N, 3))
         dv = np.zeros((N, 3))
-        if on('anchor_pos'):
+        if dp_s is not None:
+            dp = dp_s
+        elif on('anchor_pos'):
             dp = rng.normal(0, 1, (N, 3)) * [anchor.pos_lat, anchor.pos_dep, anchor.pos_lat]
         if on('anchor_vel'):
             dv = rng.normal(0, 1, (N, 3)) * [anchor.vel_lat, anchor.vel_dep, anchor.vel_lat]
@@ -381,7 +412,7 @@ def run(tr, grade, anchor, N=1500, seed=1, only=None, record_every=0.05):
         wk, fk = w_m[:, k - k0], f_m[:, k - k0]
         dR = exp_so3(wk * DT)
         Rmid = R @ exp_so3(wk * DT / 2)
-        a = np.einsum('nij,nj->ni', Rmid, fk) + GW
+        a = np.einsum('nij,nj->ni', Rmid, fk) + gw
         p = p + v * DT + 0.5 * a * DT * DT
         v = v + a * DT
         R = R @ dR
@@ -395,7 +426,7 @@ def run(tr, grade, anchor, N=1500, seed=1, only=None, record_every=0.05):
     axis_err = np.arccos(np.clip(Rb_e[:, :, 0] @ Rb_t[:, 0], -1, 1)) / D2R
     growth.append(((tr.k_c - k_anchor) * DT, np.hypot(e[:, 0], e[:, 2])))
     return dict(lat=np.hypot(e[:, 0], e[:, 2]) * 1000, dep=np.abs(e[:, 1]) * 1000,
-                axis=axis_err, roll=np.abs(rv[:, 0]) / D2R, growth=growth)
+                axis=axis_err, roll=np.abs(rv[:, 0]) / D2R, growth=growth, e=e)
 
 
 def pct(x, q):

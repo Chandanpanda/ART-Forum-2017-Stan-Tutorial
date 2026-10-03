@@ -30,6 +30,19 @@ def unrailed():
     return (full - 1.5) / full
 
 
+def usable(z):
+    """(rad/s, m/s^2): the largest true rate and specific force on any axis
+    that a part z sigmas out on every spread reads with no code at a rail:
+    full scale less its offset (and, for the gyro, what its g-sensitivity
+    makes of the largest force the accelerometer reads), over its scale and
+    cross-axis gain."""
+    gyro = (Imu.GYRO_FS * unrailed() - z * Imu.GYRO_BIAS - z * Imu.GYRO_GSENS * Imu.ACC_FS) * D2R \
+        / (1.0 + z * sqrt(Imu.GYRO_SCALE ** 2 + 2.0 * Imu.GYRO_CROSS ** 2))
+    acc = Imu.ACC_FS * unrailed() * G0 / (1.0 + z * sqrt(Imu.ACC_SCALE ** 2 + 2.0 * Imu.ACC_CROSS ** 2)) \
+        - z * Imu.ACC_BIAS * G0
+    return gyro, acc
+
+
 @dataclass
 class Stream:
     """What the board sends: per sample its counter, six codes, the die

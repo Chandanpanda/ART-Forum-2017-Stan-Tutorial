@@ -334,6 +334,14 @@ class CalRecord:
             r = np.asarray(to_bat[0], float).T @ (r - np.asarray(to_bat[1], float))
         return r
 
+    def acc_scale(self):
+        """H - I: the accelerometer's symmetric scale and cross-axis, a
+        fraction (the record holds its six elements in ppm)."""
+        S = np.zeros((3, 3))
+        for (i, j), v in zip(_S_ORDER, self.acc_S.astype(float) / PPM):
+            S[i, j] = S[j, i] = v
+        return S
+
     def judged_terms(self, U_ref, dT_cal=None, to_bat=None):
         """(NT,): the stored terms as fit.terms states them -- the biases
         at 25 + dT_cal degC (moved there from T_cal by the stored
@@ -341,9 +349,7 @@ class CalRecord:
         rotation vector (deg) from U_ref, the lever in the clamp's frame --
         for comparison with fit.terms(theta, dT_cal, U_ref)."""
         move = 0.0 if dT_cal is None else T_REF + float(dT_cal) - self.T_cal
-        S = np.zeros((3, 3))
-        for (i, j), v in zip(_S_ORDER, self.acc_S.astype(float) / PPM):
-            S[i, j] = S[j, i] = v
+        S = self.acc_scale()
         Eg = self.gyro_E.astype(float).reshape(3, 3) / PPM
         out = np.empty(F.NT)
         out[0:3] = self.acc_bias.astype(float) + self.acc_tc.astype(float) * move
